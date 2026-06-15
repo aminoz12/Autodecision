@@ -1,20 +1,28 @@
 "use client";
 
+import {
+  AlertTriangle,
+  BarChart3,
+  Eye,
+  EyeOff,
+  Lock,
+  Loader2,
+  Mail,
+  PackageCheck,
+  ShieldCheck,
+  ShoppingCart,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { Button } from "@/components/ui/Button";
-import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { Card, CardDescription, CardTitle } from "@/components/ui/Card";
-import { Input } from "@/components/ui/Input";
-import { Label } from "@/components/ui/Label";
 
 export default function LoginPage() {
   const { login, ready, user } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +40,6 @@ export default function LoginPage() {
       setError(null);
       try {
         await login(email, password);
-        // Redirect is handled by the effect once the profile (role) is loaded.
       } catch (err) {
         setError(err instanceof Error ? err.message : "Connexion impossible");
       } finally {
@@ -44,64 +51,148 @@ export default function LoginPage() {
 
   if (!ready) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-zinc-500">
-        Chargement…
+      <div className="auth-loading">
+        <Loader2 className="h-5 w-5 auth-spin" />
       </div>
     );
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-zinc-100 px-4 dark:bg-zinc-950">
-      <div className="absolute right-4 top-4">
-        <ThemeToggle />
-      </div>
-      <Card className="w-full max-w-md">
-        <CardTitle>Connexion</CardTitle>
-        <CardDescription>
-          Compte Supabase Auth — accès au tableau de bord du magasin.
-        </CardDescription>
-        <form onSubmit={onSubmit} className="mt-6 space-y-4">
-          {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-200">
-              {error}
-            </p>
-          )}
-          <div>
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+    <div className="auth-page">
+      {/* Brand panel */}
+      <aside className="auth-brand">
+        <div className="auth-brand-logo">
+          <span className="auth-brand-logo-mark">
+            <ShoppingCart className="h-5 w-5" />
+          </span>
+          Autodecision
+        </div>
+
+        <div>
+          <h1 className="auth-brand-headline">
+            La gestion de votre magasin de pièces auto, simplifiée.
+          </h1>
+          <p className="auth-brand-sub">
+            Commandes, réceptions, stock et clients — tout au même endroit, en
+            temps réel.
+          </p>
+          <div className="auth-brand-features">
+            <span className="auth-feature">
+              <span className="auth-feature-dot">
+                <ShoppingCart className="h-3.5 w-3.5" />
+              </span>
+              Commandes &amp; devis en quelques clics
+            </span>
+            <span className="auth-feature">
+              <span className="auth-feature-dot">
+                <PackageCheck className="h-3.5 w-3.5" />
+              </span>
+              Réception et suivi des pièces
+            </span>
+            <span className="auth-feature">
+              <span className="auth-feature-dot">
+                <BarChart3 className="h-3.5 w-3.5" />
+              </span>
+              Rapports et indicateurs clairs
+            </span>
+            <span className="auth-feature">
+              <span className="auth-feature-dot">
+                <ShieldCheck className="h-3.5 w-3.5" />
+              </span>
+              Données isolées et sécurisées par magasin
+            </span>
           </div>
-          <div>
-            <Label htmlFor="password">Mot de passe</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+        </div>
+
+        <p className="auth-brand-foot">© 2026 Autodecision · Pièces auto</p>
+        <span className="auth-brand-orb auth-brand-orb--1" />
+        <span className="auth-brand-orb auth-brand-orb--2" />
+      </aside>
+
+      {/* Form panel */}
+      <main className="auth-panel">
+        <div className="auth-card">
+          <div className="auth-card-logo">
+            <span className="auth-card-logo-mark">
+              <ShoppingCart className="h-5 w-5" />
+            </span>
+            Autodecision
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Connexion…" : "Se connecter"}
-          </Button>
-        </form>
-        <p className="mt-6 text-center text-sm text-zinc-500">
-          Pas encore de magasin ?{" "}
-          <Link
-            href="/signup"
-            className="font-medium text-emerald-600 hover:underline dark:text-emerald-400"
-          >
-            Créer un compte
-          </Link>
-        </p>
-      </Card>
+
+          <h2 className="auth-title">Bon retour 👋</h2>
+          <p className="auth-subtitle">
+            Connectez-vous pour accéder au tableau de bord de votre magasin.
+          </p>
+
+          <form onSubmit={onSubmit} className="auth-form">
+            {error && (
+              <div className="auth-error">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="auth-field">
+              <label htmlFor="email" className="auth-label">
+                Email
+              </label>
+              <div className="auth-input-wrap">
+                <Mail />
+                <input
+                  id="email"
+                  className="auth-input"
+                  type="email"
+                  autoComplete="username"
+                  placeholder="vous@magasin.fr"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="auth-field">
+              <label htmlFor="password" className="auth-label">
+                Mot de passe
+              </label>
+              <div className="auth-input-wrap">
+                <Lock />
+                <input
+                  id="password"
+                  className="auth-input"
+                  type={showPwd ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-eye"
+                  onClick={() => setShowPwd((v) => !v)}
+                  aria-label={showPwd ? "Masquer" : "Afficher"}
+                >
+                  {showPwd ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" className="auth-btn" disabled={loading}>
+              {loading && <Loader2 className="h-4 w-4 auth-spin" />}
+              {loading ? "Connexion…" : "Se connecter"}
+            </button>
+          </form>
+
+          <p className="auth-foot">
+            Pas encore de magasin ? <Link href="/signup">Créer un compte</Link>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }
