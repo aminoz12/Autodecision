@@ -3567,3 +3567,76 @@ body {
   font-size: 13.5px;
   font-weight: 500;
 }
+
+/* ================================================================== */
+/*  Billing — trial banner & lockout (bill-)                          */
+/* ================================================================== */
+
+.bill-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid #BFDBFE;
+  background: #EFF6FF;
+  color: #1E40AF;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.bill-banner svg { flex-shrink: 0; }
+.bill-banner-text { flex: 1; }
+.bill-banner--urgent {
+  border-color: #FED7AA;
+  background: #FFF7ED;
+  color: #C2410C;
+}
+.bill-banner-cta {
+  border: none;
+  background: #5b4ee5;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bill-banner-cta:disabled { opacity: 0.55; cursor: not-allowed; }
+.bill-banner--urgent .bill-banner-cta { background: #EA580C; }
+
+.bill-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  padding: 24px;
+}
+.bill-lock-card {
+  max-width: 460px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 32px;
+  background: #fff;
+  border: 1px solid var(--border-card);
+  border-radius: 18px;
+  box-shadow: var(--shadow-card);
+}
+.bill-lock-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #EEF2FF;
+  color: #5b4ee5;
+}
+.bill-lock-title { font-size: 21px; font-weight: 800; color: var(--text-primary); }
+.bill-lock-sub { font-size: 14px; color: var(--text-secondary); line-height: 1.55; }
+.bill-lock-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.bill-lock-foot { font-size: 12.5px; color: var(--text-muted); margin-top: 8px; }

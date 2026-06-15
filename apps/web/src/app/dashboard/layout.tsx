@@ -1,4 +1,5 @@
 import { DashboardGate } from "@/components/auth/DashboardGate";
+import { BillingGate } from "@/components/billing/BillingGate";
 import { Sidebar } from "@/components/layout/Sidebar";
 
 export default function DashboardLayout({
@@ -11,7 +12,7 @@ export default function DashboardLayout({
       <div className="dashboard-shell">
         <Sidebar />
         <main className="dashboard-main">
-          {children}
+          <BillingGate>{children}</BillingGate>
         </main>
       </div>
     </DashboardGate>
