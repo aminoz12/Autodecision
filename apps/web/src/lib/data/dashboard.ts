@@ -142,16 +142,17 @@ export async function loadDashboardOverview(
     ),
     supabase
       .from("orders")
-      .select("id,ref_demande,workflow_status,date_envoi,date_commande,clients(name)")
+      .select(
+        "id,ref_demande,workflow_status,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
+      )
       .eq("organization_id", orgId)
       .order("createdAt", { ascending: false })
       .limit(5),
     supabase
       .from("order_lines")
-      .select("quantity,suppliers(name)")
+      .select("quantity,depuis_magasin,suppliers(name)")
       .eq("organization_id", orgId)
       .neq("reception_status", "RECEIVED")
-      .not("supplier_id", "is", null)
       .limit(1000),
     supabase.from("clients").select("rating,is_active").eq("organization_id", orgId),
     supabase
@@ -164,10 +165,16 @@ export async function loadDashboardOverview(
   // recent orders ----------------------------------------------------------
   const recentOrders: RecentOrder[] = (recentRes.data ?? []).map((o) => {
     const row = o as Record<string, unknown>;
+    // Surface real stored data when the order has no linked client record.
+    const client =
+      embeddedName(row.clients as EmbeddedName) ??
+      (row.client_phone as string | null) ??
+      (row.immatriculation as string | null) ??
+      "Client comptoir";
     return {
       id: String(row.id),
       ref: String(row.ref_demande ?? ""),
-      client: embeddedName(row.clients as EmbeddedName) ?? "Client non lié",
+      client,
       workflow: String(row.workflow_status ?? "PENDING"),
       livraison:
         (row.date_envoi as string | null) ??
@@ -176,11 +183,13 @@ export async function loadDashboardOverview(
     };
   });
 
-  // pending receptions grouped by supplier ---------------------------------
+  // pending receptions grouped by supplier (stock lines → "Stock magasin") --
   const recMap = new Map<string, number>();
   for (const l of recepRes.data ?? []) {
     const row = l as Record<string, unknown>;
-    const name = embeddedName(row.suppliers as EmbeddedName) ?? "—";
+    const name =
+      embeddedName(row.suppliers as EmbeddedName) ??
+      (row.depuis_magasin ? "Stock magasin" : "Sans fournisseur");
     const qty = Number(row.quantity ?? 0);
     recMap.set(name, (recMap.get(name) ?? 0) + qty);
   }
@@ -212,8 +221,9 @@ export async function loadDashboardOverview(
       if (dc === ymd(addDays(now, -(6 - i)))) spark[i] += 1;
     }
     if (dc.startsWith(monthStr)) {
-      const name = embeddedName(row.clients as EmbeddedName) ?? "Client non lié";
-      clientCounts.set(name, (clientCounts.get(name) ?? 0) + 1);
+      // Only count orders linked to a real client for the "top client" stat.
+      const name = embeddedName(row.clients as EmbeddedName);
+      if (name) clientCounts.set(name, (clientCounts.get(name) ?? 0) + 1);
     }
   }
   let topClient: { name: string; count: number } | null = null;
