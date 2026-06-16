@@ -5,7 +5,6 @@ import {
   ChevronDown,
   Loader2,
   PackageOpen,
-  Plus,
   RefreshCw,
   ShoppingCart,
   X,
@@ -15,9 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import {
-  adjustStockItem,
   commandRestockLine,
-  fmtDateTime,
   loadRestockAlerts,
   loadStockItems,
   loadSupplierOptions,
@@ -40,13 +37,8 @@ export default function StockPage() {
   const [rows, setRows] = useState<StockItem[]>([]);
   const [alerts, setAlerts] = useState<RestockAlert[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
-  const [sku, setSku] = useState("");
-  const [name, setName] = useState("");
-  const [delta, setDelta] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
 
   // Commander modal
   const [target, setTarget] = useState<RestockAlert | null>(null);
@@ -89,27 +81,6 @@ export default function StockPage() {
     }),
     [rows, alerts],
   );
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!orgId || !sku.trim()) return;
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const sb = createClient();
-      await adjustStockItem(sb, orgId, { sku, name, delta });
-      setSku("");
-      setName("");
-      setDelta(1);
-      setMessage("Stock mis à jour.");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   function openCommander(a: RestockAlert) {
     setTarget(a);
@@ -240,79 +211,6 @@ export default function StockPage() {
                   <td colSpan={5} className="text-muted" style={{ textAlign: "center", padding: "24px 0" }}>
                     Aucune pièce à recommander. Votre stock est à jour 👍
                   </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* ---- Manual stock adjustment ---- */}
-      <section className="od-card st-rajout">
-        <header className="st-rajout-head">
-          <h2 className="st-rajout-title">Ajustement manuel du stock</h2>
-        </header>
-        <form onSubmit={submit} className="st-rajout-grid">
-          <div className="od-field st-f-ref">
-            <label className="od-label" htmlFor="sku">SKU / référence</label>
-            <input id="sku" className="od-input" value={sku} onChange={(e) => setSku(e.target.value)} required />
-          </div>
-          <div className="od-field st-f-desig">
-            <label className="od-label" htmlFor="name">Désignation si nouveau</label>
-            <input id="name" className="od-input" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="od-field st-f-qty">
-            <label className="od-label" htmlFor="delta">Variation</label>
-            <input
-              id="delta"
-              className="od-input"
-              type="number"
-              value={delta}
-              onChange={(e) => setDelta(Number(e.target.value) || 0)}
-              required
-            />
-          </div>
-          <div className="st-rajout-submit">
-            <button type="submit" className="od-btn od-btn--primary" disabled={saving}>
-              <Plus className="h-4 w-4" />
-              {saving ? "..." : "Appliquer"}
-            </button>
-          </div>
-        </form>
-        {message && <p className="stat-change" style={{ color: "var(--clr-success)" }}>{message}</p>}
-      </section>
-
-      {/* ---- Current inventory ---- */}
-      <section className="od-card rl-table-card">
-        <div className="st-section-head">
-          <h2 className="st-section-title">Inventaire actuel</h2>
-        </div>
-        <div className="rl-table-wrap">
-          <table className="rl-table st-table">
-            <thead>
-              <tr>
-                <th>Référence</th>
-                <th>Désignation</th>
-                <th className="rl-th-center">Quantité</th>
-                <th>Dernière mise à jour</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="rl-reffour">{row.sku}</td>
-                  <td className="rl-client">{row.name}</td>
-                  <td className="rl-th-center">
-                    <span className={`rl-qte-recue rl-qte-recue--${row.quantity <= 0 ? "red" : "green"}`}>
-                      {row.quantity}
-                    </span>
-                  </td>
-                  <td className="rl-muted-strong">{fmtDateTime(row.updatedAt)}</td>
-                </tr>
-              ))}
-              {!loading && rows.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="text-muted">Aucun stock.</td>
                 </tr>
               )}
             </tbody>
