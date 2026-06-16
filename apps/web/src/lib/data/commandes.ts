@@ -39,6 +39,7 @@ export type BoardLine = {
   expectedAt: string | null;
   tourId: string | null;
   tourName: string | null;
+  putAway: boolean;
 };
 
 export async function loadReceptionBoard(
@@ -48,7 +49,7 @@ export async function loadReceptionBoard(
   const { data, error } = await supabase
     .from("order_lines")
     .select(
-      "id,order_id,reference,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,tour_id," +
+      "id,order_id,reference,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
         "orders(id,ref_demande,date_commande,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
         "suppliers(name),delivery_tours(name)",
     )
@@ -87,12 +88,27 @@ export async function loadReceptionBoard(
       expectedAt: (row.prevue_le as string | null) ?? null,
       tourId: (row.tour_id as string | null) ?? null,
       tourName: tour ? String(tour.name ?? "") : null,
+      putAway: Boolean(row.retour_stock_fait),
     };
   });
 
   return rows.sort((a, b) =>
     String(b.orderDate ?? "").localeCompare(String(a.orderDate ?? "")),
   );
+}
+
+/** Mark a received stock line as put away (rangé en stock). */
+export async function markLinePutAway(
+  supabase: SupabaseClient,
+  orgId: string,
+  lineId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("order_lines")
+    .update({ retour_stock_fait: true })
+    .eq("id", lineId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
 }
 
 /** Reliquat / Non reçu / re-open. "Reçu" goes through markLineReceived (stock side-effects). */

@@ -26,6 +26,7 @@ import { markLineReceived } from "@/lib/data/saas";
 import {
   loadReceptionBoard,
   loadSmsStates,
+  markLinePutAway,
   markOrderSmsTreated,
   recordSmsSent,
   setLineReceptionStatus,
@@ -150,10 +151,15 @@ export default function ReceptionCommandesPage() {
     [pending, tourFilter],
   );
 
-  /** Orders ready for SMS: ≥1 received line, not yet "traité". */
+  /**
+   * Orders ready for SMS — CLIENT lines only (depuis_magasin = false).
+   * Stock-replenishment lines never notify a client; they go to the
+   * "Retour en stock" tab. An order with no client line is excluded here.
+   */
   const smsOrders = useMemo(() => {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
+      if (l.fromStock) continue; // skip stock lines entirely
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
       else byOrder.set(l.orderId, [l]);
@@ -179,7 +185,7 @@ export default function ReceptionCommandesPage() {
           received: receivedLines.length,
           complet: receivedLines.length === lines.length,
           lastAt: last?.receivedAt ?? null,
-          lastSupplier: last?.supplierName ?? (last?.fromStock ? "Stock" : null),
+          lastSupplier: last?.supplierName ?? null,
           state: sms.get(orderId) ?? { sent: false, treated: false },
         };
       })
@@ -187,6 +193,17 @@ export default function ReceptionCommandesPage() {
       .sort((a, b) => String(b.lastAt ?? "").localeCompare(String(a.lastAt ?? "")));
     return rows;
   }, [board, sms]);
+
+  /** Received STOCK lines awaiting put-away (à ranger en stock). */
+  const putAwayRows = useMemo(
+    () =>
+      board
+        .filter((l) => l.fromStock && l.status === "RECEIVED" && !l.putAway)
+        .sort((a, b) =>
+          String(b.receivedAt ?? "").localeCompare(String(a.receivedAt ?? "")),
+        ),
+    [board],
+  );
 
   const smsRows = useMemo(
     () =>
@@ -269,15 +286,23 @@ export default function ReceptionCommandesPage() {
       });
     });
 
+  const actPutAway = (line: BoardLine) =>
+    withBusy(line.id, async () => {
+      if (!orgId) return;
+      await markLinePutAway(supabase, orgId, line.id);
+      setBoard((prev) =>
+        prev.map((l) => (l.id === line.id ? { ...l, putAway: true } : l)),
+      );
+    });
+
   /* ---- tabs ---- */
   const TABS: { id: string; label: string; sub: string; icon: LucideIcon; count?: number }[] = [
     { id: "apointer", label: "À pointer", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length },
     { id: "sms", label: "Commande SMS", sub: "Clients prêts à prévenir", icon: User, count: smsOrders.length },
     { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length },
-    { id: "retour", label: "Retour en stock", sub: "À ranger en stock", icon: Box },
+    { id: "retour", label: "Retour en stock", sub: "À ranger en stock", icon: Box, count: putAwayRows.length },
     { id: "historique", label: "Historique", sub: "Réceptions passées", icon: FileText },
   ];
-  const activeTab = TABS.find((t) => t.id === tab);
 
   /* ---------------------------------------------------------------- */
   /*  Shared line table                                                */
@@ -695,11 +720,97 @@ export default function ReceptionCommandesPage() {
             <LinesTable rows={history} showActions={false} />
           )}
 
-          {/* ---- Retour en stock (pas encore modélisé) ---- */}
+          {/* ---- Retour en stock — received stock lines to put away ---- */}
           {tab === "retour" && (
-            <div className="od-card rc-empty">
-              <p>Section «&nbsp;{activeTab?.label}&nbsp;» — à venir.</p>
-            </div>
+            <>
+              <section className="od-card rc-table-card">
+                <div className="rc-table-wrap">
+                  <table className="rc-table">
+                    <thead>
+                      <tr>
+                        <th>N° CMD / Date</th>
+                        <th>Référence / Désignation</th>
+                        <th>Fournisseur</th>
+                        <th className="rc-th-center">Qté</th>
+                        <th>Reçu le</th>
+                        <th className="rc-th-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {putAwayRows.map((r) => (
+                        <tr key={r.id} className="rc-row rc-row--stock">
+                          <td>
+                            <Link
+                              href={`/dashboard/commandes/${r.orderId}`}
+                              className="rc-cmd"
+                            >
+                              {r.orderRef}
+                            </Link>
+                            <p className="rl-muted">{fmtDay(r.orderDate)}</p>
+                          </td>
+                          <td>
+                            <p className="rl-ref">{r.reference}</p>
+                            <p className="rl-muted">{r.designation}</p>
+                          </td>
+                          <td>
+                            <span
+                              className="rc-brand"
+                              style={{ color: r.supplierName ? "#DC2626" : "#1D4ED8" }}
+                            >
+                              {r.supplierName ?? "Stock magasin"}
+                            </span>
+                          </td>
+                          <td className="rc-th-center rl-qte">{r.quantity}</td>
+                          <td className="rl-muted-strong">{fmtDayTime(r.receivedAt)}</td>
+                          <td>
+                            <div className="rc-actions">
+                              <button
+                                type="button"
+                                className="rc-act rc-act--recu"
+                                disabled={busy.has(r.id)}
+                                onClick={() => actPutAway(r)}
+                              >
+                                Rangé{" "}
+                                {busy.has(r.id) ? (
+                                  <Loader2 className="h-3.5 w-3.5 nc-spin" />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {!loading && putAwayRows.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="rc-empty-cell">
+                            Aucune pièce à ranger en stock.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="av-foot">
+                  <span className="av-foot-count">
+                    {putAwayRows.length} pièce(s) à ranger
+                  </span>
+                </div>
+              </section>
+
+              <div className="od-note rc-note">
+                <Info className="h-4 w-4" />
+                <div className="rc-note-text">
+                  <p className="rl-note-strong">
+                    Pièces de stock reçues, à ranger dans le magasin.
+                  </p>
+                  <p className="rl-note-sub">
+                    Cliquez sur «&nbsp;Rangé&nbsp;» une fois la pièce mise en rayon —
+                    elle disparaîtra de cette liste.
+                  </p>
+                </div>
+              </div>
+            </>
           )}
         </>
       )}
