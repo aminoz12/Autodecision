@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Settings,
   ShoppingCart,
+  Warehouse,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -30,6 +31,7 @@ const navItems = [
   { href: "/dashboard/retours", label: "Retours", icon: RotateCcw },
   { href: "/dashboard/avoirs", label: "Avoirs", icon: FileText },
   { href: "/dashboard/rapports", label: "Rapports", icon: BarChart3 },
+  { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
   { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
 ];
 
