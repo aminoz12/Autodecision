@@ -3835,3 +3835,46 @@ body {
   font-size: 14px; color: var(--text-muted); background: #F7F8FC;
 }
 .auth-spin { animation: nc-spin 0.8s linear infinite; }
+
+/* ================================================================== */
+/*  Garage create modal (ga-modal)                                   */
+/* ================================================================== */
+
+.ga-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: ga-fade 0.12s ease-out;
+}
+@keyframes ga-fade { from { opacity: 0; } to { opacity: 1; } }
+.ga-modal {
+  width: 100%;
+  max-width: 460px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.ga-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-card);
+}
+.ga-modal-title { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+.ga-modal-close {
+  width: 32px; height: 32px; border-radius: 8px; border: none;
+  background: #F3F4F6; color: var(--text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ga-modal-close:hover { background: #E5E7EB; }
+.ga-modal-form { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+.ga-modal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 480px) { .ga-modal-row { grid-template-columns: 1fr; } }
+.ga-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }

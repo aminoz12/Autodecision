@@ -507,6 +507,7 @@ export async function loadGarages(
       .from("clients")
       .select("id,name,phone,email,city,rating,is_active")
       .eq("organization_id", orgId)
+      .eq("is_garage", true)
       .order("name"),
     supabase
       .from("orders")
@@ -544,6 +545,23 @@ export async function loadGarages(
       ...t,
     };
   });
+}
+
+export async function createGarage(
+  supabase: SupabaseClient,
+  orgId: string,
+  input: { name: string; phone?: string; email?: string; city?: string },
+): Promise<void> {
+  const { error } = await supabase.from("clients").insert({
+    organization_id: orgId,
+    name: input.name.trim(),
+    phone: input.phone?.trim() || null,
+    email: input.email?.trim() || null,
+    city: input.city?.trim() || null,
+    is_garage: true,
+    is_professional: true,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export type ReturnRow = {

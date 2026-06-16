@@ -1,10 +1,26 @@
 "use client";
 
-import { Building2, Mail, MapPin, Phone, Search, Star, Wallet } from "lucide-react";
+import {
+  Building2,
+  Loader2,
+  Mail,
+  MapPin,
+  Phone,
+  Plus,
+  Search,
+  Star,
+  Wallet,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
-import { fmtMoney, loadGarages, type GarageSummary } from "@/lib/data/saas";
+import {
+  createGarage,
+  fmtMoney,
+  loadGarages,
+  type GarageSummary,
+} from "@/lib/data/saas";
 
 function initials(name: string) {
   return name
@@ -21,6 +37,12 @@ export default function GaragesPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Create-garage modal
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", phone: "", email: "", city: "" });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
@@ -39,6 +61,27 @@ export default function GaragesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function submitGarage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!profile?.organization_id || !form.name.trim()) {
+      setFormError("Le nom du garage est obligatoire.");
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const sb = createClient();
+      await createGarage(sb, profile.organization_id, form);
+      setModalOpen(false);
+      setForm({ name: "", phone: "", email: "", city: "" });
+      await load();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -63,13 +106,17 @@ export default function GaragesPage() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title">Garages</h1>
-          <p className="rl-subtitle">Clients/garages et activite calculee depuis les commandes.</p>
+          <p className="rl-subtitle">Garages partenaires et activité calculée depuis les commandes.</p>
         </div>
         <div className="rl-header-actions">
           <div className="ga-search">
             <Search className="ga-search-icon h-4 w-4" />
             <input className="ga-search-input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un garage..." />
           </div>
+          <button type="button" className="od-btn od-btn--primary" onClick={() => { setFormError(null); setModalOpen(true); }}>
+            <Plus className="h-4 w-4" />
+            Nouveau garage
+          </button>
         </div>
       </header>
 
@@ -108,8 +155,55 @@ export default function GaragesPage() {
             </div>
           </article>
         ))}
-        {!loading && filtered.length === 0 && <p className="text-muted">Aucun garage.</p>}
+        {!loading && filtered.length === 0 && (
+          <p className="text-muted">
+            {rows.length === 0
+              ? "Aucun garage enregistré. Cliquez sur « Nouveau garage » pour en ajouter un."
+              : "Aucun garage ne correspond à votre recherche."}
+          </p>
+        )}
       </div>
+
+      {modalOpen && (
+        <div className="ga-modal-overlay" onClick={() => !saving && setModalOpen(false)}>
+          <div className="ga-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <h2 className="ga-modal-title">Nouveau garage</h2>
+              <button type="button" className="ga-modal-close" onClick={() => setModalOpen(false)} aria-label="Fermer">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitGarage}>
+              {formError && <div className="nc-error">{formError}</div>}
+              <div className="od-field">
+                <span className="od-label">Nom du garage *</span>
+                <input className="od-input" placeholder="Garage Martin" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} autoFocus />
+              </div>
+              <div className="ga-modal-row">
+                <div className="od-field">
+                  <span className="od-label">Téléphone</span>
+                  <input className="od-input" placeholder="01 23 45 67 89" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Ville</span>
+                  <input className="od-input" placeholder="Nanterre" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} />
+                </div>
+              </div>
+              <div className="od-field">
+                <span className="od-label">Email</span>
+                <input className="od-input" type="email" placeholder="contact@garage.fr" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setModalOpen(false)} disabled={saving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Plus className="h-4 w-4" />}
+                  {saving ? "Enregistrement…" : "Créer le garage"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
