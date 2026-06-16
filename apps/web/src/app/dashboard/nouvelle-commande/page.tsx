@@ -107,6 +107,7 @@ export default function NouvelleCommandePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
+  const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string } | null>(null);
 
   /* ---- PDF auto-fill ---- */
   const fileRef = useRef<HTMLInputElement>(null);
@@ -318,6 +319,7 @@ export default function NouvelleCommandePage() {
         payload,
       );
       setCreatedRef(order.ref_demande);
+      setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
       // Refresh client list in case a new one was created.
       void loadClients(supabase, orgId).then(setClients).catch(() => {});
     } catch (err: unknown) {
@@ -347,6 +349,7 @@ export default function NouvelleCommandePage() {
     setEnvoyerAuLivreur(false);
     setError(null);
     setCreatedRef(null);
+    setCreatedTour(null);
   }
 
   /* ---------------------------------------------------------------- */
@@ -364,6 +367,19 @@ export default function NouvelleCommandePage() {
           <p className="nc-success-sub">
             La commande <strong>{createdRef}</strong> a bien été enregistrée.
           </p>
+          {createdTour && (
+            <p className="nc-success-tour">
+              <Truck className="h-4 w-4" />
+              {createdTour.name} — livraison prévue le{" "}
+              {new Date(createdTour.deliveryAt).toLocaleString("fr-FR", {
+                weekday: "long",
+                day: "2-digit",
+                month: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          )}
           <div className="nc-success-actions">
             <button
               type="button"

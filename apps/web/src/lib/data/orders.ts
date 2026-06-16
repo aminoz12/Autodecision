@@ -45,6 +45,100 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Delivery tournées — fixed by order creation time:                  */
+/*    17:00–09:30  → Tournée 1, livraison 10:00                         */
+/*    09:31–12:00  → Tournée 2, livraison 13:00                         */
+/*    12:01–14:30  → Tournée 3, livraison 15:00                         */
+/*    14:31–17:00  → Tournée 4, livraison 17:30                         */
+/* ------------------------------------------------------------------ */
+
+export type TourneeInfo = {
+  number: 1 | 2 | 3 | 4;
+  name: string;
+  /** Scheduled delivery datetime. */
+  deliveryAt: Date;
+  /** Delivery date (yyyy-mm-dd). */
+  tourDate: string;
+  /** Delivery time "HH:MM". */
+  slot: string;
+};
+
+function ymdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+export function computeTournee(now: Date = new Date()): TourneeInfo {
+  const mins = now.getHours() * 60 + now.getMinutes();
+  let number: 1 | 2 | 3 | 4;
+  let hour: number;
+  let minute = 0;
+
+  if (mins >= 571 && mins <= 720) {
+    number = 2;
+    hour = 13;
+  } else if (mins >= 721 && mins <= 870) {
+    number = 3;
+    hour = 15;
+  } else if (mins >= 871 && mins <= 1020) {
+    number = 4;
+    hour = 17;
+    minute = 30;
+  } else {
+    // 17:01–23:59 and 00:00–09:30
+    number = 1;
+    hour = 10;
+  }
+
+  const deliveryAt = new Date(now);
+  deliveryAt.setHours(hour, minute, 0, 0);
+  // Evening orders (after 17:00) are delivered the next morning at 10:00.
+  if (number === 1 && mins > 1020) {
+    deliveryAt.setDate(deliveryAt.getDate() + 1);
+  }
+
+  return {
+    number,
+    name: `Tournée ${number}`,
+    deliveryAt,
+    tourDate: ymdLocal(deliveryAt),
+    slot: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+  };
+}
+
+/** Find (or create) the delivery_tours row for a tournée on its delivery date. */
+async function findOrCreateTour(
+  supabase: SupabaseClient,
+  orgId: string,
+  t: TourneeInfo,
+): Promise<string | null> {
+  const { data: existing, error: selErr } = await supabase
+    .from("delivery_tours")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("name", t.name)
+    .eq("tour_date", t.tourDate)
+    .limit(1)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  if (existing) return String((existing as { id: string }).id);
+
+  const { data, error } = await supabase
+    .from("delivery_tours")
+    .insert({
+      organization_id: orgId,
+      name: t.name,
+      tour_date: t.tourDate,
+      slot_start: t.slot,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return String((data as { id: string }).id);
+}
+
 export async function createOrderWithLines(
   supabase: SupabaseClient,
   userId: string,
@@ -56,6 +150,17 @@ export async function createOrderWithLines(
   const { total, remaining } = computeOrderMoney(payload.lines, paid, advance);
   const sendToDelivery = Boolean(payload.envoyer_au_livreur);
   const workflow_status = sendToDelivery ? "TO_COLLECT" : "PENDING";
+
+  // Fix the delivery tournée from the order creation time, and schedule the
+  // delivery accordingly. Best-effort: never block order creation on it.
+  const tournee = computeTournee(new Date());
+  let tourId: string | null = null;
+  try {
+    tourId = await findOrCreateTour(supabase, orgId, tournee);
+  } catch {
+    tourId = null;
+  }
+  const dateEnvoi = tournee.deliveryAt.toISOString();
 
   // next_ref_demande and the insert run as separate requests, so two
   // concurrent submissions can be handed the same number — retry on conflict.
@@ -90,9 +195,7 @@ export async function createOrderWithLines(
         avance_payee: advance,
         solde_restant: remaining,
         envoyer_au_livreur: sendToDelivery,
-        date_envoi: payload.date_envoi
-          ? new Date(payload.date_envoi).toISOString()
-          : null,
+        date_envoi: dateEnvoi,
         statut_livreur: payload.statut_livreur ?? "EN_ATTENTE",
         consigne: payload.consigne ?? null,
         workflow_status,
@@ -127,6 +230,7 @@ export async function createOrderWithLines(
     retour_stock_fait: false,
     prix_achat_unitaire: l.prix_achat_unitaire,
     prix_vente_unitaire: l.prix_vente_unitaire,
+    tour_id: tourId,
   }));
 
   const { error: lErr } = await supabase.from("order_lines").insert(lineRows);
@@ -145,7 +249,12 @@ export async function createOrderWithLines(
     }
   }
 
-  return order as { id: string; ref_demande: string };
+  return {
+    id: order.id,
+    ref_demande: order.ref_demande,
+    tourName: tournee.name,
+    deliveryAt: dateEnvoi,
+  };
 }
 
 export async function createQuoteRow(
