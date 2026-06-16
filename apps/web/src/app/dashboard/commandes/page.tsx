@@ -109,8 +109,15 @@ export default function ReceptionCommandesPage() {
   }, [load]);
 
   /* ---- derived sets ---- */
+  // "À pointer" = awaited lines: client lines + stock lines already re-ordered
+  // from a supplier. Stock lines NOT yet re-ordered live on the Stock page
+  // ("À recommander"), so they're excluded here.
   const pending = useMemo(
-    () => board.filter((l) => l.status !== "RECEIVED"),
+    () =>
+      board.filter(
+        (l) =>
+          l.status !== "RECEIVED" && !(l.fromStock && !l.supplierName),
+      ),
     [board],
   );
   const backorders = useMemo(

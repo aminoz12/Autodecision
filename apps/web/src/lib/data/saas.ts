@@ -325,6 +325,86 @@ export async function markLineReceived(
   if (error) throw new Error(error.message);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Restock alerts — parts taken from stock for a client order that     */
+/*  still need to be re-ordered from a supplier to replenish stock.     */
+/* ------------------------------------------------------------------ */
+
+export type RestockAlert = {
+  id: string;
+  reference: string;
+  designation: string;
+  quantity: number;
+  prixAchat: number;
+  orderId: string;
+  orderRef: string;
+  orderDate: string | null;
+  clientName: string;
+};
+
+export async function loadRestockAlerts(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<RestockAlert[]> {
+  const { data, error } = await supabase
+    .from("order_lines")
+    .select(
+      "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
+        "orders(ref_demande,date_commande,client_phone,clients(name))",
+    )
+    .eq("organization_id", orgId)
+    .eq("depuis_magasin", true)
+    .is("supplier_id", null)
+    .neq("reception_status", "RECEIVED")
+    .limit(500);
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    const order = first(row.orders as Embedded<Record<string, unknown>>);
+    const client = first(order?.clients as Embedded<Record<string, unknown>>);
+    return {
+      id: String(row.id),
+      reference: String(row.reference ?? ""),
+      designation: String(row.nom_produit ?? ""),
+      quantity: toNumber(row.quantity),
+      prixAchat: toNumber(row.prix_achat_unitaire),
+      orderId: String(row.order_id),
+      orderRef: String(order?.ref_demande ?? ""),
+      orderDate: (order?.date_commande as string | null) ?? null,
+      clientName: String(
+        client?.name ?? order?.client_phone ?? "Client comptoir",
+      ),
+    };
+  });
+}
+
+/** Re-order a stock line from a supplier: it becomes an awaited reception. */
+export async function commandRestockLine(
+  supabase: SupabaseClient,
+  orgId: string,
+  lineId: string,
+  input: { supplierId: string; prixAchat?: number; prevueLe?: string | null },
+): Promise<void> {
+  const update: Record<string, unknown> = {
+    supplier_id: input.supplierId,
+    a_commander_pour_livreur: true,
+    reception_status: "PENDING",
+  };
+  if (input.prixAchat != null && input.prixAchat > 0) {
+    update.prix_achat_unitaire = input.prixAchat;
+  }
+  if (input.prevueLe) update.prevue_le = input.prevueLe;
+
+  const { error } = await supabase
+    .from("order_lines")
+    .update(update)
+    .eq("id", lineId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
+}
+
 export type StockItem = {
   id: string;
   sku: string;
