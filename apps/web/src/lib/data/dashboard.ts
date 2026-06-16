@@ -44,6 +44,11 @@ function embeddedName(v: EmbeddedName): string | null {
   return v.name ?? null;
 }
 
+/** Normalise a phone to digits only, so "01 23 45 67 89" === "0123456789". */
+function normPhone(v: string | null | undefined): string {
+  return String(v ?? "").replace(/\D/g, "");
+}
+
 export type RecentOrder = {
   id: string;
   ref: string;
@@ -154,7 +159,10 @@ export async function loadDashboardOverview(
       .eq("organization_id", orgId)
       .neq("reception_status", "RECEIVED")
       .limit(1000),
-    supabase.from("clients").select("rating,is_active").eq("organization_id", orgId),
+    supabase
+      .from("clients")
+      .select("name,phone,rating,is_active")
+      .eq("organization_id", orgId),
     supabase
       .from("orders")
       .select("date_commande,client_id,clients(name)")
@@ -162,13 +170,26 @@ export async function loadDashboardOverview(
       .gte("date_commande", since30),
   ]);
 
+  // Map phone → client name, to resolve orders that store a phone but were
+  // never linked to a client record (client_id is null).
+  const clientByPhone = new Map<string, string>();
+  for (const c of clientsRes.data ?? []) {
+    const row = c as Record<string, unknown>;
+    const phone = normPhone(row.phone as string | null);
+    const name = row.name as string | null;
+    if (phone && name) clientByPhone.set(phone, name);
+  }
+
   // recent orders ----------------------------------------------------------
   const recentOrders: RecentOrder[] = (recentRes.data ?? []).map((o) => {
     const row = o as Record<string, unknown>;
-    // Surface real stored data when the order has no linked client record.
+    const phone = (row.client_phone as string | null) ?? null;
+    // Surface real stored data when the order has no linked client record:
+    // linked name → client matched by phone → raw phone → plate → comptoir.
     const client =
       embeddedName(row.clients as EmbeddedName) ??
-      (row.client_phone as string | null) ??
+      (phone ? clientByPhone.get(normPhone(phone)) : null) ??
+      phone ??
       (row.immatriculation as string | null) ??
       "Client comptoir";
     return {
