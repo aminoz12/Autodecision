@@ -16,7 +16,7 @@ export function fmtMoney(value: number | string | null | undefined): string {
   return `${toNumber(value).toLocaleString("fr-FR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })} DH`;
+  })} €`;
 }
 
 export function fmtDate(value: string | null | undefined): string {
