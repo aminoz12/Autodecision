@@ -201,11 +201,21 @@ export default function ReceptionCommandesPage() {
     return rows;
   }, [board, sms]);
 
-  /** Received STOCK lines awaiting put-away (à ranger en stock). */
+  /**
+   * Received STOCK lines awaiting put-away (à ranger en stock) — only those
+   * that were actually re-ordered from a supplier. Stock lines never re-ordered
+   * (supplier null) belong on the Stock page under "À recommander".
+   */
   const putAwayRows = useMemo(
     () =>
       board
-        .filter((l) => l.fromStock && l.status === "RECEIVED" && !l.putAway)
+        .filter(
+          (l) =>
+            l.fromStock &&
+            l.supplierName &&
+            l.status === "RECEIVED" &&
+            !l.putAway,
+        )
         .sort((a, b) =>
           String(b.receivedAt ?? "").localeCompare(String(a.receivedAt ?? "")),
         ),

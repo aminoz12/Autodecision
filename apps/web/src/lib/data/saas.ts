@@ -355,7 +355,7 @@ export async function loadRestockAlerts(
     .eq("organization_id", orgId)
     .eq("depuis_magasin", true)
     .is("supplier_id", null)
-    .neq("reception_status", "RECEIVED")
+    .eq("retour_stock_fait", false)
     .limit(500);
 
   if (error) throw new Error(error.message);
