@@ -380,6 +380,71 @@ export async function loadRestockAlerts(
   });
 }
 
+export type RestockHistoryStatus = "COMMANDE" | "RECU" | "RANGE";
+
+export type RestockHistoryRow = {
+  id: string;
+  reference: string;
+  designation: string;
+  quantity: number;
+  supplierName: string;
+  orderId: string;
+  orderRef: string;
+  status: RestockHistoryStatus;
+  date: string | null;
+};
+
+/** History of stock re-orders: stock lines that were ordered from a supplier. */
+export async function loadRestockHistory(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<RestockHistoryRow[]> {
+  const { data, error } = await supabase
+    .from("order_lines")
+    .select(
+      "id,reference,nom_produit,quantity,reception_status,retour_stock_fait," +
+        "received_at,prevue_le,order_id,suppliers(name),orders(ref_demande,date_commande)",
+    )
+    .eq("organization_id", orgId)
+    .eq("depuis_magasin", true)
+    .not("supplier_id", "is", null)
+    .limit(500);
+
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
+    const order = first(row.orders as Embedded<Record<string, unknown>>);
+    const received = String(row.reception_status) === "RECEIVED";
+    const putAway = Boolean(row.retour_stock_fait);
+    const status: RestockHistoryStatus = putAway
+      ? "RANGE"
+      : received
+        ? "RECU"
+        : "COMMANDE";
+    return {
+      id: String(row.id),
+      reference: String(row.reference ?? ""),
+      designation: String(row.nom_produit ?? ""),
+      quantity: toNumber(row.quantity),
+      supplierName: String(supplier?.name ?? "Fournisseur"),
+      orderId: String(row.order_id),
+      orderRef: String(order?.ref_demande ?? ""),
+      status,
+      date:
+        (row.received_at as string | null) ??
+        (row.prevue_le as string | null) ??
+        (order?.date_commande as string | null) ??
+        null,
+    };
+  });
+
+  return rows.sort((a, b) =>
+    String(b.date ?? "").localeCompare(String(a.date ?? "")),
+  );
+}
+
 /** Re-order a stock line from a supplier: it becomes an awaited reception. */
 export async function commandRestockLine(
   supabase: SupabaseClient,

@@ -16,12 +16,20 @@ import { createClient } from "@/lib/supabase/client";
 import {
   commandRestockLine,
   loadRestockAlerts,
+  loadRestockHistory,
   loadStockItems,
   loadSupplierOptions,
   type RestockAlert,
+  type RestockHistoryRow,
   type StockItem,
   type SupplierOption,
 } from "@/lib/data/saas";
+
+const HISTORY_STATUS: Record<RestockHistoryRow["status"], { label: string; cls: string }> = {
+  COMMANDE: { label: "Commandé", cls: "amber" },
+  RECU: { label: "Reçu", cls: "blue" },
+  RANGE: { label: "Rangé en stock", cls: "green" },
+};
 
 function fmtDay(value: string | null): string {
   if (!value) return "–";
@@ -36,6 +44,7 @@ export default function StockPage() {
 
   const [rows, setRows] = useState<StockItem[]>([]);
   const [alerts, setAlerts] = useState<RestockAlert[]>([]);
+  const [history, setHistory] = useState<RestockHistoryRow[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,13 +63,15 @@ export default function StockPage() {
     setError(null);
     try {
       const sb = createClient();
-      const [items, restock, sups] = await Promise.all([
+      const [items, restock, hist, sups] = await Promise.all([
         loadStockItems(sb, orgId),
         loadRestockAlerts(sb, orgId),
+        loadRestockHistory(sb, orgId),
         loadSupplierOptions(sb, orgId),
       ]);
       setRows(items);
       setAlerts(restock);
+      setHistory(hist);
       setSuppliers(sups);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -210,6 +221,65 @@ export default function StockPage() {
                 <tr>
                   <td colSpan={5} className="text-muted" style={{ textAlign: "center", padding: "24px 0" }}>
                     Aucune pièce à recommander. Votre stock est à jour 👍
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ---- Historique : stock lines that were re-ordered ---- */}
+      <section className="od-card rl-table-card">
+        <div className="st-section-head">
+          <h2 className="st-section-title">Historique des réapprovisionnements</h2>
+          <span className="st-section-sub">
+            Pièces commandées pour le stock — suivi jusqu&apos;à la mise en rayon.
+          </span>
+        </div>
+        <div className="rl-table-wrap">
+          <table className="rl-table st-table">
+            <thead>
+              <tr>
+                <th>Référence / Désignation</th>
+                <th>Fournisseur</th>
+                <th>Commande</th>
+                <th className="rl-th-center">Qté</th>
+                <th>Date</th>
+                <th>Statut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => {
+                const st = HISTORY_STATUS[h.status];
+                return (
+                  <tr key={h.id}>
+                    <td>
+                      <p className="rl-ref">{h.reference}</p>
+                      <p className="rl-muted">{h.designation}</p>
+                    </td>
+                    <td>
+                      <span className="rc-brand" style={{ color: "#DC2626" }}>
+                        {h.supplierName}
+                      </span>
+                    </td>
+                    <td>
+                      <Link href={`/dashboard/commandes/${h.orderId}`} className="rc-cmd">
+                        {h.orderRef}
+                      </Link>
+                    </td>
+                    <td className="rl-th-center rl-qte">{h.quantity}</td>
+                    <td className="rl-muted-strong">{fmtDay(h.date)}</td>
+                    <td>
+                      <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!loading && history.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="text-muted" style={{ textAlign: "center", padding: "24px 0" }}>
+                    Aucun réapprovisionnement pour le moment.
                   </td>
                 </tr>
               )}
