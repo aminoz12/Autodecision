@@ -51,7 +51,7 @@ export async function loadReceptionBoard(
     .from("order_lines")
     .select(
       "id,order_id,reference,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
-        "orders(id,ref_demande,date_commande,date_envoi,createdAt,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
+        "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
         "suppliers(name),delivery_tours(name)",
     )
     .eq("organization_id", orgId)
@@ -59,7 +59,17 @@ export async function loadReceptionBoard(
 
   if (error) throw new Error(error.message);
 
-  const rows = (data ?? []).map((raw) => {
+  const rows = (data ?? [])
+    .filter((raw) => {
+      // Devis (garagiste quote requests) are not real orders yet.
+      const o = first(
+        (raw as unknown as Record<string, unknown>).orders as Embedded<
+          Record<string, unknown>
+        >,
+      );
+      return !(o && o.devis === true);
+    })
+    .map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
     const order = first(row.orders as Embedded<Record<string, unknown>>);
     const client = first(order?.clients as Embedded<Record<string, unknown>>);

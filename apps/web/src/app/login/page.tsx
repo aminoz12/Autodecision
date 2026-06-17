@@ -18,7 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 
 export default function LoginPage() {
-  const { login, ready, user, profile } = useAuth();
+  const { login, logout, ready, user, profile } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,12 +26,20 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Garagistes go to their portal; staff to the management dashboard.
+  // This is the magasin portal. A garagiste account signing in here would
+  // pollute the magasin session cookie — sign it out and point them to their
+  // portal. Wait for the profile to load before deciding.
   useEffect(() => {
-    if (ready && user) {
-      router.replace(profile?.client_id ? "/garagiste/dashboard" : "/dashboard");
+    if (!ready || !user) return;
+    if (profile?.client_id) {
+      void logout();
+      setError(
+        "Ce compte est un compte garagiste. Connectez-vous sur la page Garagiste (/garagiste).",
+      );
+      return;
     }
-  }, [ready, user, profile, router]);
+    if (profile) router.replace("/dashboard");
+  }, [ready, user, profile, router, logout]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {

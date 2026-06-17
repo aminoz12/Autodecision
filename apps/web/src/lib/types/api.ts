@@ -47,6 +47,7 @@ export type CreateOrderPayload = {
   vehicle_model?: string;
   lines: OrderLineDto[];
   devis?: boolean;
+  devis_status?: string;
   statut_paiement: string;
   montant_paye: number;
   avance_payee: number;

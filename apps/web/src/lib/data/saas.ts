@@ -657,7 +657,8 @@ export async function loadGarages(
     supabase
       .from("orders")
       .select("client_id,montant_total,solde_restant")
-      .eq("organization_id", orgId),
+      .eq("organization_id", orgId)
+      .eq("devis", false),
   ]);
 
   if (clientsRes.error) throw new Error(clientsRes.error.message);
@@ -913,7 +914,8 @@ export async function loadReportsOverview(
     supabase
       .from("orders")
       .select("montant_total,montant_paye,solde_restant")
-      .eq("organization_id", orgId),
+      .eq("organization_id", orgId)
+      .eq("devis", false),
     supabase
       .from("sales_returns")
       .select("montant")

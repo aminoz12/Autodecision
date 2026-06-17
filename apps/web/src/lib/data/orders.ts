@@ -148,19 +148,25 @@ export async function createOrderWithLines(
   const paid = payload.montant_paye ?? 0;
   const advance = payload.avance_payee ?? 0;
   const { total, remaining } = computeOrderMoney(payload.lines, paid, advance);
-  const sendToDelivery = Boolean(payload.envoyer_au_livreur);
+  const isDevis = Boolean(payload.devis);
+  const sendToDelivery = Boolean(payload.envoyer_au_livreur) && !isDevis;
   const workflow_status = sendToDelivery ? "TO_COLLECT" : "PENDING";
 
-  // Fix the delivery tournée from the order creation time, and schedule the
-  // delivery accordingly. Best-effort: never block order creation on it.
-  const tournee = computeTournee(new Date());
+  // A devis (quote request) is not a real order yet: no tournée, no delivery
+  // scheduling until it is accepted. Otherwise fix the tournée from now.
   let tourId: string | null = null;
-  try {
-    tourId = await findOrCreateTour(supabase, orgId, tournee);
-  } catch {
-    tourId = null;
+  let dateEnvoi: string | null = null;
+  let tourName: string | null = null;
+  if (!isDevis) {
+    const tournee = computeTournee(new Date());
+    tourName = tournee.name;
+    try {
+      tourId = await findOrCreateTour(supabase, orgId, tournee);
+    } catch {
+      tourId = null;
+    }
+    dateEnvoi = tournee.deliveryAt.toISOString();
   }
-  const dateEnvoi = tournee.deliveryAt.toISOString();
 
   // next_ref_demande and the insert run as separate requests, so two
   // concurrent submissions can be handed the same number — retry on conflict.
@@ -189,7 +195,8 @@ export async function createOrderWithLines(
         immatriculation: payload.immatriculation ?? null,
         vehicle_model: payload.vehicle_model ?? null,
         montant_total: total,
-        devis: Boolean(payload.devis),
+        devis: isDevis,
+        devis_status: payload.devis_status ?? null,
         statut_paiement: payload.statut_paiement,
         montant_paye: paid,
         avance_payee: advance,
@@ -252,9 +259,40 @@ export async function createOrderWithLines(
   return {
     id: order.id,
     ref_demande: order.ref_demande,
-    tourName: tournee.name,
+    tourName: tourName ?? "",
     deliveryAt: dateEnvoi,
   };
+}
+
+/**
+ * Assign the tournée for an order that becomes confirmed later (e.g. an
+ * accepted devis): fixes the tour from now, schedules date_envoi, tags lines.
+ */
+export async function assignOrderTournee(
+  supabase: SupabaseClient,
+  orgId: string,
+  orderId: string,
+): Promise<string | null> {
+  const tournee = computeTournee(new Date());
+  let tourId: string | null = null;
+  try {
+    tourId = await findOrCreateTour(supabase, orgId, tournee);
+  } catch {
+    tourId = null;
+  }
+  await supabase
+    .from("orders")
+    .update({ date_envoi: tournee.deliveryAt.toISOString() })
+    .eq("id", orderId)
+    .eq("organization_id", orgId);
+  if (tourId) {
+    await supabase
+      .from("order_lines")
+      .update({ tour_id: tourId })
+      .eq("order_id", orderId)
+      .eq("organization_id", orgId);
+  }
+  return tourId;
 }
 
 export async function createQuoteRow(

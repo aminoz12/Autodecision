@@ -107,7 +107,7 @@ export default function NouvelleCommandePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
-  const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string } | null>(null);
+  const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
 
   /* ---- PDF auto-fill ---- */
   const fileRef = useRef<HTMLInputElement>(null);
@@ -367,7 +367,7 @@ export default function NouvelleCommandePage() {
           <p className="nc-success-sub">
             La commande <strong>{createdRef}</strong> a bien été enregistrée.
           </p>
-          {createdTour && (
+          {createdTour?.deliveryAt && (
             <p className="nc-success-tour">
               <Truck className="h-4 w-4" />
               {createdTour.name} — livraison prévue le{" "}

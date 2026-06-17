@@ -16,9 +16,10 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
       router.replace("/login");
       return;
     }
-    // Garagistes don't belong in the staff dashboard.
+    // A garagiste session in the magasin store is an anomaly (wrong login) —
+    // send to /login, which signs it out cleanly.
     if (profile?.client_id) {
-      router.replace("/garagiste/dashboard");
+      router.replace("/login");
     }
   }, [ready, user, profile, router]);
 

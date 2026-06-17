@@ -4,6 +4,7 @@ import {
   Building2,
   Check,
   Copy,
+  FileText,
   KeyRound,
   Loader2,
   Mail,
@@ -11,6 +12,7 @@ import {
   Phone,
   Plus,
   Search,
+  Send,
   Star,
   Wallet,
   X,
@@ -24,6 +26,18 @@ import {
   loadGarages,
   type GarageSummary,
 } from "@/lib/data/saas";
+import {
+  loadGarageRequests,
+  respondDevis,
+  type DevisLineResponse,
+  type DevisRequest,
+} from "@/lib/data/garage";
+
+function frDate(v: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
+}
 
 function initials(name: string) {
   return name
@@ -97,19 +111,63 @@ export default function GaragesPage() {
     }
   }
 
+  // Devis requests + respond modal
+  const [requests, setRequests] = useState<DevisRequest[]>([]);
+  const [respond, setRespond] = useState<DevisRequest | null>(null);
+  const [respLines, setRespLines] = useState<Record<string, { disponible: boolean; unitPrice: number }>>({});
+  const [respSaving, setRespSaving] = useState(false);
+  const [respError, setRespError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
     setLoading(true);
     setError(null);
     try {
       const sb = createClient();
-      setRows(await loadGarages(sb, profile.organization_id));
+      const [g, r] = await Promise.all([
+        loadGarages(sb, profile.organization_id),
+        loadGarageRequests(sb, profile.organization_id),
+      ]);
+      setRows(g);
+      setRequests(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }, [profile?.organization_id]);
+
+  function openRespond(r: DevisRequest) {
+    setRespond(r);
+    const init: Record<string, { disponible: boolean; unitPrice: number }> = {};
+    for (const l of r.lines) {
+      init[l.id] = { disponible: l.disponible ?? true, unitPrice: l.unitPrice || 0 };
+    }
+    setRespLines(init);
+    setRespError(null);
+  }
+
+  async function submitRespond(e: React.FormEvent) {
+    e.preventDefault();
+    if (!respond || !profile?.organization_id) return;
+    setRespSaving(true);
+    setRespError(null);
+    try {
+      const sb = createClient();
+      const responses: DevisLineResponse[] = respond.lines.map((l) => ({
+        lineId: l.id,
+        disponible: respLines[l.id]?.disponible ?? true,
+        unitPrice: respLines[l.id]?.unitPrice ?? 0,
+      }));
+      await respondDevis(sb, profile.organization_id, respond.id, responses);
+      setRespond(null);
+      await load();
+    } catch (err) {
+      setRespError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRespSaving(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -181,6 +239,34 @@ export default function GaragesPage() {
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#FEF3C7", color: "#EA580C" }}><Wallet className="h-5 w-5" /></span><div><p className="ga-stat-value">{fmtMoney(totals.outstanding)}</p><p className="ga-stat-label">Encours</p></div></div>
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#DBEAFE", color: "#2563EB" }}><Wallet className="h-5 w-5" /></span><div><p className="ga-stat-value">{fmtMoney(totals.revenue)}</p><p className="ga-stat-label">CA total</p></div></div>
       </div>
+
+      {requests.length > 0 && (
+        <section className="ga-requests">
+          <div className="ga-requests-head">
+            <FileText className="h-4 w-4" style={{ color: "#D97706" }} />
+            Demandes de devis
+            <span className="ga-requests-count">{requests.length}</span>
+          </div>
+          <div className="ga-requests-list">
+            {requests.map((r) => (
+              <div key={r.id} className="ga-request">
+                <div className="ga-request-info">
+                  <span className="ga-request-garage">{r.garageName}</span>
+                  <span className="ga-request-meta">
+                    {r.ref} · {frDate(r.date)} · {r.lines.length} pièce(s)
+                  </span>
+                </div>
+                <span className={`rt-badge rt-badge--${r.status === "QUOTED" ? "blue" : "amber"}`}>
+                  {r.status === "QUOTED" ? "Devis envoyé" : "À traiter"}
+                </span>
+                <button type="button" className="od-btn od-btn--primary" onClick={() => openRespond(r)}>
+                  {r.status === "QUOTED" ? "Modifier" : "Répondre"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="ga-grid">
         {filtered.map((row, index) => (
@@ -326,6 +412,69 @@ export default function GaragesPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Respond to a devis */}
+      {respond && (
+        <div className="ga-modal-overlay" onClick={() => !respSaving && setRespond(null)}>
+          <div className="ga-modal ga-modal--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <h2 className="ga-modal-title">Devis — {respond.garageName}</h2>
+              <button type="button" className="ga-modal-close" onClick={() => setRespond(null)} aria-label="Fermer">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitRespond}>
+              {respError && <div className="nc-error">{respError}</div>}
+              <p className="ga-creds-hint">
+                Pour chaque pièce, indiquez si elle est disponible et son prix de vente
+                unitaire. Le garagiste recevra le devis et pourra l&apos;accepter.
+              </p>
+              <div className="ga-resp-lines">
+                {respond.lines.map((l) => {
+                  const st = respLines[l.id] ?? { disponible: true, unitPrice: 0 };
+                  return (
+                    <div key={l.id} className="ga-resp-line">
+                      <div className="ga-resp-part">
+                        <span className="rl-ref">{l.reference}</span>
+                        <span className="rl-muted">{l.designation} · ×{l.quantity}</span>
+                      </div>
+                      <label className="ga-resp-toggle">
+                        <input
+                          type="checkbox"
+                          checked={st.disponible}
+                          onChange={(e) =>
+                            setRespLines((p) => ({ ...p, [l.id]: { ...st, disponible: e.target.checked } }))
+                          }
+                        />
+                        Disponible
+                      </label>
+                      <input
+                        className="od-input ga-resp-price"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Prix U."
+                        disabled={!st.disponible}
+                        value={st.unitPrice || ""}
+                        onChange={(e) =>
+                          setRespLines((p) => ({ ...p, [l.id]: { ...st, unitPrice: Number(e.target.value) } }))
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setRespond(null)} disabled={respSaving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={respSaving}>
+                  {respSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Send className="h-4 w-4" />}
+                  {respSaving ? "Envoi…" : "Envoyer le devis"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

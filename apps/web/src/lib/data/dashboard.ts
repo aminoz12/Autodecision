@@ -110,6 +110,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
+        .eq("devis", false)
         .eq("date_commande", today),
     ),
     headCount(
@@ -117,6 +118,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
+        .eq("devis", false)
         .eq("date_commande", yesterday),
     ),
     headCount(
@@ -124,6 +126,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
+        .eq("devis", false)
         .eq("workflow_status", "PENDING"),
     ),
     headCount(
@@ -143,7 +146,8 @@ export async function loadDashboardOverview(
       supabase
         .from("orders")
         .select("id", { count: "exact", head: true })
-        .eq("organization_id", orgId),
+        .eq("organization_id", orgId)
+        .eq("devis", false),
     ),
     supabase
       .from("orders")
@@ -151,6 +155,7 @@ export async function loadDashboardOverview(
         "id,ref_demande,workflow_status,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
       )
       .eq("organization_id", orgId)
+      .eq("devis", false)
       .order("createdAt", { ascending: false })
       .limit(5),
     supabase
@@ -167,6 +172,7 @@ export async function loadDashboardOverview(
       .from("orders")
       .select("date_commande,client_id,clients(name)")
       .eq("organization_id", orgId)
+      .eq("devis", false)
       .gte("date_commande", since30),
   ]);
 

@@ -4163,3 +4163,24 @@ body {
 .gp-order-total { font-weight: 700; color: var(--text-primary); }
 .gp-order-balance { color: #DC2626; font-weight: 600; }
 .gp-note { margin-top: 16px; font-size: 13px; color: var(--text-muted); }
+
+/* Garages: devis requests + respond modal */
+.ga-requests { background: #fff; border: 1px solid #FCE3C4; border-radius: 16px; box-shadow: var(--shadow-card); padding: 18px 20px; margin-bottom: 22px; }
+.ga-requests-head { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 14px; }
+.ga-requests-count { font-size: 12px; font-weight: 800; background: #FEF3C7; color: #B45309; padding: 2px 9px; border-radius: 999px; }
+.ga-requests-list { display: flex; flex-direction: column; gap: 10px; }
+.ga-request { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-card); border-radius: 12px; }
+.ga-request-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ga-request-garage { font-weight: 700; color: var(--text-primary); }
+.ga-request-meta { font-size: 12.5px; color: var(--text-muted); }
+
+.ga-modal--wide { max-width: 560px; }
+.ga-resp-lines { display: flex; flex-direction: column; gap: 10px; }
+.ga-resp-line { display: grid; grid-template-columns: 1fr auto 110px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
+.ga-resp-line:last-child { border-bottom: none; }
+.ga-resp-part { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ga-resp-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
+.ga-resp-price { height: 40px; }
+
+/* Garagiste: quote accept/refuse actions */
+.gp-quote-actions { display: inline-flex; gap: 10px; }

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toNumber } from "@/lib/data/saas";
-import { createOrderWithLines } from "@/lib/data/orders";
+import { assignOrderTournee, createOrderWithLines } from "@/lib/data/orders";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
 type Embedded<T> = T | T[] | null | undefined;
@@ -52,6 +52,10 @@ export type GarageOrderLine = {
   designation: string;
   quantity: number;
   status: string;
+  /** Magasin's devis answer: null = pending, true = available, false = no. */
+  disponible: boolean | null;
+  unitPrice: number;
+  lineTotal: number;
 };
 
 export type GarageOrder = {
@@ -60,6 +64,8 @@ export type GarageOrder = {
   date: string | null;
   deliveryAt: string | null;
   workflow: string;
+  devis: boolean;
+  devisStatus: string | null;
   total: number;
   paid: number;
   balance: number;
@@ -74,8 +80,8 @@ export async function loadGarageOrders(
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "id,ref_demande,date_commande,date_envoi,workflow_status,montant_total,montant_paye,solde_restant," +
-        "order_lines(id,reference,nom_produit,quantity,reception_status)",
+      "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant," +
+        "order_lines(id,reference,nom_produit,quantity,reception_status,disponible,prix_vente_unitaire)",
     )
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
@@ -87,13 +93,23 @@ export async function loadGarageOrders(
   return (data ?? []).map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
     const lines = arr(row.order_lines as Embedded<Record<string, unknown>>).map(
-      (l) => ({
-        id: String(l.id),
-        reference: String(l.reference ?? ""),
-        designation: String(l.nom_produit ?? ""),
-        quantity: toNumber(l.quantity),
-        status: String(l.reception_status ?? "PENDING"),
-      }),
+      (l) => {
+        const qty = toNumber(l.quantity);
+        const pv = toNumber(l.prix_vente_unitaire);
+        return {
+          id: String(l.id),
+          reference: String(l.reference ?? ""),
+          designation: String(l.nom_produit ?? ""),
+          quantity: qty,
+          status: String(l.reception_status ?? "PENDING"),
+          disponible:
+            l.disponible === null || l.disponible === undefined
+              ? null
+              : Boolean(l.disponible),
+          unitPrice: pv,
+          lineTotal: qty * pv,
+        };
+      },
     );
     return {
       id: String(row.id),
@@ -101,6 +117,8 @@ export async function loadGarageOrders(
       date: (row.date_commande as string | null) ?? null,
       deliveryAt: (row.date_envoi as string | null) ?? null,
       workflow: String(row.workflow_status ?? "PENDING"),
+      devis: Boolean(row.devis),
+      devisStatus: (row.devis_status as string | null) ?? null,
       total: toNumber(row.montant_total),
       paid: toNumber(row.montant_paye),
       balance: toNumber(row.solde_restant),
@@ -142,14 +160,71 @@ export async function createGarageOrder(
       prix_achat_unitaire: 0,
       prix_vente_unitaire: 0,
     })),
+    devis: true,
+    devis_status: "REQUESTED",
     statut_paiement: "NON_PAYÉ",
     montant_paye: 0,
     avance_payee: 0,
-    envoyer_au_livreur: true,
+    envoyer_au_livreur: false,
     statut_livreur: "EN_ATTENTE",
     bl: false,
   };
   return createOrderWithLines(supabase, userId, orgId, payload);
+}
+
+/** Garagiste accepts a quoted devis → it becomes a confirmed order. */
+export async function acceptDevisOrder(
+  supabase: SupabaseClient,
+  orgId: string,
+  orderId: string,
+): Promise<void> {
+  // Total = available lines only.
+  const { data: lines, error: lErr } = await supabase
+    .from("order_lines")
+    .select("quantity,prix_vente_unitaire,disponible")
+    .eq("order_id", orderId)
+    .eq("organization_id", orgId);
+  if (lErr) throw new Error(lErr.message);
+
+  const total = (lines ?? []).reduce((s, raw) => {
+    const l = raw as Record<string, unknown>;
+    if (l.disponible === false) return s;
+    return s + toNumber(l.quantity) * toNumber(l.prix_vente_unitaire);
+  }, 0);
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      devis: false,
+      devis_status: "ACCEPTED",
+      montant_total: total,
+      solde_restant: total,
+      envoyer_au_livreur: true,
+      workflow_status: "TO_COLLECT",
+    })
+    .eq("id", orderId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
+
+  // Now that it's confirmed, schedule it into a tournée + delivery task.
+  await assignOrderTournee(supabase, orgId, orderId);
+  await supabase
+    .from("delivery_tasks")
+    .insert({ organization_id: orgId, order_id: orderId, workflow_status: "TO_COLLECT" });
+}
+
+/** Garagiste refuses a quoted devis. */
+export async function refuseDevisOrder(
+  supabase: SupabaseClient,
+  orgId: string,
+  orderId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("orders")
+    .update({ devis_status: "REFUSED" })
+    .eq("id", orderId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
 }
 
 /* ------------------------------------------------------------------ */
@@ -223,8 +298,108 @@ export async function createGarageReturn(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Magasin side: garagiste devis requests                            */
+/* ------------------------------------------------------------------ */
+
+export type DevisRequestLine = {
+  id: string;
+  reference: string;
+  designation: string;
+  quantity: number;
+  disponible: boolean | null;
+  unitPrice: number;
+};
+
+export type DevisRequest = {
+  id: string;
+  ref: string;
+  date: string | null;
+  status: string;
+  garageId: string | null;
+  garageName: string;
+  lines: DevisRequestLine[];
+};
+
+export async function loadGarageRequests(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<DevisRequest[]> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      "id,ref_demande,date_commande,devis_status,client_id,clients(name)," +
+        "order_lines(id,reference,nom_produit,quantity,disponible,prix_vente_unitaire)",
+    )
+    .eq("organization_id", orgId)
+    .eq("devis", true)
+    .in("devis_status", ["REQUESTED", "QUOTED"])
+    .order("createdAt", { ascending: false })
+    .limit(200);
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    const client = arr(row.clients as Embedded<Record<string, unknown>>)[0];
+    const lines = arr(row.order_lines as Embedded<Record<string, unknown>>).map((l) => ({
+      id: String(l.id),
+      reference: String(l.reference ?? ""),
+      designation: String(l.nom_produit ?? ""),
+      quantity: toNumber(l.quantity),
+      disponible:
+        l.disponible === null || l.disponible === undefined ? null : Boolean(l.disponible),
+      unitPrice: toNumber(l.prix_vente_unitaire),
+    }));
+    return {
+      id: String(row.id),
+      ref: String(row.ref_demande ?? ""),
+      date: (row.date_commande as string | null) ?? null,
+      status: String(row.devis_status ?? "REQUESTED"),
+      garageId: (row.client_id as string | null) ?? null,
+      garageName: String(client?.name ?? "Garage"),
+      lines,
+    };
+  });
+}
+
+export type DevisLineResponse = { lineId: string; disponible: boolean; unitPrice: number };
+
+/** Magasin answers a devis: per-line availability + price, status → QUOTED. */
+export async function respondDevis(
+  supabase: SupabaseClient,
+  orgId: string,
+  orderId: string,
+  responses: DevisLineResponse[],
+): Promise<void> {
+  for (const r of responses) {
+    const { error } = await supabase
+      .from("order_lines")
+      .update({
+        disponible: r.disponible,
+        prix_vente_unitaire: r.disponible ? r.unitPrice : 0,
+      })
+      .eq("id", r.lineId)
+      .eq("organization_id", orgId);
+    if (error) throw new Error(error.message);
+  }
+  const { error } = await supabase
+    .from("orders")
+    .update({ devis_status: "QUOTED" })
+    .eq("id", orderId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Labels                                                            */
 /* ------------------------------------------------------------------ */
+
+export const DEVIS_LABEL: Record<string, { label: string; cls: string }> = {
+  REQUESTED: { label: "Devis demandé", cls: "amber" },
+  QUOTED: { label: "Devis reçu", cls: "blue" },
+  ACCEPTED: { label: "Accepté", cls: "green" },
+  REFUSED: { label: "Refusé", cls: "red" },
+};
 
 export const WORKFLOW_LABEL: Record<string, { label: string; cls: string }> = {
   PENDING: { label: "En attente", cls: "amber" },
