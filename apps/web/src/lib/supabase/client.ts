@@ -7,10 +7,16 @@ import { getSupabaseAnonKey, getSupabaseUrl } from "./env";
  * logged in simultaneously in the same browser without overwriting each other.
  */
 export function createClient(storageKey?: string) {
+  // For a custom session store we must opt OUT of the singleton (otherwise the
+  // browser returns the first client and ignores our options) and set the
+  // cookie name via cookieOptions.name (which @supabase/ssr maps to the auth
+  // storageKey). Without a storageKey, keep the default singleton client.
   return createBrowserClient(
     getSupabaseUrl(),
     getSupabaseAnonKey(),
-    storageKey ? { auth: { storageKey } } : undefined,
+    storageKey
+      ? { isSingleton: false, cookieOptions: { name: storageKey } }
+      : undefined,
   );
 }
 
