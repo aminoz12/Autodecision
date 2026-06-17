@@ -4103,3 +4103,13 @@ body {
 .ga-creds code { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
 .ga-creds-hint { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
 .ga-creds-hint code, .ga-creds code { background: #EEF2FF; padding: 1px 6px; border-radius: 6px; }
+
+/* Garagiste login — dark navy brand panel (matches the portal nav) */
+.auth-brand--garage {
+  background:
+    radial-gradient(1100px 560px at -10% -10%, rgba(91,78,229,0.28), transparent 55%),
+    linear-gradient(150deg, #1e2547 0%, #161a33 48%, #0b0e23 100%);
+}
+.auth-brand--garage .auth-brand-logo-mark { background: #5b4ee5; }
+.auth-btn--garage { background: #5b4ee5; }
+.auth-btn--garage:hover { background: #4f43d6; }

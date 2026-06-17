@@ -280,7 +280,7 @@ export default function GaragesPage() {
                   Accès créé. Communiquez ces identifiants au garagiste :
                 </div>
                 <div className="ga-creds">
-                  <div><span className="ga-creds-lbl">Lien</span><code>/login</code></div>
+                  <div><span className="ga-creds-lbl">Lien</span><code>/garagiste</code></div>
                   <div><span className="ga-creds-lbl">Email</span><code>{accEmail}</code></div>
                   <div><span className="ga-creds-lbl">Mot de passe</span><code>{accPwd}</code></div>
                 </div>
@@ -301,7 +301,7 @@ export default function GaragesPage() {
               <form className="ga-modal-form" onSubmit={submitAccess}>
                 {accError && <div className="nc-error">{accError}</div>}
                 <p className="ga-creds-hint">
-                  Le garagiste se connectera sur <code>/login</code> pour commander et
+                  Le garagiste se connectera sur <code>/garagiste</code> pour commander et
                   demander des retours.
                 </p>
                 <div className="od-field">
