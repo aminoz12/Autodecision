@@ -14,11 +14,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/providers/AuthProvider";
 
 const NAV = [
-  { href: "/garage", label: "Accueil", icon: LayoutDashboard, exact: true },
-  { href: "/garage/commander", label: "Commander", icon: Plus },
-  { href: "/garage/commandes", label: "Mes commandes", icon: ShoppingCart },
-  { href: "/garage/retours", label: "Retours", icon: RotateCcw },
-  { href: "/garage/factures", label: "Factures", icon: CreditCard },
+  { href: "/garagiste/dashboard", label: "Accueil", icon: LayoutDashboard, exact: true },
+  { href: "/garagiste/dashboard/commander", label: "Commander", icon: Plus },
+  { href: "/garagiste/dashboard/commandes", label: "Mes commandes", icon: ShoppingCart },
+  { href: "/garagiste/dashboard/retours", label: "Retours", icon: RotateCcw },
+  { href: "/garagiste/dashboard/factures", label: "Factures", icon: CreditCard },
 ];
 
 export function GarageNav() {

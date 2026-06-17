@@ -18,7 +18,7 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
     }
     // Garagistes don't belong in the staff dashboard.
     if (profile?.client_id) {
-      router.replace("/garage");
+      router.replace("/garagiste/dashboard");
     }
   }, [ready, user, profile, router]);
 

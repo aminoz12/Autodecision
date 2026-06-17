@@ -5,10 +5,10 @@ import Link from "next/link";
 import { useAuth } from "@/components/providers/AuthProvider";
 
 const ACTIONS = [
-  { href: "/garage/commander", title: "Commander", desc: "Passer une nouvelle commande de pièces.", icon: Plus, color: "#5b4ee5", bg: "#EEF2FF" },
-  { href: "/garage/commandes", title: "Mes commandes", desc: "Suivre l'état de vos commandes.", icon: ShoppingCart, color: "#2563EB", bg: "#DBEAFE" },
-  { href: "/garage/retours", title: "Retours", desc: "Demander le retour d'une pièce.", icon: RotateCcw, color: "#D97706", bg: "#FEF3C7" },
-  { href: "/garage/factures", title: "Factures", desc: "Consulter votre encours et vos paiements.", icon: CreditCard, color: "#16A34A", bg: "#DCFCE7" },
+  { href: "/garagiste/dashboard/commander", title: "Commander", desc: "Passer une nouvelle commande de pièces.", icon: Plus, color: "#5b4ee5", bg: "#EEF2FF" },
+  { href: "/garagiste/dashboard/commandes", title: "Mes commandes", desc: "Suivre l'état de vos commandes.", icon: ShoppingCart, color: "#2563EB", bg: "#DBEAFE" },
+  { href: "/garagiste/dashboard/retours", title: "Retours", desc: "Demander le retour d'une pièce.", icon: RotateCcw, color: "#D97706", bg: "#FEF3C7" },
+  { href: "/garagiste/dashboard/factures", title: "Factures", desc: "Consulter votre encours et vos paiements.", icon: CreditCard, color: "#16A34A", bg: "#DCFCE7" },
 ];
 
 export default function GarageHomePage() {

@@ -29,7 +29,7 @@ export default function LoginPage() {
   // Garagistes go to their portal; staff to the management dashboard.
   useEffect(() => {
     if (ready && user) {
-      router.replace(profile?.client_id ? "/garage" : "/dashboard");
+      router.replace(profile?.client_id ? "/garagiste/dashboard" : "/dashboard");
     }
   }, [ready, user, profile, router]);
 

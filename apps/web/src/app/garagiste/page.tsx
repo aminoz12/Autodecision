@@ -25,11 +25,12 @@ export default function GaragisteLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Garagistes go to their portal; a logged-in staff member is sent to the
-  // dashboard (this page is for garagistes only).
+  // Only forward an already-logged-in garagiste to their portal. A staff
+  // session (or no session) stays here so a garagiste can sign in — even on a
+  // machine where the magasin is logged in, logging in here replaces it.
   useEffect(() => {
-    if (ready && user) {
-      router.replace(profile?.client_id ? "/garage" : "/dashboard");
+    if (ready && user && profile?.client_id) {
+      router.replace("/garagiste/dashboard");
     }
   }, [ready, user, profile, router]);
 
