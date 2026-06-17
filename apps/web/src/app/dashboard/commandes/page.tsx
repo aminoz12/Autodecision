@@ -134,27 +134,27 @@ export default function ReceptionCommandesPage() {
     [board],
   );
 
+  // Group by tournée name (derived tournées have no tour_id but a real name).
   const tours = useMemo(() => {
-    const map = new Map<string, { id: string | null; name: string; count: number }>();
+    const map = new Map<string, { name: string; count: number }>();
     for (const l of pending) {
-      const key = l.tourId ?? "none";
+      const key = l.tourName ?? "Hors tournée";
       const cur = map.get(key);
       if (cur) cur.count += 1;
-      else
-        map.set(key, {
-          id: l.tourId,
-          name: l.tourName ?? "Hors tournée",
-          count: 1,
-        });
+      else map.set(key, { name: key, count: 1 });
     }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...map.values()].sort((a, b) => {
+      const ra = a.name.startsWith("Tournée") ? 0 : 1;
+      const rb = b.name.startsWith("Tournée") ? 0 : 1;
+      return ra - rb || a.name.localeCompare(b.name);
+    });
   }, [pending]);
 
   const pointerRows = useMemo(
     () =>
       tourFilter === null
         ? pending
-        : pending.filter((l) => (l.tourId ?? "none") === tourFilter),
+        : pending.filter((l) => (l.tourName ?? "Hors tournée") === tourFilter),
     [pending, tourFilter],
   );
 
@@ -514,14 +514,14 @@ export default function ReceptionCommandesPage() {
               {tours.length > 0 && (
                 <div className="rc-tournees">
                   {tours.map((t, i) => {
-                    const key = t.id ?? "none";
+                    const isTour = t.name.startsWith("Tournée");
                     const color = TOUR_COLORS[i % TOUR_COLORS.length];
-                    const active = tourFilter === key;
+                    const active = tourFilter === t.name;
                     return (
                       <button
-                        key={key}
+                        key={t.name}
                         type="button"
-                        onClick={() => setTourFilter(active ? null : key)}
+                        onClick={() => setTourFilter(active ? null : t.name)}
                         className={`rc-tournee${active ? " rc-tournee--active" : ""}`}
                       >
                         <span
@@ -533,7 +533,7 @@ export default function ReceptionCommandesPage() {
                         <span className="rc-tournee-text">
                           <span className="rc-tournee-label">{t.name}</span>
                           <span className="rc-tournee-sub">
-                            {t.id ? "Tournée" : "Livraison externe"}
+                            {isTour ? "Livraison" : "Livraison externe"}
                           </span>
                         </span>
                         <span className="rc-tournee-count">{t.count}</span>

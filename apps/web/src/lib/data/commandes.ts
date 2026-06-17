@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toNumber } from "@/lib/data/saas";
+import { computeTournee } from "@/lib/data/orders";
 
 type Embedded<T> = T | T[] | null | undefined;
 
@@ -50,7 +51,7 @@ export async function loadReceptionBoard(
     .from("order_lines")
     .select(
       "id,order_id,reference,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
-        "orders(id,ref_demande,date_commande,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
+        "orders(id,ref_demande,date_commande,date_envoi,createdAt,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
         "suppliers(name),delivery_tours(name)",
     )
     .eq("organization_id", orgId)
@@ -64,6 +65,20 @@ export async function loadReceptionBoard(
     const client = first(order?.clients as Embedded<Record<string, unknown>>);
     const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
     const tour = first(row.delivery_tours as Embedded<Record<string, unknown>>);
+    // Real tour name, else derive the tournée from the order's creation time
+    // (or its scheduled delivery), so lines created before tour assignment
+    // still display their tournée instead of "Hors tournée".
+    let tourName = tour ? String(tour.name ?? "") : null;
+    if (!tourName) {
+      const stamp =
+        (order?.createdAt as string | null) ??
+        (order?.date_envoi as string | null) ??
+        null;
+      if (stamp) {
+        const d = new Date(stamp);
+        if (!Number.isNaN(d.getTime())) tourName = computeTournee(d).name;
+      }
+    }
     return {
       id: String(row.id),
       orderId: String(row.order_id),
@@ -87,7 +102,7 @@ export async function loadReceptionBoard(
       receivedAt: (row.received_at as string | null) ?? null,
       expectedAt: (row.prevue_le as string | null) ?? null,
       tourId: (row.tour_id as string | null) ?? null,
-      tourName: tour ? String(tour.name ?? "") : null,
+      tourName,
       putAway: Boolean(row.retour_stock_fait),
     };
   });
