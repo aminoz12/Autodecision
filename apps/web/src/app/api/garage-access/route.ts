@@ -29,7 +29,8 @@ async function handle(request: Request) {
   }
 
   // Read the caller's profile with the admin client (avoids any RLS surprise
-  // on the server-side read), then verify they are a magasin ADMIN.
+  // on the server-side read). Any magasin staff (ADMIN or CAISSIER) may create
+  // garage access — only garagistes (client_id set) are refused.
   const admin = createAdminClient();
   const { data: profile } = await admin
     .from("profiles")
@@ -37,9 +38,9 @@ async function handle(request: Request) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!profile || profile.role !== "ADMIN" || profile.client_id) {
+  if (!profile || profile.client_id) {
     return NextResponse.json(
-      { error: "Accès refusé (compte non administrateur)." },
+      { error: "Accès refusé (compte non autorisé)." },
       { status: 403 },
     );
   }
