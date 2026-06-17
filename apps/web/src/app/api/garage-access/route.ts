@@ -10,7 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * value + client_id marker). The handle_new_user trigger writes the profile.
  */
 export async function POST(request: Request) {
-  // 1) Authenticate the caller and verify they are an ADMIN of an org.
+  // 1) Authenticate the caller from their session cookie.
   const supabase = await createClient();
   const {
     data: { user },
@@ -19,14 +19,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
+  // Read the caller's profile with the admin client (avoids any RLS surprise
+  // on the server-side read), then verify they are a magasin ADMIN.
+  const admin = createAdminClient();
+  const { data: profile } = await admin
     .from("profiles")
     .select("organization_id, role, client_id")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (!profile || profile.role !== "ADMIN" || profile.client_id) {
-    return NextResponse.json({ error: "Accès refusé." }, { status: 403 });
+    return NextResponse.json(
+      { error: "Accès refusé (compte non administrateur)." },
+      { status: 403 },
+    );
   }
   const orgId = profile.organization_id as string;
 
@@ -46,8 +52,6 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-
-  const admin = createAdminClient();
 
   // 3) The garage must belong to the caller's org (defense in depth).
   const { data: garage } = await admin
