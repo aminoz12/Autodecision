@@ -2,7 +2,9 @@
 
 import {
   AlertTriangle,
+  Boxes,
   ChevronDown,
+  History,
   Loader2,
   PackageOpen,
   RefreshCw,
@@ -127,85 +129,98 @@ export default function StockPage() {
   }
 
   return (
-    <div className="rl-page">
-      <header className="rl-header">
-        <div className="rl-header-left">
-          <h1 className="rl-title">
+    <div className="stk-page">
+      <header className="stk-header">
+        <div>
+          <h1 className="stk-title">
+            <span className="stk-title-icon"><PackageOpen className="h-5 w-5" /></span>
             Stock magasin
-            <span className="rl-title-icon"><PackageOpen className="h-5 w-5" /></span>
           </h1>
-          <p className="rl-subtitle">
-            Alerte de réapprovisionnement : recommandez les pièces sorties du stock.
+          <p className="stk-sub">
+            Alerte de réapprovisionnement : recommandez les pièces sorties du stock
+            pour garder votre inventaire à jour.
           </p>
         </div>
-        <div className="rl-header-actions">
-          <button type="button" className="rl-refresh" onClick={() => void load()}>
-            <RefreshCw className="h-4 w-4" />
-            Actualiser
-          </button>
-        </div>
+        <button
+          type="button"
+          className="od-btn od-btn--ghost"
+          onClick={() => void load()}
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Actualiser
+        </button>
       </header>
 
       {error && <div className="nc-error">{error}</div>}
 
-      <div className="rl-stats">
-        <div className="rl-stat">
-          <span className="rl-stat-icon"><PackageOpen className="h-5 w-5" /></span>
-          <span className="rl-stat-label">Références</span>
-          <span className="rl-stat-value">{totals.refs}</span>
-        </div>
-        <div className="rl-stat">
-          <span className="rl-stat-icon"><PackageOpen className="h-5 w-5" /></span>
-          <span className="rl-stat-label">Pièces en stock</span>
-          <span className="rl-stat-value">{totals.pieces}</span>
-        </div>
-        <div className="rl-stat">
-          <span className="rl-stat-icon" style={{ background: "#FEF3C7", color: "#D97706" }}>
-            <AlertTriangle className="h-5 w-5" />
+      <div className="stk-stats">
+        <div className="stk-stat stk-stat--violet">
+          <span className="stk-stat-icon"><PackageOpen className="h-5 w-5" /></span>
+          <span className="stk-stat-body">
+            <span className="stk-stat-label">Références en stock</span>
+            <span className="stk-stat-value">{totals.refs}</span>
           </span>
-          <span className="rl-stat-label">À recommander</span>
-          <span className="rl-stat-value">{totals.toRestock}</span>
+        </div>
+        <div className="stk-stat stk-stat--green">
+          <span className="stk-stat-icon"><Boxes className="h-5 w-5" /></span>
+          <span className="stk-stat-body">
+            <span className="stk-stat-label">Pièces en stock</span>
+            <span className="stk-stat-value">{totals.pieces}</span>
+          </span>
+        </div>
+        <div className="stk-stat stk-stat--amber">
+          <span className="stk-stat-icon"><AlertTriangle className="h-5 w-5" /></span>
+          <span className="stk-stat-body">
+            <span className="stk-stat-label">À recommander</span>
+            <span className="stk-stat-value">{totals.toRestock}</span>
+          </span>
         </div>
       </div>
 
       {/* ---- À recommander : stock-sourced lines awaiting re-order ---- */}
-      <section className="od-card rl-table-card">
-        <div className="st-section-head">
-          <h2 className="st-section-title">
-            <AlertTriangle className="h-4 w-4" style={{ color: "#D97706" }} />
-            Pièces à recommander
-          </h2>
-          <span className="st-section-sub">
-            Sorties du stock pour un client — à recommander pour réapprovisionner.
+      <section className="stk-card">
+        <div className="stk-card-head">
+          <span className="stk-card-head-icon" style={{ background: "#FEF3C7", color: "#D97706" }}>
+            <AlertTriangle className="h-4 w-4" />
           </span>
+          <span className="stk-card-titles">
+            <span className="stk-card-title">Pièces à recommander</span>
+            <span className="stk-card-sub">Sorties du stock pour un client — à recommander pour réapprovisionner.</span>
+          </span>
+          {alerts.length > 0 && (
+            <span className="stk-card-badge" style={{ background: "#FEF3C7", color: "#B45309" }}>
+              {alerts.length}
+            </span>
+          )}
         </div>
         <div className="rl-table-wrap">
-          <table className="rl-table st-table">
+          <table className="stk-table">
             <thead>
               <tr>
                 <th>Référence / Désignation</th>
                 <th>Commande / Client</th>
-                <th className="rl-th-center">Qté</th>
+                <th className="stk-th-center">Qté</th>
                 <th>Date</th>
-                <th className="rl-th-center">Action</th>
+                <th className="stk-th-center">Action</th>
               </tr>
             </thead>
             <tbody>
               {alerts.map((a) => (
                 <tr key={a.id}>
                   <td>
-                    <p className="rl-ref">{a.reference}</p>
-                    <p className="rl-muted">{a.designation}</p>
+                    <p className="stk-ref">{a.reference}</p>
+                    <p className="stk-desig">{a.designation}</p>
                   </td>
                   <td>
                     <Link href={`/dashboard/commandes/${a.orderId}`} className="rc-cmd">
                       {a.orderRef}
                     </Link>
-                    <p className="rl-muted">{a.clientName}</p>
+                    <p className="stk-desig">{a.clientName}</p>
                   </td>
-                  <td className="rl-th-center rl-qte">{a.quantity}</td>
+                  <td className="stk-td-center"><span className="stk-qty">{a.quantity}</span></td>
                   <td className="rl-muted-strong">{fmtDay(a.orderDate)}</td>
-                  <td className="rl-th-center">
+                  <td className="stk-td-center">
                     <button
                       type="button"
                       className="od-btn od-btn--primary st-cmd-btn"
@@ -219,7 +234,7 @@ export default function StockPage() {
               ))}
               {!loading && alerts.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-muted" style={{ textAlign: "center", padding: "24px 0" }}>
+                  <td colSpan={5} className="stk-empty">
                     Aucune pièce à recommander. Votre stock est à jour 👍
                   </td>
                 </tr>
@@ -230,21 +245,29 @@ export default function StockPage() {
       </section>
 
       {/* ---- Historique : stock lines that were re-ordered ---- */}
-      <section className="od-card rl-table-card">
-        <div className="st-section-head">
-          <h2 className="st-section-title">Historique des réapprovisionnements</h2>
-          <span className="st-section-sub">
-            Pièces commandées pour le stock — suivi jusqu&apos;à la mise en rayon.
+      <section className="stk-card">
+        <div className="stk-card-head">
+          <span className="stk-card-head-icon" style={{ background: "#EEF2FF", color: "#5b4ee5" }}>
+            <History className="h-4 w-4" />
           </span>
+          <span className="stk-card-titles">
+            <span className="stk-card-title">Historique des réapprovisionnements</span>
+            <span className="stk-card-sub">Pièces commandées pour le stock — suivi jusqu&apos;à la mise en rayon.</span>
+          </span>
+          {history.length > 0 && (
+            <span className="stk-card-badge" style={{ background: "#EEF2FF", color: "#4F46E5" }}>
+              {history.length}
+            </span>
+          )}
         </div>
         <div className="rl-table-wrap">
-          <table className="rl-table st-table">
+          <table className="stk-table">
             <thead>
               <tr>
                 <th>Référence / Désignation</th>
                 <th>Fournisseur</th>
                 <th>Commande</th>
-                <th className="rl-th-center">Qté</th>
+                <th className="stk-th-center">Qté</th>
                 <th>Date</th>
                 <th>Statut</th>
               </tr>
@@ -255,8 +278,8 @@ export default function StockPage() {
                 return (
                   <tr key={h.id}>
                     <td>
-                      <p className="rl-ref">{h.reference}</p>
-                      <p className="rl-muted">{h.designation}</p>
+                      <p className="stk-ref">{h.reference}</p>
+                      <p className="stk-desig">{h.designation}</p>
                     </td>
                     <td>
                       <span className="rc-brand" style={{ color: "#DC2626" }}>
@@ -268,7 +291,7 @@ export default function StockPage() {
                         {h.orderRef}
                       </Link>
                     </td>
-                    <td className="rl-th-center rl-qte">{h.quantity}</td>
+                    <td className="stk-td-center"><span className="stk-qty">{h.quantity}</span></td>
                     <td className="rl-muted-strong">{fmtDay(h.date)}</td>
                     <td>
                       <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
@@ -278,7 +301,7 @@ export default function StockPage() {
               })}
               {!loading && history.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-muted" style={{ textAlign: "center", padding: "24px 0" }}>
+                  <td colSpan={6} className="stk-empty">
                     Aucun réapprovisionnement pour le moment.
                   </td>
                 </tr>
