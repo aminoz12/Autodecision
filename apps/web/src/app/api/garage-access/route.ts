@@ -87,14 +87,52 @@ async function handle(request: Request) {
   });
 
   if (error) {
-    const msg = error.message?.toLowerCase().includes("already")
-      ? "Un compte existe déjà avec cet email."
-      : (error.message ?? "Création impossible.");
-    return NextResponse.json({ error: msg }, { status: 400 });
+    const exists = error.message?.toLowerCase().includes("already");
+    // Idempotent: if the email already belongs to a garagiste of THIS org,
+    // reset its password instead of failing (lets the magasin re-issue creds).
+    if (exists) {
+      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      const existing = list?.users?.find(
+        (u) => u.email?.toLowerCase() === email,
+      );
+      if (existing) {
+        const { data: ep } = await admin
+          .from("profiles")
+          .select("organization_id, client_id")
+          .eq("user_id", existing.id)
+          .maybeSingle();
+        // Only reset if it's already a garagiste of this organization.
+        if (ep && ep.organization_id === orgId && ep.client_id) {
+          await admin.auth.admin.updateUserById(existing.id, {
+            password,
+            email_confirm: true,
+            user_metadata: {
+              organization_id: orgId,
+              client_id: garageId,
+              role: "CAISSIER",
+              display_name: garage.name,
+            },
+          });
+          await admin
+            .from("profiles")
+            .update({ organization_id: orgId, client_id: garageId })
+            .eq("user_id", existing.id);
+          return NextResponse.json({ ok: true, email, reset: true });
+        }
+      }
+      return NextResponse.json(
+        { error: "Cet email est déjà utilisé par un autre compte." },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json(
+      { error: error.message ?? "Création impossible." },
+      { status: 400 },
+    );
   }
 
-  // 5) Belt-and-suspenders: ensure the profile is linked (in case the trigger
-  //    ran before metadata was applied).
+  // Belt-and-suspenders: ensure the profile is linked (in case the trigger
+  // ran before metadata was applied).
   if (created.user) {
     await admin
       .from("profiles")
