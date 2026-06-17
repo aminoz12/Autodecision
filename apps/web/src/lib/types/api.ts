@@ -5,6 +5,8 @@ export type UserProfile = {
   organization_id: string;
   display_name: string;
   role: UserRole;
+  /** Set when the user is a garagiste (links to their garage in clients). */
+  client_id: string | null;
 };
 
 export type ClientDto = {

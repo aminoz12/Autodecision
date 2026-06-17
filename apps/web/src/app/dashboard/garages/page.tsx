@@ -2,6 +2,9 @@
 
 import {
   Building2,
+  Check,
+  Copy,
+  KeyRound,
   Loader2,
   Mail,
   MapPin,
@@ -43,6 +46,56 @@ export default function GaragesPage() {
   const [form, setForm] = useState({ name: "", phone: "", email: "", city: "" });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Create-access (garagiste login) modal
+  const [access, setAccess] = useState<GarageSummary | null>(null);
+  const [accEmail, setAccEmail] = useState("");
+  const [accPwd, setAccPwd] = useState("");
+  const [accSaving, setAccSaving] = useState(false);
+  const [accError, setAccError] = useState<string | null>(null);
+  const [accDone, setAccDone] = useState(false);
+
+  function genPassword() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let out = "";
+    const arr = new Uint32Array(10);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < 10; i += 1) out += chars[arr[i] % chars.length];
+    return out;
+  }
+
+  function openAccess(g: GarageSummary) {
+    setAccess(g);
+    setAccEmail(g.email ?? "");
+    setAccPwd(genPassword());
+    setAccError(null);
+    setAccDone(false);
+  }
+
+  async function submitAccess(e: React.FormEvent) {
+    e.preventDefault();
+    if (!access) return;
+    if (!accEmail.trim() || accPwd.length < 6) {
+      setAccError("Email et mot de passe (≥ 6 caractères) requis.");
+      return;
+    }
+    setAccSaving(true);
+    setAccError(null);
+    try {
+      const res = await fetch("/api/garage-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ garageId: access.id, email: accEmail, password: accPwd }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Création impossible.");
+      setAccDone(true);
+    } catch (err) {
+      setAccError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAccSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
@@ -153,6 +206,10 @@ export default function GaragesPage() {
               <div className="ga-mini"><p className="ga-mini-val">{fmtMoney(row.revenue)}</p><p className="ga-mini-lbl">CA</p></div>
               <div className="ga-mini"><p className={`ga-mini-val${row.outstanding > 0 ? " ga-mini-val--encours" : ""}`}>{fmtMoney(row.outstanding)}</p><p className="ga-mini-lbl">Encours</p></div>
             </div>
+            <button type="button" className="od-btn od-btn--outline ga-access-btn" onClick={() => openAccess(row)}>
+              <KeyRound className="h-4 w-4" />
+              Créer un accès garagiste
+            </button>
           </article>
         ))}
         {!loading && filtered.length === 0 && (
@@ -201,6 +258,74 @@ export default function GaragesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create garagiste access modal */}
+      {access && (
+        <div className="ga-modal-overlay" onClick={() => !accSaving && setAccess(null)}>
+          <div className="ga-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <h2 className="ga-modal-title">Accès garagiste — {access.name}</h2>
+              <button type="button" className="ga-modal-close" onClick={() => setAccess(null)} aria-label="Fermer">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {accDone ? (
+              <div className="ga-modal-form">
+                <div className="auth-success">
+                  <Check className="h-4 w-4 inline-block mr-1.5 -mt-0.5" />
+                  Accès créé. Communiquez ces identifiants au garagiste :
+                </div>
+                <div className="ga-creds">
+                  <div><span className="ga-creds-lbl">Lien</span><code>/login</code></div>
+                  <div><span className="ga-creds-lbl">Email</span><code>{accEmail}</code></div>
+                  <div><span className="ga-creds-lbl">Mot de passe</span><code>{accPwd}</code></div>
+                </div>
+                <div className="ga-modal-actions">
+                  <button
+                    type="button"
+                    className="od-btn od-btn--ghost"
+                    onClick={() => navigator.clipboard?.writeText(`Email: ${accEmail}\nMot de passe: ${accPwd}`)}
+                  >
+                    <Copy className="h-4 w-4" /> Copier
+                  </button>
+                  <button type="button" className="od-btn od-btn--primary" onClick={() => setAccess(null)}>
+                    Terminé
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form className="ga-modal-form" onSubmit={submitAccess}>
+                {accError && <div className="nc-error">{accError}</div>}
+                <p className="ga-creds-hint">
+                  Le garagiste se connectera sur <code>/login</code> pour commander et
+                  demander des retours.
+                </p>
+                <div className="od-field">
+                  <span className="od-label">Email *</span>
+                  <input className="od-input" type="email" placeholder="contact@garage.fr" value={accEmail} onChange={(e) => setAccEmail(e.target.value)} autoFocus />
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Mot de passe *</span>
+                  <div className="ga-pwd-row">
+                    <input className="od-input" value={accPwd} onChange={(e) => setAccPwd(e.target.value)} />
+                    <button type="button" className="od-btn od-btn--ghost" onClick={() => setAccPwd(genPassword())}>
+                      Générer
+                    </button>
+                  </div>
+                </div>
+                <div className="ga-modal-actions">
+                  <button type="button" className="od-btn od-btn--ghost" onClick={() => setAccess(null)} disabled={accSaving}>Annuler</button>
+                  <button type="submit" className="od-btn od-btn--primary" disabled={accSaving}>
+                    {accSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
+                    {accSaving ? "Création…" : "Créer l'accès"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

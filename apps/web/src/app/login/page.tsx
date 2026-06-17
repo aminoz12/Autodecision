@@ -18,7 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 
 export default function LoginPage() {
-  const { login, ready, user } = useAuth();
+  const { login, ready, user, profile } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,12 +26,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // All roles land on the management dashboard (single unified interface).
+  // Garagistes go to their portal; staff to the management dashboard.
   useEffect(() => {
     if (ready && user) {
-      router.replace("/dashboard");
+      router.replace(profile?.client_id ? "/garage" : "/dashboard");
     }
-  }, [ready, user, router]);
+  }, [ready, user, profile, router]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {

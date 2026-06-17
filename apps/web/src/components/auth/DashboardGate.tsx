@@ -14,8 +14,13 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
     }
     if (!user) {
       router.replace("/login");
+      return;
     }
-  }, [ready, user, router]);
+    // Garagistes don't belong in the staff dashboard.
+    if (profile?.client_id) {
+      router.replace("/garage");
+    }
+  }, [ready, user, profile, router]);
 
   if (!ready || !user) {
     return (
