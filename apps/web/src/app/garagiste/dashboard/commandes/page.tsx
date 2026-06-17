@@ -1,10 +1,110 @@
-export default function Page() {
+"use client";
+
+import { Loader2, Package, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { loadGarageOrders, WORKFLOW_LABEL, type GarageOrder } from "@/lib/data/garage";
+
+function eur(v: number) {
+  return `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+}
+function frDate(v: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
+}
+const LINE_STATUS: Record<string, string> = {
+  PENDING: "En attente",
+  RECEIVED: "Reçue",
+  BACKORDER: "Reliquat",
+  NOT_RECEIVED: "Non reçue",
+};
+
+export default function GarageOrdersPage() {
+  const { supabase, profile } = useAuth();
+  const [orders, setOrders] = useState<GarageOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!profile?.organization_id || !profile.client_id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setOrders(await loadGarageOrders(supabase, profile.organization_id, profile.client_id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [supabase, profile?.organization_id, profile?.client_id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   return (
     <div className="gp-page">
-      <div className="gp-soon">
-        <h1 className="gp-title">Commandes</h1>
-        <p className="gp-subtitle">Cette section arrive très bientôt.</p>
-      </div>
+      <header className="gp-header gp-header--row">
+        <div>
+          <h1 className="gp-title">Mes commandes</h1>
+          <p className="gp-subtitle">Suivez l&apos;état de vos commandes auprès de votre magasin.</p>
+        </div>
+        <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Actualiser
+        </button>
+      </header>
+
+      {error && <div className="nc-error">{error}</div>}
+
+      {loading && orders.length === 0 ? (
+        <div className="gp-card gp-empty">Chargement…</div>
+      ) : orders.length === 0 ? (
+        <div className="gp-card gp-empty">
+          <Package className="h-7 w-7" style={{ color: "#9CA3AF" }} />
+          <p>Aucune commande pour le moment.</p>
+          <Link href="/garagiste/dashboard/commander" className="od-btn od-btn--primary">Passer une commande</Link>
+        </div>
+      ) : (
+        <div className="gp-order-list">
+          {orders.map((o) => {
+            const st = WORKFLOW_LABEL[o.workflow] ?? { label: o.workflow, cls: "amber" };
+            const received = o.lines.filter((l) => l.status === "RECEIVED").length;
+            return (
+              <article key={o.id} className="gp-order">
+                <div className="gp-order-head">
+                  <div>
+                    <span className="gp-order-ref">{o.ref}</span>
+                    <span className="gp-order-date">{frDate(o.date)}</span>
+                  </div>
+                  <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                </div>
+                <div className="gp-order-lines">
+                  {o.lines.map((l) => (
+                    <div key={l.id} className="gp-order-line">
+                      <span className="gp-ol-ref">{l.reference}</span>
+                      <span className="gp-ol-desig">{l.designation}</span>
+                      <span className="gp-ol-qty">×{l.quantity}</span>
+                      <span className="gp-ol-status">{LINE_STATUS[l.status] ?? l.status}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="gp-order-foot">
+                  <span className="gp-order-prog">{received}/{o.lines.length} pièce(s) reçue(s)</span>
+                  <span className="gp-order-total">
+                    {o.total > 0 ? eur(o.total) : "Prix à confirmer"}
+                    {o.balance > 0 && o.total > 0 && (
+                      <span className="gp-order-balance"> · reste {eur(o.balance)}</span>
+                    )}
+                  </span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
