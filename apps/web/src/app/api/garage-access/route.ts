@@ -10,6 +10,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * value + client_id marker). The handle_new_user trigger writes the profile.
  */
 export async function POST(request: Request) {
+  try {
+    return await handle(request);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Erreur serveur.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+async function handle(request: Request) {
   // 1) Authenticate the caller from their session cookie.
   const supabase = await createClient();
   const {
