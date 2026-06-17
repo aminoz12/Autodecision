@@ -15,6 +15,8 @@ import { createClient } from "@/lib/supabase/client";
 type AuthContextValue = {
   user: User | null;
   profile: UserProfile | null;
+  /** The Supabase client bound to this provider's session store. */
+  supabase: ReturnType<typeof createClient>;
   /** Erreur PostgREST / RLS sur la lecture de public.profiles (sinon null). */
   profileLoadError: string | null;
   ready: boolean;
@@ -123,13 +125,20 @@ async function loadProfile(
   };
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({
+  children,
+  storageKey,
+}: {
+  children: React.ReactNode;
+  /** Distinct session store (separate cookies) — e.g. the garagiste portal. */
+  storageKey?: string;
+}) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createClient(storageKey), [storageKey]);
 
   const refreshProfile = useCallback(async () => {
     const {
@@ -253,6 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       user,
       profile,
+      supabase,
       profileLoadError,
       ready,
       login,
@@ -260,7 +270,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       refreshProfile,
     }),
-    [user, profile, profileLoadError, ready, login, signUp, logout, refreshProfile],
+    [user, profile, supabase, profileLoadError, ready, login, signUp, logout, refreshProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
