@@ -1,7 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
-export async function proxy(request: NextRequest) {
+// Deliberately the deprecated `middleware` convention, NOT Next 16's `proxy`:
+// proxy.ts runs on the Node.js runtime, which Netlify's Next adapter cannot
+// bundle yet ("Could not load edge function ...node-middleware"). middleware.ts
+// keeps the edge runtime — the path Netlify fully supports.
+export async function middleware(request: NextRequest) {
   const { response, user } = await updateSession(request);
 
   if (request.nextUrl.pathname.startsWith("/dashboard") && !user) {

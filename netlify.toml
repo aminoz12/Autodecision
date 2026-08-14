@@ -1,0 +1,9 @@
+# Mirrors the UI build settings, and pins @netlify/plugin-nextjs to the version
+# in package.json (devDependencies) instead of the build image's bundled one —
+# newer plugin releases carry the Next 16 fixes.
+[build]
+  command = "npm --workspace web run build"
+  publish = "apps/web/.next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
