@@ -761,6 +761,262 @@ export async function loadReturns(
   });
 }
 
+export type ReturnTreatment =
+  | "A_TRAITER"
+  | "DEMANDE_ENVOYEE"
+  | "A_RECUPERER"
+  | "ACCEPTE"
+  | "REFUSE"
+  | "REMBOURSE"
+  | "AVOIR";
+
+/**
+ * Advance a return through its treatment pipeline
+ * (A_TRAITER → DEMANDE_ENVOYEE → A_RECUPERER → ACCEPTE/REFUSE → REMBOURSE).
+ */
+export async function updateReturnTreatment(
+  supabase: SupabaseClient,
+  orgId: string,
+  returnId: string,
+  treatment: ReturnTreatment,
+): Promise<void> {
+  const { error } = await supabase
+    .from("sales_returns")
+    .update({ statut_traitement: treatment })
+    .eq("organization_id", orgId)
+    .eq("id", returnId);
+  if (error) throw new Error(error.message);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Walk-in refunds: a client comes back to the magasin and asks for a  */
+/*  refund. Each order line can be refunded UNLESS it is flagged        */
+/*  retour_impossible, or it was already refunded once.                 */
+/* ------------------------------------------------------------------ */
+
+export type RefundableLine = {
+  id: string;
+  reference: string;
+  designation: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  retourImpossible: boolean;
+  alreadyReturned: boolean;
+};
+
+export type RefundableOrder = {
+  id: string;
+  ref: string;
+  date: string | null;
+  clientId: string | null;
+  client: string;
+  total: number;
+  lines: RefundableLine[];
+};
+
+export async function loadRefundableOrders(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<RefundableOrder[]> {
+  const [ordersRes, returnsRes] = await Promise.all([
+    supabase
+      .from("orders")
+      .select(
+        "id,ref_demande,date_commande,client_id,montant_total,clients(name)," +
+          "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,retour_impossible)",
+      )
+      .eq("organization_id", orgId)
+      .eq("devis", false)
+      .order("date_commande", { ascending: false })
+      .limit(150),
+    supabase
+      .from("sales_returns")
+      .select("order_line_id")
+      .eq("organization_id", orgId)
+      .not("order_line_id", "is", null),
+  ]);
+
+  if (ordersRes.error) throw new Error(ordersRes.error.message);
+  if (returnsRes.error) throw new Error(returnsRes.error.message);
+
+  const returnedLineIds = new Set(
+    (returnsRes.data ?? []).map((r) =>
+      String((r as Record<string, unknown>).order_line_id),
+    ),
+  );
+
+  return (ordersRes.data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    const client = first(row.clients as Embedded<Record<string, unknown>>);
+    const lines = (
+      (row.order_lines as Embedded<Record<string, unknown>>) as
+        | Record<string, unknown>[]
+        | undefined
+    )?.map((l) => {
+      const qty = toNumber(l.quantity);
+      const unit = toNumber(l.prix_vente_unitaire);
+      return {
+        id: String(l.id),
+        reference: String(l.reference ?? ""),
+        designation: String(l.nom_produit ?? ""),
+        quantity: qty,
+        unitPrice: unit,
+        lineTotal: qty * unit,
+        retourImpossible: Boolean(l.retour_impossible),
+        alreadyReturned: returnedLineIds.has(String(l.id)),
+      };
+    });
+    return {
+      id: String(row.id),
+      ref: String(row.ref_demande ?? ""),
+      date: (row.date_commande as string | null) ?? null,
+      clientId: (row.client_id as string | null) ?? null,
+      client: String(client?.name ?? row.client_phone ?? "Client comptoir"),
+      total: toNumber(row.montant_total),
+      lines: lines ?? [],
+    };
+  });
+}
+
+/** Next sequential avoir number for an org: AV-YYYY-NNNNN. */
+async function nextAvoirSeq(
+  supabase: SupabaseClient,
+  orgId: string,
+  year: number,
+): Promise<number> {
+  const prefix = `AV-${year}-`;
+  const { data } = await supabase
+    .from("credit_notes")
+    .select("num")
+    .eq("organization_id", orgId)
+    .like("num", `${prefix}%`)
+    .order("num", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ref = (data as { num?: string } | null)?.num;
+  if (ref) {
+    const num = parseInt(ref.replace(prefix, ""), 10);
+    if (!Number.isNaN(num)) return num + 1;
+  }
+  return 1;
+}
+
+/**
+ * Record a walk-in return, compensated either in cash (REMBOURSE) or with a
+ * credit note (AVOIR — one avoir for the whole return, valable 1 an comme
+ * sur la feuille legacy).
+ */
+export async function createWalkInReturn(
+  supabase: SupabaseClient,
+  orgId: string,
+  input: {
+    orderId: string;
+    clientId: string | null;
+    reason: string;
+    lines: RefundableLine[];
+    compensation?: "REMBOURSEMENT" | "AVOIR";
+  },
+): Promise<{ avoirNum: string | null }> {
+  const refundable = input.lines.filter(
+    (l) => !l.retourImpossible && !l.alreadyReturned,
+  );
+  if (refundable.length === 0) {
+    throw new Error("Aucune ligne remboursable sélectionnée.");
+  }
+  const asAvoir = input.compensation === "AVOIR";
+  const motif = input.reason.trim() || "Remboursement comptoir";
+
+  const year = new Date().getFullYear();
+  const stamp = Date.now() % 100000;
+  const rows = refundable.map((l, i) => ({
+    organization_id: orgId,
+    client_id: input.clientId,
+    order_id: input.orderId,
+    order_line_id: l.id,
+    ref: `RET-${year}-${String((stamp + i) % 100000).padStart(5, "0")}`,
+    designation: l.designation,
+    reason: motif,
+    motif,
+    type_retour: "RETOURNABLE",
+    statut_traitement: asAvoir ? "AVOIR" : "REMBOURSE",
+    decote_pct: 0,
+    montant: l.lineTotal,
+  }));
+
+  const { error } = await supabase.from("sales_returns").insert(rows);
+  if (error) throw new Error(error.message);
+
+  if (!asAvoir) return { avoirNum: null };
+
+  const total = refundable.reduce((s, l) => s + l.lineTotal, 0);
+  const echeance = new Date();
+  echeance.setFullYear(echeance.getFullYear() + 1);
+  const seq = await nextAvoirSeq(supabase, orgId, year);
+  const num = `AV-${year}-${String(seq).padStart(5, "0")}`;
+
+  const { error: avErr } = await supabase.from("credit_notes").insert({
+    organization_id: orgId,
+    client_id: input.clientId,
+    order_id: input.orderId,
+    num,
+    amount: total,
+    used_amount: 0,
+    statut: "EN_COURS",
+    echeance: echeance.toISOString().slice(0, 10),
+    motif,
+    designation: refundable.map((l) => l.designation).join(", "),
+  });
+  if (avErr) {
+    throw new Error(
+      `Retour enregistré mais la création de l'avoir a échoué : ${avErr.message}`,
+    );
+  }
+  return { avoirNum: num };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Avoirs as payment: pick a client's open credit notes at checkout.  */
+/* ------------------------------------------------------------------ */
+
+export type ClientCredit = {
+  id: string;
+  num: string;
+  remaining: number;
+  dueAt: string | null;
+};
+
+/** Open, unexpired avoirs of a client, most recent first. */
+export async function loadClientCredits(
+  supabase: SupabaseClient,
+  orgId: string,
+  clientId: string,
+): Promise<ClientCredit[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("credit_notes")
+    .select("id,num,amount,used_amount,echeance")
+    .eq("organization_id", orgId)
+    .eq("client_id", clientId)
+    .in("statut", ["EN_COURS", "PARTIEL"])
+    .or(`echeance.is.null,echeance.gte.${today}`)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+
+  return (data ?? [])
+    .map((raw) => {
+      const row = raw as Record<string, unknown>;
+      return {
+        id: String(row.id),
+        num: String(row.num ?? `AV-${String(row.id).slice(0, 8)}`),
+        remaining: Math.max(0, toNumber(row.amount) - toNumber(row.used_amount)),
+        dueAt: (row.echeance as string | null) ?? null,
+      };
+    })
+    .filter((c) => c.remaining > 0);
+}
+
 export type CreditConsignRow = {
   id: string;
   kind: "avoir" | "consigne";
@@ -771,9 +1027,19 @@ export type CreditConsignRow = {
   motif: string;
   designation: string;
   amount: number;
+  /** Avoir only: amount already consumed / balance left. */
+  usedAmount: number;
+  remaining: number;
   status: string;
   dueAt: string | null;
 };
+
+/** Effective avoir status: an unexhausted avoir past its échéance is EXPIRE. */
+function effectiveCreditStatus(statut: string, dueAt: string | null): string {
+  if (statut === "UTILISE") return statut;
+  if (dueAt && new Date(dueAt).getTime() < Date.now() - 86_400_000) return "EXPIRE";
+  return statut;
+}
 
 export async function loadCreditsAndConsignments(
   supabase: SupabaseClient,
@@ -782,7 +1048,7 @@ export async function loadCreditsAndConsignments(
   const [creditsRes, consignRes] = await Promise.all([
     supabase
       .from("credit_notes")
-      .select("id,num,created_at,amount,statut,echeance,motif,designation,clients(name),orders(ref_demande)")
+      .select("id,num,created_at,amount,used_amount,statut,echeance,motif,designation,clients(name),orders!credit_notes_order_id_fkey(ref_demande)")
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -802,6 +1068,9 @@ export async function loadCreditsAndConsignments(
     const row = raw as Record<string, unknown>;
     const client = first(row.clients as Embedded<Record<string, unknown>>);
     const order = first(row.orders as Embedded<Record<string, unknown>>);
+    const amount = toNumber(row.amount);
+    const usedAmount = toNumber(row.used_amount);
+    const dueAt = (row.echeance as string | null) ?? null;
     rows.push({
       id: String(row.id),
       kind: "avoir",
@@ -811,9 +1080,11 @@ export async function loadCreditsAndConsignments(
       reference: String(order?.ref_demande ?? "-"),
       motif: String(row.motif ?? "Avoir client"),
       designation: String(row.designation ?? "-"),
-      amount: toNumber(row.amount),
-      status: String(row.statut ?? "EN_COURS"),
-      dueAt: (row.echeance as string | null) ?? null,
+      amount,
+      usedAmount,
+      remaining: Math.max(0, amount - usedAmount),
+      status: effectiveCreditStatus(String(row.statut ?? "EN_COURS"), dueAt),
+      dueAt,
     });
   }
   for (const raw of consignRes.data ?? []) {
@@ -829,6 +1100,8 @@ export async function loadCreditsAndConsignments(
       motif: String(row.motif ?? "Consigne pieces"),
       designation: String(row.description ?? "-"),
       amount: toNumber(row.montant),
+      usedAmount: 0,
+      remaining: toNumber(row.montant),
       status: String(row.status ?? "ACTIF"),
       dueAt: (row.echeance as string | null) ?? null,
     });
@@ -906,51 +1179,88 @@ export type ReportsOverview = {
   topSuppliers: { name: string; pieces: number }[];
 };
 
+/**
+ * Fetch every row of a query by paging through PostgREST's 1000-row cap.
+ * `makeQuery` must build a FRESH query for the given range (builders mutate),
+ * ordered by a stable column so pages never overlap.
+ */
+async function fetchAllPages<T>(
+  makeQuery: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let page = 0; page < 100; page += 1) {
+    const from = page * PAGE;
+    const { data, error } = await makeQuery(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
 export async function loadReportsOverview(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<ReportsOverview> {
-  const [ordersRes, returnsRes, creditsRes, linesRes] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("montant_total,montant_paye,solde_restant")
-      .eq("organization_id", orgId)
-      .eq("devis", false),
-    supabase
-      .from("sales_returns")
-      .select("montant")
-      .eq("organization_id", orgId),
-    supabase
-      .from("credit_notes")
-      .select("amount")
-      .eq("organization_id", orgId),
-    supabase
-      .from("order_lines")
-      .select("quantity,suppliers(name)")
-      .eq("organization_id", orgId)
-      .not("supplier_id", "is", null),
+  // PostgREST silently caps un-paged selects at 1000 rows, which would make
+  // every figure here quietly wrong at scale — page through everything.
+  const [orders, returns, credits, lines] = await Promise.all([
+    fetchAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("orders")
+        .select("montant_total,montant_paye,solde_restant")
+        .eq("organization_id", orgId)
+        .eq("devis", false)
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("sales_returns")
+        .select("montant")
+        .eq("organization_id", orgId)
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("credit_notes")
+        .select("amount")
+        .eq("organization_id", orgId)
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllPages<Record<string, unknown>>((from, to) =>
+      supabase
+        .from("order_lines")
+        .select("quantity,suppliers(name)")
+        .eq("organization_id", orgId)
+        .not("supplier_id", "is", null)
+        .order("id")
+        .range(from, to),
+    ),
   ]);
 
-  for (const res of [ordersRes, returnsRes, creditsRes, linesRes]) {
-    if (res.error) throw new Error(res.error.message);
-  }
-
   const supplierCounts = new Map<string, number>();
-  for (const raw of linesRes.data ?? []) {
-    const row = raw as Record<string, unknown>;
+  for (const row of lines) {
     const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
     const name = String(supplier?.name ?? "Sans fournisseur");
     supplierCounts.set(name, (supplierCounts.get(name) ?? 0) + toNumber(row.quantity));
   }
 
   return {
-    orderCount: ordersRes.data?.length ?? 0,
-    revenue: (ordersRes.data ?? []).reduce((sum, row) => sum + toNumber(row.montant_total), 0),
-    paid: (ordersRes.data ?? []).reduce((sum, row) => sum + toNumber(row.montant_paye), 0),
-    outstanding: (ordersRes.data ?? []).reduce((sum, row) => sum + toNumber(row.solde_restant), 0),
-    returnCount: returnsRes.data?.length ?? 0,
-    returnAmount: (returnsRes.data ?? []).reduce((sum, row) => sum + toNumber(row.montant), 0),
-    creditAmount: (creditsRes.data ?? []).reduce((sum, row) => sum + toNumber(row.amount), 0),
+    orderCount: orders.length,
+    revenue: orders.reduce((sum, row) => sum + toNumber(row.montant_total), 0),
+    paid: orders.reduce((sum, row) => sum + toNumber(row.montant_paye), 0),
+    outstanding: orders.reduce((sum, row) => sum + toNumber(row.solde_restant), 0),
+    returnCount: returns.length,
+    returnAmount: returns.reduce((sum, row) => sum + toNumber(row.montant), 0),
+    creditAmount: credits.reduce((sum, row) => sum + toNumber(row.amount), 0),
     topSuppliers: [...supplierCounts.entries()]
       .map(([name, pieces]) => ({ name, pieces }))
       .sort((a, b) => b.pieces - a.pieces)

@@ -80,9 +80,14 @@ async function headCount(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   query: any,
 ): Promise<number> {
-  const { count } = await query;
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
   return count ?? 0;
 }
+
+/** Treatment states that still need magasin action (null = legacy A_TRAITER). */
+const OPEN_RETURN_FILTER =
+  "statut_traitement.in.(A_TRAITER,DEMANDE_ENVOYEE,A_RECUPERER),statut_traitement.is.null";
 
 export async function loadDashboardOverview(
   supabase: SupabaseClient,
@@ -99,6 +104,7 @@ export async function loadDashboardOverview(
     cPending,
     cRecep,
     cReturns,
+    cReturnsTotal,
     cOrders,
     recentRes,
     recepRes,
@@ -130,13 +136,24 @@ export async function loadDashboardOverview(
         .eq("workflow_status", "PENDING"),
     ),
     headCount(
+      // Inner join on orders so quote-request lines (devis) are excluded:
+      // only lines of confirmed orders count as awaited receptions.
       supabase
         .from("order_lines")
-        .select("id", { count: "exact", head: true })
+        .select("id,orders!inner(devis)", { count: "exact", head: true })
         .eq("organization_id", orgId)
+        .eq("orders.devis", false)
         .neq("reception_status", "RECEIVED"),
     ),
     headCount(
+      supabase
+        .from("sales_returns")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .or(OPEN_RETURN_FILTER),
+    ),
+    headCount(
+      // All-time count, only used for the return-rate ratio.
       supabase
         .from("sales_returns")
         .select("id", { count: "exact", head: true })
@@ -160,21 +177,28 @@ export async function loadDashboardOverview(
       .limit(5),
     supabase
       .from("order_lines")
-      .select("quantity,depuis_magasin,suppliers(name)")
+      .select("quantity,qte_recue,depuis_magasin,suppliers(name),orders!inner(devis)")
       .eq("organization_id", orgId)
+      .eq("orders.devis", false)
       .neq("reception_status", "RECEIVED")
       .limit(1000),
     supabase
       .from("clients")
       .select("name,phone,rating,is_active")
-      .eq("organization_id", orgId),
+      .eq("organization_id", orgId)
+      .limit(1000),
     supabase
       .from("orders")
       .select("date_commande,client_id,clients(name)")
       .eq("organization_id", orgId)
       .eq("devis", false)
-      .gte("date_commande", since30),
+      .gte("date_commande", since30)
+      .limit(1000),
   ]);
+
+  for (const res of [recentRes, recepRes, clientsRes, windowRes]) {
+    if (res.error) throw new Error(res.error.message);
+  }
 
   // Map phone → client name, to resolve orders that store a phone but were
   // never linked to a client record (client_id is null).
@@ -217,7 +241,11 @@ export async function loadDashboardOverview(
     const name =
       embeddedName(row.suppliers as EmbeddedName) ??
       (row.depuis_magasin ? "Stock magasin" : "Sans fournisseur");
-    const qty = Number(row.quantity ?? 0);
+    // Net of already-received quantity, like the fournisseurs page.
+    const qty = Math.max(
+      Number(row.quantity ?? 0) - Number(row.qte_recue ?? 0),
+      0,
+    );
     recMap.set(name, (recMap.get(name) ?? 0) + qty);
   }
   const pendingReceptions: PendingReception[] = [...recMap.entries()]
@@ -259,7 +287,7 @@ export async function loadDashboardOverview(
   }
 
   const returnRate =
-    cOrders > 0 ? Math.round((cReturns / cOrders) * 1000) / 10 : null;
+    cOrders > 0 ? Math.round((cReturnsTotal / cOrders) * 1000) / 10 : null;
 
   return {
     kpis: {

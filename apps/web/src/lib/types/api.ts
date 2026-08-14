@@ -33,6 +33,12 @@ export type OrderLineDto = {
   a_commander_pour_livreur: boolean;
   depuis_magasin?: boolean;
   retour_stock_fait?: boolean;
+  /** The part can never be returned (blocks garagiste returns + walk-in refunds). */
+  retour_impossible?: boolean;
+  /** The part carries a returnable deposit (consigne / core charge). */
+  consigne?: boolean;
+  /** Per-unit deposit amount when consigne is set. */
+  consigne_price?: number;
   prix_achat_unitaire: number;
   prix_vente_unitaire: number;
 };
@@ -51,6 +57,9 @@ export type CreateOrderPayload = {
   statut_paiement: string;
   montant_paye: number;
   avance_payee: number;
+  /** Credit note consumed as payment on this order. */
+  avoir_id?: string;
+  avoir_applique?: number;
   envoyer_au_livreur?: boolean;
   date_envoi?: string;
   statut_livreur?: string;

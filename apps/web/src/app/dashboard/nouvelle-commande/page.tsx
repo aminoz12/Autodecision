@@ -14,6 +14,8 @@ import {
   Truck,
   Upload,
   User,
+  X,
+  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,9 +24,13 @@ import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
 import {
   createClientRecord,
+  loadClientCredits,
   loadClients,
+  loadGarages,
   loadSupplierOptions,
+  type ClientCredit,
   type ClientOption,
+  type GarageSummary,
   type SupplierOption,
 } from "@/lib/data/saas";
 import type { CreateOrderPayload } from "@/lib/types/api";
@@ -42,6 +48,8 @@ const PAIEMENTS = [
 
 const NEW_CLIENT = "__new__";
 
+type PourQui = "COMPTOIR" | "GARAGE";
+
 interface LineForm {
   nom_produit: string;
   reference: string;
@@ -49,6 +57,13 @@ interface LineForm {
   quantity: number;
   prix_achat: number;
   prix_vente: number;
+  retours_impossible?: boolean;
+  consigne?: boolean;
+  consigne_price?: number;
+  pour_qui?: PourQui;
+  garage_id?: string;
+  comptoir_name?: string;
+  comptoir_phone?: string;
 }
 
 const emptyLine: LineForm = {
@@ -58,6 +73,32 @@ const emptyLine: LineForm = {
   quantity: 1,
   prix_achat: 0,
   prix_vente: 0,
+};
+
+interface QuickRow {
+  ref: string;
+  qty: number;
+  fournisseur: string;
+  pourQui: PourQui;
+  garageId: string;
+  clientName: string;
+  clientPhone: string;
+  retoursImpossible: boolean;
+  consigne: boolean;
+  consignePrice: number;
+}
+
+const emptyQuickRow: QuickRow = {
+  ref: "",
+  qty: 1,
+  fournisseur: "",
+  pourQui: "COMPTOIR",
+  garageId: "",
+  clientName: "",
+  clientPhone: "",
+  retoursImpossible: false,
+  consigne: false,
+  consignePrice: 0,
 };
 
 function todayISO(): string {
@@ -81,8 +122,10 @@ export default function NouvelleCommandePage() {
 
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+  const [garages, setGarages] = useState<GarageSummary[]>([]);
 
   /* ---- Client ---- */
+  const [destineA, setDestineA] = useState<PourQui>("COMPTOIR");
   const [clientId, setClientId] = useState<string>(NEW_CLIENT);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
@@ -97,17 +140,168 @@ export default function NouvelleCommandePage() {
   /* ---- Lines ---- */
   const [lines, setLines] = useState<LineForm[]>([{ ...emptyLine }]);
 
+  /* ---- Rajout rapide (quick-add modal) ---- */
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickRows, setQuickRows] = useState<QuickRow[]>([{ ...emptyQuickRow }]);
+  const [quickSaving, setQuickSaving] = useState(false);
+
+  const openQuick = useCallback(() => {
+    setQuickRows([{ ...emptyQuickRow }]);
+    setQuickOpen(true);
+  }, []);
+
+  const setQuickRow = useCallback(
+    (idx: number, field: keyof QuickRow, value: string | number | boolean) => {
+      setQuickRows((prev) =>
+        prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)),
+      );
+    },
+    [],
+  );
+  const addQuickRow = useCallback(
+    () => setQuickRows((prev) => [...prev, { ...emptyQuickRow }]),
+    [],
+  );
+  const removeQuickRow = useCallback(
+    (idx: number) =>
+      setQuickRows((prev) =>
+        prev.length === 1 ? prev : prev.filter((_, i) => i !== idx),
+      ),
+    [],
+  );
+
+  const isQuickRowValid = useCallback(
+    (r: QuickRow) =>
+      Boolean(r.ref.trim()) &&
+      (r.pourQui === "GARAGE"
+        ? Boolean(r.garageId)
+        : Boolean(r.clientName.trim()) && Boolean(r.clientPhone.trim())),
+    [],
+  );
+
+  // Rajout rapide creates ONE standalone order per row: each row carries its
+  // own client/garage, so it cannot share the single-client main form. Rows
+  // are inserted straight into the database.
+  const handleQuickAdd = useCallback(async () => {
+    const valid = quickRows.filter(isQuickRowValid);
+    if (valid.length === 0) return;
+
+    const {
+      data: { user: liveUser },
+    } = await supabase.auth.getUser();
+    const userId = liveUser?.id ?? user?.id;
+    if (!userId) {
+      setError("Session expirée. Reconnectez-vous puis réessayez.");
+      return;
+    }
+    if (!profile?.organization_id) {
+      setError("Aucun magasin associé à ce compte.");
+      return;
+    }
+    const orgId = profile.organization_id;
+
+    setQuickSaving(true);
+    setError(null);
+    try {
+      const createdRefs: string[] = [];
+      for (const r of valid) {
+        // Resolve the client for this quick order.
+        let clientIdForOrder: string | undefined;
+        let phoneForOrder = "-";
+        if (r.pourQui === "GARAGE") {
+          clientIdForOrder = r.garageId;
+          phoneForOrder = garages.find((g) => g.id === r.garageId)?.phone ?? "-";
+        } else {
+          phoneForOrder = r.clientPhone.trim() || "-";
+          const existing = clients.find(
+            (c) =>
+              c.name.trim().toLowerCase() === r.clientName.trim().toLowerCase(),
+          );
+          if (existing) {
+            clientIdForOrder = existing.id;
+          } else {
+            const created = await createClientRecord(supabase, orgId, {
+              name: r.clientName.trim(),
+              phone: r.clientPhone.trim(),
+            });
+            clientIdForOrder = created.id;
+          }
+        }
+
+        const payload: CreateOrderPayload = {
+          date_commande: todayISO(),
+          canal_vente: "MAGASIN",
+          client_id: clientIdForOrder,
+          client_phone: phoneForOrder,
+          lines: [
+            {
+              nom_produit: r.ref.trim(),
+              reference: r.ref.trim(),
+              fournisseur_id: r.fournisseur || undefined,
+              quantity: r.qty || 1,
+              a_commander_pour_livreur: Boolean(r.fournisseur),
+              depuis_magasin: !r.fournisseur,
+              retour_impossible: r.retoursImpossible,
+              consigne: r.consigne,
+              consigne_price: r.consigne ? r.consignePrice || 0 : undefined,
+              prix_achat_unitaire: 0,
+              prix_vente_unitaire: 0,
+            },
+          ],
+          devis: false,
+          statut_paiement: "NON_PAYÉ",
+          montant_paye: 0,
+          avance_payee: 0,
+          envoyer_au_livreur: false,
+          statut_livreur: "EN_ATTENTE",
+          bl: false,
+        };
+        const order = await createOrderWithLines(supabase, userId, orgId, payload);
+        createdRefs.push(order.ref_demande);
+      }
+
+      setQuickOpen(false);
+      setQuickRows([{ ...emptyQuickRow }]);
+      setPdfInfo(
+        `Rajout rapide — ${createdRefs.length} commande(s) créée(s) : ${createdRefs.join(", ")}.`,
+      );
+      void loadClients(supabase, orgId).then(setClients).catch(() => {});
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Erreur lors de la création des commandes rapides.",
+      );
+    } finally {
+      setQuickSaving(false);
+    }
+  }, [
+    quickRows,
+    isQuickRowValid,
+    supabase,
+    user?.id,
+    profile?.organization_id,
+    garages,
+    clients,
+  ]);
+
   /* ---- Payment & delivery ---- */
   const [statutPaiement, setStatutPaiement] = useState<string>("NON_PAYÉ");
   const [montantPaye, setMontantPaye] = useState(0);
   const [avancePayee, setAvancePayee] = useState(0);
   const [envoyerAuLivreur, setEnvoyerAuLivreur] = useState(false);
 
+  /* ---- Avoir as payment ---- */
+  const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
+  const [avoirId, setAvoirId] = useState<string>("");
+  const [avoirAmount, setAvoirAmount] = useState(0);
+
   /* ---- Status ---- */
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
   const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
+  const [avoirWarning, setAvoirWarning] = useState<string | null>(null);
 
   /* ---- PDF auto-fill ---- */
   const fileRef = useRef<HTMLInputElement>(null);
@@ -119,11 +313,16 @@ export default function NouvelleCommandePage() {
     if (!profile?.organization_id) return;
     let cancelled = false;
     const orgId = profile.organization_id;
-    Promise.all([loadClients(supabase, orgId), loadSupplierOptions(supabase, orgId)])
-      .then(([cls, sups]) => {
+    Promise.all([
+      loadClients(supabase, orgId),
+      loadSupplierOptions(supabase, orgId),
+      loadGarages(supabase, orgId),
+    ])
+      .then(([cls, sups, gars]) => {
         if (cancelled) return;
         setClients(cls);
         setSuppliers(sups);
+        setGarages(gars);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -132,6 +331,52 @@ export default function NouvelleCommandePage() {
       cancelled = true;
     };
   }, [supabase, profile?.organization_id]);
+
+  /* ---- Open avoirs of the selected client (usable as payment) ---- */
+  useEffect(() => {
+    setClientCredits([]);
+    setAvoirId("");
+    setAvoirAmount(0);
+    if (!profile?.organization_id || clientId === NEW_CLIENT) return;
+    let cancelled = false;
+    loadClientCredits(supabase, profile.organization_id, clientId)
+      .then((credits) => {
+        if (!cancelled) setClientCredits(credits);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, profile?.organization_id, clientId]);
+
+  /* ---- Existing records to pick from, filtered by destination ---- */
+  const garageIds = useMemo(
+    () => new Set(garages.map((g) => g.id)),
+    [garages],
+  );
+  const destRecords = useMemo(() => {
+    if (destineA === "GARAGE") {
+      return garages.map((g) => ({
+        id: g.id,
+        name: g.name,
+        sub: g.city ?? undefined,
+      }));
+    }
+    // Comptoir = regular clients (exclude garages).
+    return clients
+      .filter((c) => !garageIds.has(c.id))
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        sub: c.immatriculation ?? undefined,
+      }));
+  }, [destineA, garages, clients, garageIds]);
+
+  /* ---- Switch destination → clear the selected record ---- */
+  const pickDestination = useCallback((value: PourQui) => {
+    setDestineA(value);
+    setClientId(NEW_CLIENT);
+  }, []);
 
   /* ---- Pick an existing client → prefill snapshot fields ---- */
   const pickClient = useCallback(
@@ -151,7 +396,7 @@ export default function NouvelleCommandePage() {
 
   /* ---- Line helpers ---- */
   const setLine = useCallback(
-    (idx: number, field: keyof LineForm, value: string | number) => {
+    (idx: number, field: keyof LineForm, value: string | number | boolean) => {
       setLines((prev) =>
         prev.map((l, i) => (i === idx ? { ...l, [field]: value } : l)),
       );
@@ -172,7 +417,25 @@ export default function NouvelleCommandePage() {
     () => lines.reduce((s, l) => s + l.quantity * l.prix_vente, 0),
     [lines],
   );
-  const remaining = Math.max(0, total - montantPaye - avancePayee);
+  const selectedCredit = useMemo(
+    () => clientCredits.find((c) => c.id === avoirId) ?? null,
+    [clientCredits, avoirId],
+  );
+  const dueBeforeAvoir = Math.max(0, total - montantPaye - avancePayee);
+  // Never deduct more than the avoir balance or what is actually due.
+  const avoirApplied = selectedCredit
+    ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, dueBeforeAvoir)
+    : 0;
+  const remaining = Math.max(0, dueBeforeAvoir - avoirApplied);
+
+  const pickAvoir = useCallback(
+    (id: string) => {
+      setAvoirId(id);
+      const credit = clientCredits.find((c) => c.id === id);
+      setAvoirAmount(credit ? Math.min(credit.remaining, dueBeforeAvoir) : 0);
+    },
+    [clientCredits, dueBeforeAvoir],
+  );
 
   /* ---- PDF auto-fill: parse an uploaded bon de commande ---- */
   async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -300,6 +563,9 @@ export default function NouvelleCommandePage() {
           quantity: l.quantity || 1,
           a_commander_pour_livreur: Boolean(l.fournisseur_id),
           depuis_magasin: !l.fournisseur_id,
+          retour_impossible: Boolean(l.retours_impossible),
+          consigne: Boolean(l.consigne),
+          consigne_price: l.consigne ? l.consigne_price || 0 : undefined,
           prix_achat_unitaire: l.prix_achat || 0,
           prix_vente_unitaire: l.prix_vente || 0,
         })),
@@ -307,6 +573,8 @@ export default function NouvelleCommandePage() {
         statut_paiement: statutPaiement,
         montant_paye: montantPaye || 0,
         avance_payee: avancePayee || 0,
+        avoir_id: avoirApplied > 0 ? avoirId : undefined,
+        avoir_applique: avoirApplied > 0 ? avoirApplied : undefined,
         envoyer_au_livreur: envoyerAuLivreur,
         statut_livreur: "EN_ATTENTE",
         bl: false,
@@ -320,6 +588,7 @@ export default function NouvelleCommandePage() {
       );
       setCreatedRef(order.ref_demande);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
+      setAvoirWarning(order.avoirWarning ?? null);
       // Refresh client list in case a new one was created.
       void loadClients(supabase, orgId).then(setClients).catch(() => {});
     } catch (err: unknown) {
@@ -334,6 +603,7 @@ export default function NouvelleCommandePage() {
   }
 
   function resetForm() {
+    setDestineA("COMPTOIR");
     setClientId(NEW_CLIENT);
     setClientName("");
     setClientPhone("");
@@ -346,10 +616,13 @@ export default function NouvelleCommandePage() {
     setStatutPaiement("NON_PAYÉ");
     setMontantPaye(0);
     setAvancePayee(0);
+    setAvoirId("");
+    setAvoirAmount(0);
     setEnvoyerAuLivreur(false);
     setError(null);
     setCreatedRef(null);
     setCreatedTour(null);
+    setAvoirWarning(null);
   }
 
   /* ---------------------------------------------------------------- */
@@ -380,6 +653,7 @@ export default function NouvelleCommandePage() {
               })}
             </p>
           )}
+          {avoirWarning && <div className="nc-error">{avoirWarning}</div>}
           <div className="nc-success-actions">
             <button
               type="button"
@@ -403,6 +677,7 @@ export default function NouvelleCommandePage() {
   /* ---------------------------------------------------------------- */
 
   return (
+    <>
     <form className="od-page" onSubmit={handleSubmit}>
       {/* Breadcrumb + title */}
       <nav className="od-breadcrumb">
@@ -451,16 +726,12 @@ export default function NouvelleCommandePage() {
             Annuler
           </Link>
           <button
-            type="submit"
+            type="button"
             className="od-btn od-btn--primary"
-            disabled={saving}
+            onClick={openQuick}
           >
-            {saving ? (
-              <Loader2 className="h-4 w-4 nc-spin" />
-            ) : (
-              <Check className="h-4 w-4" />
-            )}
-            {saving ? "Enregistrement…" : "Enregistrer la commande"}
+            <Zap className="h-4 w-4" />
+            Rajout Rapide
           </button>
         </div>
       </div>
@@ -476,17 +747,36 @@ export default function NouvelleCommandePage() {
         </div>
         <div className="nc-grid">
           <div className="od-field nc-col-2">
-            <span className="od-label">Client existant</span>
+            <span className="od-label">Destiné à</span>
+            <div className="od-select">
+              <select
+                value={destineA}
+                onChange={(e) => pickDestination(e.target.value as PourQui)}
+              >
+                <option value="COMPTOIR">Client comptoir</option>
+                <option value="GARAGE">Garage</option>
+              </select>
+              <ChevronDown className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="od-field nc-col-2">
+            <span className="od-label">
+              {destineA === "GARAGE" ? "Garage existant" : "Client existant"}
+            </span>
             <div className="od-select">
               <select
                 value={clientId}
                 onChange={(e) => pickClient(e.target.value)}
               >
-                <option value={NEW_CLIENT}>— Nouveau client —</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.immatriculation ? ` · ${c.immatriculation}` : ""}
+                <option value={NEW_CLIENT}>
+                  {destineA === "GARAGE"
+                    ? "— Nouveau garage —"
+                    : "— Nouveau client —"}
+                </option>
+                {destRecords.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {r.sub ? ` · ${r.sub}` : ""}
                   </option>
                 ))}
               </select>
@@ -602,6 +892,8 @@ export default function NouvelleCommandePage() {
                 <th className="od-th-center">Qté</th>
                 <th className="od-th-right">Prix achat</th>
                 <th className="od-th-right">Prix vente</th>
+                <th className="od-th-center">Retour imp.</th>
+                <th className="od-th-center">Consigne</th>
                 <th className="od-th-right">Total</th>
                 <th aria-label="Actions" />
               </tr>
@@ -681,6 +973,42 @@ export default function NouvelleCommandePage() {
                         setLine(idx, "prix_vente", Number(e.target.value))
                       }
                     />
+                  </td>
+                  <td className="od-td-center">
+                    <input
+                      type="checkbox"
+                      className="nc-cell-check"
+                      checked={Boolean(l.retours_impossible)}
+                      onChange={(e) =>
+                        setLine(idx, "retours_impossible", e.target.checked)
+                      }
+                      aria-label="Retour impossible"
+                    />
+                  </td>
+                  <td className="od-td-center">
+                    <input
+                      type="checkbox"
+                      className="nc-cell-check"
+                      checked={Boolean(l.consigne)}
+                      onChange={(e) =>
+                        setLine(idx, "consigne", e.target.checked)
+                      }
+                      aria-label="Consigne"
+                    />
+                    {l.consigne && (
+                      <input
+                        className="od-input nc-cell-input nc-cell-num nc-consigne-price"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Caution €"
+                        title="Montant de la consigne (€)"
+                        value={l.consigne_price || ""}
+                        onChange={(e) =>
+                          setLine(idx, "consigne_price", Number(e.target.value))
+                        }
+                      />
+                    )}
                   </td>
                   <td className="od-td-right od-num od-num-strong">
                     {eur(l.quantity * l.prix_vente)}
@@ -764,6 +1092,52 @@ export default function NouvelleCommandePage() {
           </div>
         </div>
 
+        {clientCredits.length > 0 && (
+          <div className="nc-grid" style={{ marginTop: 12 }}>
+            <div className="od-field nc-col-2">
+              <span className="od-label">Avoir du client</span>
+              <div className="od-select">
+                <select value={avoirId} onChange={(e) => pickAvoir(e.target.value)}>
+                  <option value="">Ne pas utiliser d&apos;avoir</option>
+                  {clientCredits.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.num} — reste {eur(c.remaining)}
+                      {c.dueAt
+                        ? ` (valable jusqu'au ${new Date(c.dueAt).toLocaleDateString("fr-FR")})`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="h-4 w-4" />
+              </div>
+            </div>
+            {selectedCredit && (
+              <div className="od-field">
+                <span className="od-label">Montant déduit de l&apos;avoir</span>
+                <input
+                  className="od-input"
+                  type="number"
+                  min={0}
+                  max={Math.min(selectedCredit.remaining, dueBeforeAvoir)}
+                  step="0.01"
+                  value={avoirAmount || ""}
+                  onChange={(e) => setAvoirAmount(Number(e.target.value))}
+                />
+              </div>
+            )}
+            {selectedCredit && avoirApplied > 0 && (
+              <div className="od-field">
+                <span className="od-label">Après déduction</span>
+                <input
+                  className="od-input nc-readonly"
+                  readOnly
+                  value={`${eur(avoirApplied)} déduits — reste avoir ${eur(selectedCredit.remaining - avoirApplied)}`}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           type="button"
           className={`od-toggle nc-toggle${
@@ -798,5 +1172,244 @@ export default function NouvelleCommandePage() {
         </button>
       </div>
     </form>
+
+    {/* ---- Rajout rapide modal ---- */}
+    {quickOpen && (
+      <div
+        className="ga-modal-overlay"
+        onClick={() => setQuickOpen(false)}
+      >
+        <div
+          className="ga-modal ga-modal--wide"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="ga-modal-head">
+            <span className="ga-modal-title">
+              <Zap className="h-4 w-4" style={{ verticalAlign: "-2px", marginRight: 6 }} />
+              Rajout rapide
+            </span>
+            <button
+              type="button"
+              className="ga-modal-close"
+              onClick={() => setQuickOpen(false)}
+              aria-label="Fermer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="ga-modal-form">
+            {quickRows.map((row, idx) => (
+              <div className="nc-quick-row" key={idx}>
+                <div className="nc-quick-row-head">
+                  <span className="nc-quick-row-num">Pièce {idx + 1}</span>
+                  <button
+                    type="button"
+                    className="od-icon-btn"
+                    onClick={() => removeQuickRow(idx)}
+                    disabled={quickRows.length === 1}
+                    aria-label="Supprimer la pièce"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="od-field">
+                  <span className="od-label">Référence / Désignation *</span>
+                  <input
+                    className="od-input"
+                    placeholder="GDB1322 — Plaquette de frein"
+                    value={row.ref}
+                    autoFocus={idx === quickRows.length - 1}
+                    onChange={(e) => setQuickRow(idx, "ref", e.target.value)}
+                  />
+                </div>
+
+                <div className="ga-modal-row">
+                  <div className="od-field">
+                    <span className="od-label">Quantité</span>
+                    <input
+                      className="od-input"
+                      type="number"
+                      min={1}
+                      value={row.qty || ""}
+                      onChange={(e) =>
+                        setQuickRow(idx, "qty", Number(e.target.value))
+                      }
+                    />
+                  </div>
+                  <div className="od-field">
+                    <span className="od-label">Fournisseur</span>
+                    <div className="od-select">
+                      <select
+                        value={row.fournisseur}
+                        onChange={(e) =>
+                          setQuickRow(idx, "fournisseur", e.target.value)
+                        }
+                      >
+                        <option value="">Stock magasin</option>
+                        {suppliers.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="h-4 w-4" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="ga-modal-row">
+                  <div className="od-field">
+                    <span className="od-label">Pour qui</span>
+                    <div className="od-select">
+                      <select
+                        value={row.pourQui}
+                        onChange={(e) =>
+                          setQuickRow(idx, "pourQui", e.target.value as PourQui)
+                        }
+                      >
+                        <option value="COMPTOIR">Client comptoir</option>
+                        <option value="GARAGE">Garage</option>
+                      </select>
+                      <ChevronDown className="h-4 w-4" />
+                    </div>
+                  </div>
+                  {row.pourQui === "GARAGE" && (
+                    <div className="od-field">
+                      <span className="od-label">Garage *</span>
+                      <div className="od-select">
+                        <select
+                          value={row.garageId}
+                          onChange={(e) =>
+                            setQuickRow(idx, "garageId", e.target.value)
+                          }
+                        >
+                          <option value="">— Choisir un garage —</option>
+                          {garages.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.name}
+                              {g.city ? ` · ${g.city}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="h-4 w-4" />
+                      </div>
+                      {garages.length === 0 && (
+                        <span className="nc-hint" style={{ marginTop: 6 }}>
+                          <Info className="h-3.5 w-3.5" />
+                          Aucun garage enregistré.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {row.pourQui === "COMPTOIR" && (
+                  <div className="ga-modal-row">
+                    <div className="od-field">
+                      <span className="od-label">Nom complet *</span>
+                      <input
+                        className="od-input"
+                        placeholder="Jean Dupont"
+                        value={row.clientName}
+                        onChange={(e) =>
+                          setQuickRow(idx, "clientName", e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="od-field">
+                      <span className="od-label">Téléphone *</span>
+                      <input
+                        className="od-input"
+                        placeholder="06 12 34 56 78"
+                        value={row.clientPhone}
+                        onChange={(e) =>
+                          setQuickRow(idx, "clientPhone", e.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="od-field">
+                  <span className="od-label">Actions</span>
+                  <label className="nc-check">
+                    <input
+                      type="checkbox"
+                      checked={row.retoursImpossible}
+                      onChange={(e) =>
+                        setQuickRow(idx, "retoursImpossible", e.target.checked)
+                      }
+                    />
+                    Retours impossible
+                  </label>
+                  <label className="nc-check">
+                    <input
+                      type="checkbox"
+                      checked={row.consigne}
+                      onChange={(e) =>
+                        setQuickRow(idx, "consigne", e.target.checked)
+                      }
+                    />
+                    Consigne
+                  </label>
+                  {row.consigne && (
+                    <input
+                      className="od-input nc-consigne-price"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="Montant consigne €"
+                      value={row.consignePrice || ""}
+                      onChange={(e) =>
+                        setQuickRow(idx, "consignePrice", Number(e.target.value))
+                      }
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <button type="button" className="nc-add-line" onClick={addQuickRow}>
+              <Plus className="h-4 w-4" />
+              Ajouter une pièce
+            </button>
+
+            <div className="ga-modal-actions">
+              <button
+                type="button"
+                className="od-btn od-btn--ghost"
+                onClick={() => setQuickOpen(false)}
+                disabled={quickSaving}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="od-btn od-btn--primary"
+                onClick={() => void handleQuickAdd()}
+                disabled={quickSaving || !quickRows.some(isQuickRowValid)}
+              >
+                {quickSaving ? (
+                  <Loader2 className="h-4 w-4 nc-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {quickSaving
+                  ? "Création…"
+                  : (() => {
+                      const n = quickRows.filter(isQuickRowValid).length;
+                      return `Créer ${n > 1 ? `${n} commandes` : "la commande"}`;
+                    })()}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

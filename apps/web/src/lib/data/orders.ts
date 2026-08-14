@@ -139,6 +139,121 @@ async function findOrCreateTour(
   return String((data as { id: string }).id);
 }
 
+/** Next sequential consigne register number for an org: CO-YYYY-NNNNN. */
+async function nextConsigneSeq(
+  supabase: SupabaseClient,
+  orgId: string,
+  year: number,
+): Promise<number> {
+  const prefix = `CO-${year}-`;
+  const { data } = await supabase
+    .from("consignment_entries")
+    .select("num")
+    .eq("organization_id", orgId)
+    .like("num", `${prefix}%`)
+    .order("num", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ref = (data as { num?: string } | null)?.num;
+  if (ref) {
+    const num = parseInt(ref.replace(prefix, ""), 10);
+    if (!Number.isNaN(num)) return num + 1;
+  }
+  return 1;
+}
+
+type InsertedConsigneLine = {
+  id: string;
+  nom_produit?: string;
+  reference?: string;
+  quantity?: number;
+  consigne?: boolean;
+  consigne_price?: number | null;
+};
+
+/**
+ * Open a consigne (deposit) register entry for every line flagged consigne.
+ * montant = per-unit deposit × quantity (money held until the core comes back).
+ */
+async function createConsignmentEntriesForLines(
+  supabase: SupabaseClient,
+  orgId: string,
+  orderId: string,
+  clientId: string | null,
+  lines: InsertedConsigneLine[],
+): Promise<void> {
+  const consigneLines = lines.filter((l) => l.consigne);
+  if (consigneLines.length === 0) return;
+
+  const year = new Date().getFullYear();
+  let seq = await nextConsigneSeq(supabase, orgId, year);
+
+  const rows = consigneLines.map((l) => {
+    const qty = Number(l.quantity ?? 1) || 1;
+    const unit = Number(l.consigne_price ?? 0) || 0;
+    return {
+      organization_id: orgId,
+      client_id: clientId,
+      order_id: orderId,
+      order_line_id: l.id,
+      num: `CO-${year}-${String(seq++).padStart(5, "0")}`,
+      reference: l.reference ?? null,
+      description: l.nom_produit ?? "Pièce consignée",
+      quantity: qty,
+      montant: unit * qty,
+      motif: "Consigne pièce",
+      status: "ACTIF",
+    };
+  });
+
+  const { error } = await supabase.from("consignment_entries").insert(rows);
+  if (error) throw error;
+}
+
+/**
+ * Selling "depuis magasin" takes parts off the shelf: decrement stock_items
+ * for each such line (matched by SKU = line reference). Best-effort — the
+ * order is already committed, so a failure here must not fail the sale;
+ * it is returned as a warning instead. Lines with no stock record are
+ * skipped (nothing tracked to decrement).
+ */
+async function decrementStockForMagasinLines(
+  supabase: SupabaseClient,
+  orgId: string,
+  lines: { reference: string | null; quantity: number; depuis_magasin: boolean }[],
+): Promise<string | null> {
+  const stockLines = lines.filter((l) => l.depuis_magasin && l.reference);
+  if (stockLines.length === 0) return null;
+
+  const failures: string[] = [];
+  for (const l of stockLines) {
+    const sku = String(l.reference);
+    const qty = Number(l.quantity ?? 1) || 1;
+    try {
+      const { data, error } = await supabase
+        .from("stock_items")
+        .select("id, quantity_on_hand")
+        .eq("organization_id", orgId)
+        .eq("sku", sku)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) continue;
+      const next = Math.max(0, Number(data.quantity_on_hand ?? 0) - qty);
+      const { error: uErr } = await supabase
+        .from("stock_items")
+        .update({ quantity_on_hand: next })
+        .eq("id", data.id)
+        .eq("organization_id", orgId);
+      if (uErr) throw new Error(uErr.message);
+    } catch {
+      failures.push(sku);
+    }
+  }
+  return failures.length > 0
+    ? `Stock non décrémenté pour : ${failures.join(", ")}. Ajustez le stock manuellement.`
+    : null;
+}
+
 export async function createOrderWithLines(
   supabase: SupabaseClient,
   userId: string,
@@ -235,15 +350,32 @@ export async function createOrderWithLines(
     a_commander_pour_livreur: Boolean(l.a_commander_pour_livreur),
     depuis_magasin: Boolean(l.depuis_magasin),
     retour_stock_fait: false,
+    retour_impossible: Boolean(l.retour_impossible),
+    consigne: Boolean(l.consigne),
+    consigne_price: l.consigne ? l.consigne_price ?? 0 : null,
     prix_achat_unitaire: l.prix_achat_unitaire,
     prix_vente_unitaire: l.prix_vente_unitaire,
     tour_id: tourId,
   }));
 
-  const { error: lErr } = await supabase.from("order_lines").insert(lineRows);
+  const { data: insertedLines, error: lErr } = await supabase
+    .from("order_lines")
+    .insert(lineRows)
+    .select("id, nom_produit, reference, quantity, consigne, consigne_price");
   if (lErr) {
     throw lErr;
   }
+
+  // A consigne line opens a returnable deposit: record it in the consigne
+  // register (the /dashboard/consignes page) so the magasin can track money
+  // held until the old part (core) is brought back.
+  await createConsignmentEntriesForLines(
+    supabase,
+    orgId,
+    order.id,
+    payload.client_id ?? null,
+    insertedLines ?? [],
+  );
 
   if (sendToDelivery) {
     const { error: dErr } = await supabase.from("delivery_tasks").insert({
@@ -256,11 +388,35 @@ export async function createOrderWithLines(
     }
   }
 
+  // Take sold-from-shelf parts out of stock (a devis is not a sale yet).
+  let stockWarning: string | null = null;
+  if (!isDevis) {
+    stockWarning = await decrementStockForMagasinLines(supabase, orgId, lineRows);
+  }
+
+  // Consume the avoir picked at checkout. The RPC locks the credit note,
+  // re-checks balance + expiry, and decrements the order's solde_restant —
+  // the order already exists, so a failure here must not look like a failed
+  // order (the user would retry and create a duplicate): report a warning.
+  let avoirWarning: string | null = null;
+  if (!isDevis && payload.avoir_id && (payload.avoir_applique ?? 0) > 0) {
+    const { error: avErr } = await supabase.rpc("apply_credit_note", {
+      p_org: orgId,
+      p_credit: payload.avoir_id,
+      p_order: order.id,
+      p_amount: payload.avoir_applique,
+    });
+    if (avErr) {
+      avoirWarning = `L'avoir n'a pas pu être déduit (${avErr.message}). Le solde de la commande reste dû.`;
+    }
+  }
+
   return {
     id: order.id,
     ref_demande: order.ref_demande,
     tourName: tourName ?? "",
     deliveryAt: dateEnvoi,
+    avoirWarning: [avoirWarning, stockWarning].filter(Boolean).join(" ") || null,
   };
 }
 

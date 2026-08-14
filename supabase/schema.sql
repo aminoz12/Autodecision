@@ -98,6 +98,8 @@ create table if not exists public.orders (
   date_envoi timestamptz,
   statut_livreur public.statut_livreur not null default 'EN_ATTENTE',
   consigne text,
+  avoir_id uuid,
+  avoir_applique numeric(14,2) not null default 0,
   workflow_status public.workflow_status not null default 'PENDING',
   bl boolean not null default false,
   date_bl date,
@@ -117,6 +119,9 @@ create table if not exists public.order_lines (
   a_commander_pour_livreur boolean not null default false,
   depuis_magasin boolean not null default false,
   retour_stock_fait boolean not null default false,
+  retour_impossible boolean not null default false,
+  consigne boolean not null default false,
+  consigne_price numeric(14,2),
   prix_achat_unitaire numeric(14,2) not null,
   prix_vente_unitaire numeric(14,2) not null
 );
@@ -153,8 +158,9 @@ create table if not exists public.sales_returns (
 create table if not exists public.credit_notes (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id) on delete cascade,
-  client_id uuid not null,
+  client_id uuid,
   amount numeric(14,2) not null,
+  used_amount numeric(14,2) not null default 0,
   order_id uuid,
   created_at timestamptz not null default now()
 );
@@ -162,7 +168,10 @@ create table if not exists public.credit_notes (
 create table if not exists public.consignment_entries (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id) on delete cascade,
-  client_id uuid not null,
+  client_id uuid,
+  order_id uuid references public.orders (id) on delete set null,
+  order_line_id uuid references public.order_lines (id) on delete set null,
+  reference text,
   description text not null,
   quantity integer not null default 1,
   status text not null default 'ACTIF',

@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown, Loader2, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, Info, Loader2, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import {
   createGarageReturn,
@@ -26,10 +26,33 @@ export default function RetoursPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [orderId, setOrderId] = useState("");
+  const [lineId, setLineId] = useState("");
   const [designation, setDesignation] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  const selectedOrder = useMemo(
+    () => orders.find((o) => o.id === orderId) ?? null,
+    [orders, orderId],
+  );
+
+  const pickOrder = useCallback((value: string) => {
+    setOrderId(value);
+    setLineId("");
+    setDesignation("");
+  }, []);
+
+  const pickLine = useCallback(
+    (value: string) => {
+      setLineId(value);
+      const line = selectedOrder?.lines.find((l) => l.id === value);
+      setDesignation(
+        line ? `${line.designation} (${line.reference})`.trim() : "",
+      );
+    },
+    [selectedOrder],
+  );
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || !profile.client_id) return;
@@ -56,6 +79,16 @@ export default function RetoursPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!profile?.organization_id || !profile.client_id) return;
+    if (orderId && !lineId) {
+      setError("Choisissez la pièce à retourner dans la commande.");
+      return;
+    }
+    // A part the magasin flagged non-returnable cannot be sent back.
+    const chosen = selectedOrder?.lines.find((l) => l.id === lineId);
+    if (chosen?.retourImpossible) {
+      setError("Cette pièce est non retournable (retour impossible).");
+      return;
+    }
     if (!designation.trim() || !reason.trim()) {
       setError("Indiquez la pièce et le motif du retour.");
       return;
@@ -70,6 +103,7 @@ export default function RetoursPage() {
         reason,
       });
       setOrderId("");
+      setLineId("");
       setDesignation("");
       setReason("");
       setMsg("Demande de retour envoyée à votre magasin.");
@@ -96,7 +130,7 @@ export default function RetoursPage() {
         <div className="od-field">
           <span className="od-label">Commande concernée (optionnel)</span>
           <div className="od-select">
-            <select value={orderId} onChange={(e) => setOrderId(e.target.value)}>
+            <select value={orderId} onChange={(e) => pickOrder(e.target.value)}>
               <option value="">— Aucune / hors commande —</option>
               {orders.map((o) => (
                 <option key={o.id} value={o.id}>{o.ref} — {frDate(o.date)}</option>
@@ -105,10 +139,34 @@ export default function RetoursPage() {
             <ChevronDown className="h-4 w-4" />
           </div>
         </div>
-        <div className="od-field">
-          <span className="od-label">Pièce à retourner *</span>
-          <input className="od-input" placeholder="Plaquettes de frein avant (GDB1330)" value={designation} onChange={(e) => setDesignation(e.target.value)} />
-        </div>
+        {orderId ? (
+          <div className="od-field">
+            <span className="od-label">Pièce à retourner *</span>
+            <div className="od-select">
+              <select value={lineId} onChange={(e) => pickLine(e.target.value)}>
+                <option value="">— Choisir une pièce —</option>
+                {selectedOrder?.lines.map((l) => (
+                  <option key={l.id} value={l.id} disabled={l.retourImpossible}>
+                    {l.designation} ({l.reference})
+                    {l.retourImpossible ? " — retour impossible" : ""}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="h-4 w-4" />
+            </div>
+            {selectedOrder?.lines.some((l) => l.retourImpossible) && (
+              <span className="nc-hint" style={{ marginTop: 6 }}>
+                <Info className="h-3.5 w-3.5" />
+                Les pièces marquées « retour impossible » ne peuvent pas être retournées.
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="od-field">
+            <span className="od-label">Pièce à retourner *</span>
+            <input className="od-input" placeholder="Plaquettes de frein avant (GDB1330)" value={designation} onChange={(e) => setDesignation(e.target.value)} />
+          </div>
+        )}
         <div className="od-field">
           <span className="od-label">Motif *</span>
           <textarea className="gp-textarea" rows={3} placeholder="Pièce non conforme, erreur de référence…" value={reason} onChange={(e) => setReason(e.target.value)} />

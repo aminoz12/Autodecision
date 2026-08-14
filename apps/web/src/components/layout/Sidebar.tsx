@@ -4,21 +4,25 @@ import {
   BarChart3,
   Box,
   Building2,
-  ChevronRight,
   Clock,
+  Coins,
   FileText,
   Home,
+  LogOut,
   Menu,
   PackageOpen,
   RotateCcw,
   Settings,
   ShoppingCart,
+  Truck,
   Warehouse,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -30,14 +34,61 @@ const navItems = [
   { href: "/dashboard/reliquats", label: "Reliquats", icon: Clock },
   { href: "/dashboard/retours", label: "Retours", icon: RotateCcw },
   { href: "/dashboard/avoirs", label: "Avoirs", icon: FileText },
+  { href: "/dashboard/consignes", label: "Consignes", icon: Coins },
+  { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
   { href: "/dashboard/rapports", label: "Rapports", icon: BarChart3 },
   { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
   { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
 ];
 
+const ROLE_LABEL: Record<string, string> = {
+  ADMIN: "Administrateur",
+  CAISSIER: "Caissier",
+  LIVREUR: "Livreur",
+};
+
+function initials(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?"
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { profile, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [orgName, setOrgName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile?.organization_id) return;
+    let cancelled = false;
+    const sb = createClient();
+    sb.from("organizations")
+      .select("name")
+      .eq("id", profile.organization_id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data?.name) setOrgName(String(data.name));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.organization_id]);
+
+  const brand = orgName ?? "Mon magasin";
+  const userName = profile?.display_name ?? "Utilisateur";
+  const userRole = profile?.role ? ROLE_LABEL[profile.role] ?? profile.role : "";
+
+  async function onLogout() {
+    await logout();
+    router.replace("/login");
+  }
 
   return (
     <>
@@ -45,7 +96,7 @@ export function Sidebar() {
       <div className="sidebar-mobile-header">
         <div className="sidebar-brand-mini">
           <span className="sidebar-brand-icon">⚡</span>
-          <span>ESPACE AUTO 92</span>
+          <span>{brand}</span>
         </div>
         <button
           type="button"
@@ -71,7 +122,7 @@ export function Sidebar() {
               <Home className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="sidebar-brand-name">ESPACE AUTO 92</h1>
+              <h1 className="sidebar-brand-name">{brand}</h1>
               <p className="sidebar-brand-sub">Comptoir</p>
             </div>
           </div>
@@ -110,22 +161,25 @@ export function Sidebar() {
           })}
         </nav>
 
-        {/* User profile at bottom */}
+        {/* Signed-in user + logout */}
         <div className="sidebar-user">
           <div className="sidebar-user-avatar">
-            <img 
-              src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80" 
-              alt="Karim B." 
-              className="w-full h-full object-cover rounded-full"
-            />
+            <span className="sidebar-user-initials">{initials(userName)}</span>
             <div className="sidebar-user-status-dot" />
           </div>
           <div className="sidebar-user-info">
-            <p className="sidebar-user-name">Karim B.</p>
-            <p className="sidebar-user-role">Vendeur</p>
-            <p className="sidebar-user-status text-[10px] text-emerald-500 font-bold">En ligne</p>
+            <p className="sidebar-user-name">{userName}</p>
+            <p className="sidebar-user-role">{userRole}</p>
           </div>
-          <ChevronRight className="sidebar-user-chevron rotate-180" />
+          <button
+            type="button"
+            className="sidebar-logout-btn"
+            onClick={() => void onLogout()}
+            aria-label="Se déconnecter"
+            title="Se déconnecter"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </aside>
 

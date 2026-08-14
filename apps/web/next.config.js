@@ -6,6 +6,7 @@ const nextConfig = {
     "f162-196-70-224-191.ngrok-free.app",
     "9c89-160-179-112-228.ngrok-free.app",
     "0b78-196-74-188-39.ngrok-free.app",
+    "5f30-41-140-108-246.ngrok-free.app",
   ],
   turbopack: {
     root: __dirname,

@@ -54,6 +54,8 @@ export type GarageOrderLine = {
   status: string;
   /** Magasin's devis answer: null = pending, true = available, false = no. */
   disponible: boolean | null;
+  /** Part flagged non-returnable by the magasin: no return allowed. */
+  retourImpossible: boolean;
   unitPrice: number;
   lineTotal: number;
 };
@@ -81,7 +83,7 @@ export async function loadGarageOrders(
     .from("orders")
     .select(
       "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant," +
-        "order_lines(id,reference,nom_produit,quantity,reception_status,disponible,prix_vente_unitaire)",
+        "order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire)",
     )
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
@@ -106,6 +108,7 @@ export async function loadGarageOrders(
             l.disponible === null || l.disponible === undefined
               ? null
               : Boolean(l.disponible),
+          retourImpossible: Boolean(l.retour_impossible),
           unitPrice: pv,
           lineTotal: qty * pv,
         };
@@ -249,11 +252,11 @@ export async function loadGarageReturns(
   const { data, error } = await supabase
     .from("sales_returns")
     .select(
-      "id,ref,createdAt,designation,reason,motif,statut_traitement,orders(ref_demande)",
+      "id,ref,created_at,designation,reason,motif,statut_traitement,orders(ref_demande)",
     )
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
-    .order("createdAt", { ascending: false })
+    .order("created_at", { ascending: false })
     .limit(200);
 
   if (error) throw new Error(error.message);
@@ -264,7 +267,7 @@ export async function loadGarageReturns(
     return {
       id: String(row.id),
       ref: String(row.ref ?? `RET-${String(row.id).slice(0, 8)}`),
-      createdAt: (row.createdAt as string | null) ?? null,
+      createdAt: (row.created_at as string | null) ?? null,
       designation: String(row.designation ?? row.motif ?? "-"),
       reason: String(row.reason ?? row.motif ?? "-"),
       status: String(row.statut_traitement ?? "A_TRAITER"),
