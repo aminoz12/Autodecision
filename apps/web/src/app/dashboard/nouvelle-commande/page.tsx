@@ -482,7 +482,12 @@ export default function NouvelleCommandePage() {
           })),
         );
       }
-      setPdfInfo(`PDF lu — rempli : ${parsed.filled.join(", ")}.`);
+      const source = parsed.devisNumber
+        ? `Devis ${parsed.devisNumber}${parsed.clientNumber ? ` (client n° ${parsed.clientNumber})` : ""} lu`
+        : "PDF lu";
+      setPdfInfo(
+        `${source} — rempli : ${parsed.filled.join(", ")}. Il reste à choisir le fournisseur de chaque pièce.`,
+      );
     } catch (err) {
       setError(
         err instanceof Error
