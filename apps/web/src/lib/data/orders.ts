@@ -224,9 +224,18 @@ async function createConsignmentEntriesForLines(
 async function decrementStockForMagasinLines(
   supabase: SupabaseClient,
   orgId: string,
-  lines: { reference: string | null; quantity: number; depuis_magasin: boolean }[],
+  lines: {
+    reference: string | null;
+    quantity: number;
+    depuis_magasin: boolean;
+    supplier_id?: string | null;
+  }[],
 ): Promise<string | null> {
-  const stockLines = lines.filter((l) => l.depuis_magasin && l.reference);
+  // A "depuis magasin" line WITH a supplier is a restock in flight (ordered
+  // for the shelf), not a sale off the shelf — nothing to decrement.
+  const stockLines = lines.filter(
+    (l) => l.depuis_magasin && !l.supplier_id && l.reference,
+  );
   if (stockLines.length === 0) return null;
 
   const failures: string[] = [];

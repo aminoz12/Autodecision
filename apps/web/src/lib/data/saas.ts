@@ -941,7 +941,9 @@ async function nextAvoirSeq(
 /**
  * Record a walk-in return, compensated either in cash (REMBOURSE) or with a
  * credit note (AVOIR — one avoir for the whole return, valable 1 an comme
- * sur la feuille legacy).
+ * sur la feuille legacy). With compensation FOURNISSEUR (stock part sent
+ * back to its supplier) nothing is paid to a client: the return simply
+ * enters the supplier pipeline (A_TRAITER) on the Retours page.
  */
 export async function createWalkInReturn(
   supabase: SupabaseClient,
@@ -951,7 +953,9 @@ export async function createWalkInReturn(
     clientId: string | null;
     reason: string;
     lines: RefundableLine[];
-    compensation?: "REMBOURSEMENT" | "AVOIR";
+    compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
+    /** Supplier the part goes back to (FOURNISSEUR mode). */
+    supplierId?: string | null;
   },
 ): Promise<{ avoirNum: string | null }> {
   const refundable = input.lines.filter(
@@ -960,8 +964,10 @@ export async function createWalkInReturn(
   if (refundable.length === 0) {
     throw new Error("Aucune ligne remboursable sélectionnée.");
   }
+  const toSupplier = input.compensation === "FOURNISSEUR";
   const asAvoir = input.compensation === "AVOIR";
-  const motif = input.reason.trim() || "Remboursement comptoir";
+  const motif =
+    input.reason.trim() || (toSupplier ? "Retour fournisseur" : "Remboursement comptoir");
 
   const year = new Date().getFullYear();
   const stamp = Date.now() % 100000;
@@ -975,9 +981,10 @@ export async function createWalkInReturn(
     reason: motif,
     motif,
     type_retour: "RETOURNABLE",
-    statut_traitement: asAvoir ? "AVOIR" : "REMBOURSE",
+    statut_traitement: toSupplier ? "A_TRAITER" : asAvoir ? "AVOIR" : "REMBOURSE",
     decote_pct: 0,
     montant: l.lineTotal,
+    ...(toSupplier && input.supplierId ? { supplier_id: input.supplierId } : {}),
   }));
 
   const { error } = await supabase.from("sales_returns").insert(rows);

@@ -49,6 +49,8 @@ const PAIEMENTS = [
 const NEW_CLIENT = "__new__";
 
 type PourQui = "COMPTOIR" | "GARAGE";
+/** Rajout rapide can also order straight for the magasin stock. */
+type QuickPourQui = PourQui | "STOCK";
 
 interface LineForm {
   nom_produit: string;
@@ -79,7 +81,7 @@ interface QuickRow {
   ref: string;
   qty: number;
   fournisseur: string;
-  pourQui: PourQui;
+  pourQui: QuickPourQui;
   garageId: string;
   clientName: string;
   clientPhone: string;
@@ -178,7 +180,9 @@ export default function NouvelleCommandePage() {
       Boolean(r.ref.trim()) &&
       (r.pourQui === "GARAGE"
         ? Boolean(r.garageId)
-        : Boolean(r.clientName.trim()) && Boolean(r.clientPhone.trim())),
+        : r.pourQui === "STOCK"
+          ? Boolean(r.fournisseur)
+          : Boolean(r.clientName.trim()) && Boolean(r.clientPhone.trim())),
     [],
   );
 
@@ -211,7 +215,10 @@ export default function NouvelleCommandePage() {
         // Resolve the client for this quick order.
         let clientIdForOrder: string | undefined;
         let phoneForOrder = "-";
-        if (r.pourQui === "GARAGE") {
+        const forStock = r.pourQui === "STOCK";
+        if (forStock) {
+          // Restock order: no client, the part goes on the shelf on reception.
+        } else if (r.pourQui === "GARAGE") {
           clientIdForOrder = r.garageId;
           phoneForOrder = garages.find((g) => g.id === r.garageId)?.phone ?? "-";
         } else {
@@ -243,7 +250,7 @@ export default function NouvelleCommandePage() {
               fournisseur_id: r.fournisseur || undefined,
               quantity: r.qty || 1,
               a_commander_pour_livreur: Boolean(r.fournisseur),
-              depuis_magasin: !r.fournisseur,
+              depuis_magasin: forStock || !r.fournisseur,
               retour_impossible: r.retoursImpossible,
               consigne: r.consigne,
               consigne_price: r.consigne ? r.consignePrice || 0 : undefined,
@@ -1259,7 +1266,9 @@ export default function NouvelleCommandePage() {
                     />
                   </div>
                   <div className="od-field">
-                    <span className="od-label">Fournisseur</span>
+                    <span className="od-label">
+                      Fournisseur{row.pourQui === "STOCK" ? " *" : ""}
+                    </span>
                     <div className="od-select">
                       <select
                         value={row.fournisseur}
@@ -1286,11 +1295,12 @@ export default function NouvelleCommandePage() {
                       <select
                         value={row.pourQui}
                         onChange={(e) =>
-                          setQuickRow(idx, "pourQui", e.target.value as PourQui)
+                          setQuickRow(idx, "pourQui", e.target.value as QuickPourQui)
                         }
                       >
                         <option value="COMPTOIR">Client comptoir</option>
                         <option value="GARAGE">Garage</option>
+                        <option value="STOCK">Stock magasin</option>
                       </select>
                       <ChevronDown className="h-4 w-4" />
                     </div>
@@ -1324,6 +1334,13 @@ export default function NouvelleCommandePage() {
                     </div>
                   )}
                 </div>
+
+                {row.pourQui === "STOCK" && (
+                  <span className="nc-hint" style={{ marginTop: 6 }}>
+                    <Info className="h-3.5 w-3.5" />
+                    Commande pour le stock du magasin : choisissez le fournisseur ; la pièce sera à ranger en stock à la réception.
+                  </span>
+                )}
 
                 {row.pourQui === "COMPTOIR" && (
                   <div className="ga-modal-row">

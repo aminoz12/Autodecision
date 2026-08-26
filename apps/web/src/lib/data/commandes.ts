@@ -34,6 +34,7 @@ export type BoardLine = {
   referenceCommande: string | null;
   designation: string;
   supplierName: string | null;
+  supplierId: string | null;
   fromStock: boolean;
   quantity: number;
   received: number;
@@ -60,7 +61,7 @@ export async function loadReceptionBoard(
       .from("order_lines")
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
-          "prix_vente_unitaire,retour_impossible," +
+          "prix_vente_unitaire,retour_impossible,supplier_id," +
           "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
           "suppliers(name),delivery_tours(name)",
       )
@@ -128,6 +129,7 @@ export async function loadReceptionBoard(
       referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       supplierName: supplier ? String(supplier.name ?? "") : null,
+      supplierId: (row.supplier_id as string | null) ?? null,
       fromStock: Boolean(row.depuis_magasin),
       quantity: toNumber(row.quantity),
       received: toNumber(row.qte_recue),

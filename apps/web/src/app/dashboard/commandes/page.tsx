@@ -192,7 +192,9 @@ export default function ReceptionCommandesPage() {
         orderId: returnLine.orderId,
         clientId: returnLine.clientId,
         reason: returnReason,
-        compensation: returnCompensation,
+        // A stock part goes back to its supplier: no client compensation.
+        compensation: returnLine.fromStock ? "FOURNISSEUR" : returnCompensation,
+        supplierId: returnLine.supplierId,
         lines: [
           {
             id: returnLine.id,
@@ -207,9 +209,11 @@ export default function ReceptionCommandesPage() {
         ],
       });
       setReturnNotice(
-        avoirNum
-          ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
-          : `Retour enregistré — ${returnLine.reference} remboursé.`,
+        returnLine.fromStock
+          ? `Retour fournisseur enregistré — ${returnLine.reference} à traiter dans Retours.`
+          : avoirNum
+            ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
+            : `Retour enregistré — ${returnLine.reference} remboursé.`,
       );
       setReturnLine(null);
       await load();
@@ -527,9 +531,7 @@ export default function ReceptionCommandesPage() {
                     )}
                     {onReturn && (
                       <td className="rc-th-center">
-                        {r.fromStock ? (
-                          <span className="rl-muted">—</span>
-                        ) : r.retourImpossible ? (
+                        {r.retourImpossible ? (
                           <span className="rt-badge rt-badge--red">
                             <Ban className="h-3.5 w-3.5" /> Retour impossible
                           </span>
@@ -989,7 +991,7 @@ export default function ReceptionCommandesPage() {
             <div className="ga-modal-head">
               <span className="ga-modal-title">
                 <RotateCcw className="h-4 w-4" style={{ verticalAlign: "-2px", marginRight: 6 }} />
-                Retourner une pièce
+                {returnLine.fromStock ? "Retourner au fournisseur" : "Retourner une pièce"}
               </span>
               <button
                 type="button"
@@ -1008,7 +1010,10 @@ export default function ReceptionCommandesPage() {
               <div className="rt-picked">
                 <div>
                   <p className="rt-order-ref">
-                    {returnLine.orderRef} · {returnLine.clientName}
+                    {returnLine.orderRef} ·{" "}
+                    {returnLine.fromStock
+                      ? `Stock magasin → ${returnLine.supplierName ?? "fournisseur"}`
+                      : returnLine.clientName}
                   </p>
                   <p className="rt-order-client">
                     <strong>{returnLine.reference}</strong> — {returnLine.designation}
@@ -1030,6 +1035,7 @@ export default function ReceptionCommandesPage() {
                 />
               </div>
 
+              {!returnLine.fromStock && (
               <div className="od-field">
                 <span className="od-label">Compensation</span>
                 <div className="od-toggle-group">
@@ -1058,10 +1064,14 @@ export default function ReceptionCommandesPage() {
                 </div>
               </div>
 
-              <div className="rt-refund-total">
-                {returnCompensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
-                <strong>{fmtMoney(returnLine.quantity * returnLine.unitPrice)}</strong>
-              </div>
+              )}
+
+              {!returnLine.fromStock && (
+                <div className="rt-refund-total">
+                  {returnCompensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
+                  <strong>{fmtMoney(returnLine.quantity * returnLine.unitPrice)}</strong>
+                </div>
+              )}
 
               <div className="ga-modal-actions">
                 <button
@@ -1085,7 +1095,7 @@ export default function ReceptionCommandesPage() {
                   )}
                   {returnSubmitting
                     ? "Enregistrement…"
-                    : returnCompensation === "AVOIR"
+                    : !returnLine.fromStock && returnCompensation === "AVOIR"
                       ? "Émettre l'avoir"
                       : "Valider le retour"}
                 </button>
