@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Ban,
+  Banknote,
   Box,
   Check,
   CheckCircle2,
@@ -12,6 +14,8 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  RotateCcw,
+  Search,
   Truck,
   User,
   X,
@@ -22,7 +26,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
-import { markLineReceived } from "@/lib/data/saas";
+import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
 import {
   loadReceptionBoard,
   loadSmsStates,
@@ -50,6 +54,10 @@ const STATUT: Record<
 };
 
 const TOUR_COLORS = ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#7C3AED"];
+
+function fmtMoney(v: number): string {
+  return `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+}
 
 function fmtDay(value: string | null): string {
   if (!value) return "–";
@@ -133,6 +141,84 @@ export default function ReceptionCommandesPage() {
         ),
     [board],
   );
+
+  /* ---- Historique: search + walk-in return from a received line ---- */
+  const [historySearch, setHistorySearch] = useState("");
+  const historyFiltered = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return history;
+    const terms = q.split(/\s+/);
+    return history.filter((l) => {
+      const hay = [
+        l.reference,
+        l.referenceCommande ?? "",
+        l.designation,
+        l.orderRef,
+        l.clientName,
+        l.clientPhone ?? "",
+        l.plate ?? "",
+        l.vehicle ?? "",
+        l.supplierName ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+  }, [history, historySearch]);
+
+  const [returnLine, setReturnLine] = useState<BoardLine | null>(null);
+  const [returnReason, setReturnReason] = useState("");
+  const [returnCompensation, setReturnCompensation] = useState<"REMBOURSEMENT" | "AVOIR">(
+    "REMBOURSEMENT",
+  );
+  const [returnSubmitting, setReturnSubmitting] = useState(false);
+  const [returnError, setReturnError] = useState<string | null>(null);
+  const [returnNotice, setReturnNotice] = useState<string | null>(null);
+
+  const openReturn = useCallback((line: BoardLine) => {
+    setReturnLine(line);
+    setReturnReason("");
+    setReturnCompensation("REMBOURSEMENT");
+    setReturnError(null);
+    setReturnNotice(null);
+  }, []);
+
+  const submitReturn = useCallback(async () => {
+    if (!orgId || !returnLine) return;
+    setReturnSubmitting(true);
+    setReturnError(null);
+    try {
+      const { avoirNum } = await createWalkInReturn(supabase, orgId, {
+        orderId: returnLine.orderId,
+        clientId: returnLine.clientId,
+        reason: returnReason,
+        compensation: returnCompensation,
+        lines: [
+          {
+            id: returnLine.id,
+            reference: returnLine.reference,
+            designation: returnLine.designation,
+            quantity: returnLine.quantity,
+            unitPrice: returnLine.unitPrice,
+            lineTotal: returnLine.quantity * returnLine.unitPrice,
+            retourImpossible: returnLine.retourImpossible,
+            alreadyReturned: returnLine.alreadyReturned,
+          },
+        ],
+      });
+      setReturnNotice(
+        avoirNum
+          ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
+          : `Retour enregistré — ${returnLine.reference} remboursé.`,
+      );
+      setReturnLine(null);
+      await load();
+    } catch (e) {
+      setReturnError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReturnSubmitting(false);
+    }
+  }, [orgId, returnLine, returnReason, returnCompensation, supabase, load]);
 
   // Group by tournée name (derived tournées have no tour_id but a real name).
   const tours = useMemo(() => {
@@ -325,7 +411,16 @@ export default function ReceptionCommandesPage() {
   /*  Shared line table                                                */
   /* ---------------------------------------------------------------- */
 
-  function LinesTable({ rows, showActions }: { rows: BoardLine[]; showActions: boolean }) {
+  function LinesTable({
+    rows,
+    showActions,
+    onReturn,
+  }: {
+    rows: BoardLine[];
+    showActions: boolean;
+    onReturn?: (line: BoardLine) => void;
+  }) {
+    const colCount = 9 + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
     return (
       <section className="od-card rc-table-card">
         <div className="rc-table-wrap">
@@ -342,6 +437,7 @@ export default function ReceptionCommandesPage() {
                 <th>Statut</th>
                 <th>Reçu le</th>
                 {showActions && <th className="rc-th-center">Actions</th>}
+                {onReturn && <th className="rc-th-center">Retour</th>}
               </tr>
             </thead>
             <tbody>
@@ -369,6 +465,9 @@ export default function ReceptionCommandesPage() {
                     </td>
                     <td>
                       <p className="rl-ref">{r.reference}</p>
+                      {r.referenceCommande && r.referenceCommande !== r.reference && (
+                        <p className="rl-ref-cmd">Réf. cmd. {r.referenceCommande}</p>
+                      )}
                       <p className="rl-muted">{r.designation}</p>
                     </td>
                     <td>
@@ -426,12 +525,33 @@ export default function ReceptionCommandesPage() {
                         </div>
                       </td>
                     )}
+                    {onReturn && (
+                      <td className="rc-th-center">
+                        {r.fromStock ? (
+                          <span className="rl-muted">—</span>
+                        ) : r.retourImpossible ? (
+                          <span className="rt-badge rt-badge--red">
+                            <Ban className="h-3.5 w-3.5" /> Retour impossible
+                          </span>
+                        ) : r.alreadyReturned ? (
+                          <span className="rt-badge rt-badge--blue">Déjà retourné</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="rc-act rc-act--retour"
+                            onClick={() => onReturn(r)}
+                          >
+                            Retourner <RotateCcw className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={showActions ? 10 : 9} className="rc-empty-cell">
+                  <td colSpan={colCount} className="rc-empty-cell">
                     Aucune ligne.
                   </td>
                 </tr>
@@ -734,7 +854,30 @@ export default function ReceptionCommandesPage() {
 
           {/* ---- Historique ---- */}
           {tab === "historique" && (
-            <LinesTable rows={history} showActions={false} />
+            <>
+              {returnNotice && <div className="nc-ok">{returnNotice}</div>}
+              <div className="rc-hist-toolbar">
+                <div className="rt-search">
+                  <Search className="h-4 w-4" />
+                  <input
+                    className="od-input"
+                    placeholder="Rechercher une pièce : référence, désignation, n° commande, client, immatriculation…"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                  />
+                </div>
+                {historySearch && (
+                  <button
+                    type="button"
+                    className="od-btn od-btn--ghost"
+                    onClick={() => setHistorySearch("")}
+                  >
+                    Effacer
+                  </button>
+                )}
+              </div>
+              <LinesTable rows={historyFiltered} showActions={false} onReturn={openReturn} />
+            </>
           )}
 
           {/* ---- Retour en stock — received stock lines to put away ---- */}
@@ -830,6 +973,126 @@ export default function ReceptionCommandesPage() {
             </>
           )}
         </>
+      )}
+
+      {returnLine && (
+        <div
+          className="ga-modal-overlay"
+          onClick={() => !returnSubmitting && setReturnLine(null)}
+        >
+          <div
+            className="ga-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ga-modal-head">
+              <span className="ga-modal-title">
+                <RotateCcw className="h-4 w-4" style={{ verticalAlign: "-2px", marginRight: 6 }} />
+                Retourner une pièce
+              </span>
+              <button
+                type="button"
+                className="ga-modal-close"
+                onClick={() => setReturnLine(null)}
+                aria-label="Fermer"
+                disabled={returnSubmitting}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="ga-modal-form">
+              {returnError && <div className="nc-error">{returnError}</div>}
+
+              <div className="rt-picked">
+                <div>
+                  <p className="rt-order-ref">
+                    {returnLine.orderRef} · {returnLine.clientName}
+                  </p>
+                  <p className="rt-order-client">
+                    <strong>{returnLine.reference}</strong> — {returnLine.designation}
+                  </p>
+                  <p className="rl-muted">
+                    {returnLine.quantity}× {fmtMoney(returnLine.unitPrice)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="od-field">
+                <span className="od-label">Motif du retour</span>
+                <input
+                  className="od-input"
+                  placeholder="Pièce non utilisée, erreur de référence…"
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="od-field">
+                <span className="od-label">Compensation</span>
+                <div className="od-toggle-group">
+                  <button
+                    type="button"
+                    className={`od-toggle${returnCompensation === "REMBOURSEMENT" ? " od-toggle--on" : ""}`}
+                    onClick={() => setReturnCompensation("REMBOURSEMENT")}
+                  >
+                    <Banknote className="h-5 w-5" />
+                    <span>
+                      <strong>Remboursement</strong>
+                      <em>Le client est remboursé immédiatement</em>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`od-toggle${returnCompensation === "AVOIR" ? " od-toggle--on" : ""}`}
+                    onClick={() => setReturnCompensation("AVOIR")}
+                  >
+                    <FileText className="h-5 w-5" />
+                    <span>
+                      <strong>Avoir</strong>
+                      <em>Bon d&apos;achat valable 1 an</em>
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="rt-refund-total">
+                {returnCompensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
+                <strong>{fmtMoney(returnLine.quantity * returnLine.unitPrice)}</strong>
+              </div>
+
+              <div className="ga-modal-actions">
+                <button
+                  type="button"
+                  className="od-btn od-btn--ghost"
+                  onClick={() => setReturnLine(null)}
+                  disabled={returnSubmitting}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className="od-btn od-btn--primary"
+                  onClick={() => void submitReturn()}
+                  disabled={returnSubmitting}
+                >
+                  {returnSubmitting ? (
+                    <Loader2 className="h-4 w-4 nc-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                  {returnSubmitting
+                    ? "Enregistrement…"
+                    : returnCompensation === "AVOIR"
+                      ? "Émettre l'avoir"
+                      : "Valider le retour"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

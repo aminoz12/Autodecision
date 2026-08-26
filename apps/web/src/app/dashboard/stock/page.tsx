@@ -26,6 +26,7 @@ import {
   type StockItem,
   type SupplierOption,
 } from "@/lib/data/saas";
+import { computeTournee, type TourneeInfo } from "@/lib/data/orders";
 
 const HISTORY_STATUS: Record<RestockHistoryRow["status"], { label: string; cls: string }> = {
   COMMANDE: { label: "Commandé", cls: "amber" },
@@ -38,6 +39,17 @@ function fmtDay(value: string | null): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "–";
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+}
+
+function fmtTournee(t: TourneeInfo): string {
+  const d = t.deliveryAt;
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const day = sameDay ? "aujourd'hui" : d.toLocaleDateString("fr-FR");
+  return `${day} à ${t.slot}`;
 }
 
 export default function StockPage() {
@@ -54,8 +66,9 @@ export default function StockPage() {
   // Commander modal
   const [target, setTarget] = useState<RestockAlert | null>(null);
   const [supplierId, setSupplierId] = useState("");
-  const [prixAchat, setPrixAchat] = useState(0);
-  const [prevueLe, setPrevueLe] = useState("");
+  const [refCommande, setRefCommande] = useState("");
+  const [tournee, setTournee] = useState<TourneeInfo | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [commanding, setCommanding] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -98,9 +111,11 @@ export default function StockPage() {
   function openCommander(a: RestockAlert) {
     setTarget(a);
     setSupplierId("");
-    setPrixAchat(a.prixAchat || 0);
-    setPrevueLe("");
+    setRefCommande("");
+    // Arrival follows the tournée matching the time the order is placed.
+    setTournee(computeTournee(new Date()));
     setModalError(null);
+    setNotice(null);
   }
 
   async function submitCommander(e: React.FormEvent) {
@@ -114,11 +129,13 @@ export default function StockPage() {
     setModalError(null);
     try {
       const sb = createClient();
-      await commandRestockLine(sb, orgId, target.id, {
+      const t = await commandRestockLine(sb, orgId, target.id, {
         supplierId,
-        prixAchat,
-        prevueLe: prevueLe ? new Date(prevueLe).toISOString() : null,
+        referenceCommande: refCommande,
       });
+      setNotice(
+        `${target.reference} commandée — ${t.name}, arrivée prévue ${fmtTournee(t)}.`,
+      );
       setTarget(null);
       await load();
     } catch (err) {
@@ -278,7 +295,12 @@ export default function StockPage() {
                 return (
                   <tr key={h.id}>
                     <td>
-                      <p className="stk-ref">{h.reference}</p>
+                      <p className="stk-ref">
+                        {h.reference}
+                        {h.referenceCommande && h.referenceCommande !== h.reference && (
+                          <span className="stk-ref-cmd"> · cmd. {h.referenceCommande}</span>
+                        )}
+                      </p>
                       <p className="stk-desig">{h.designation}</p>
                     </td>
                     <td>
@@ -310,6 +332,8 @@ export default function StockPage() {
           </table>
         </div>
       </section>
+
+      {notice && <div className="nc-ok">{notice}</div>}
 
       {/* ---- Commander modal ---- */}
       {target && (
@@ -350,12 +374,25 @@ export default function StockPage() {
 
               <div className="ga-modal-row">
                 <div className="od-field">
-                  <span className="od-label">Prix d&apos;achat unitaire</span>
-                  <input className="od-input" type="number" min={0} step="0.01" value={prixAchat || ""} onChange={(e) => setPrixAchat(Number(e.target.value))} />
+                  <span className="od-label">Référence commandée</span>
+                  <input
+                    className="od-input"
+                    placeholder="Réf. fournisseur (gardée avec la réf. d'origine)"
+                    value={refCommande}
+                    onChange={(e) => setRefCommande(e.target.value)}
+                  />
+                  <span className="st-cmd-hint">
+                    La référence d&apos;origine <strong>{target.reference}</strong> est conservée ; les deux seront recherchables.
+                  </span>
                 </div>
                 <div className="od-field">
                   <span className="od-label">Arrivée prévue</span>
-                  <input className="od-input" type="date" value={prevueLe} onChange={(e) => setPrevueLe(e.target.value)} />
+                  <input
+                    className="od-input nc-readonly"
+                    readOnly
+                    value={tournee ? `${tournee.name} — ${fmtTournee(tournee)}` : ""}
+                  />
+                  <span className="st-cmd-hint">Déterminée automatiquement par l&apos;heure de la commande.</span>
                 </div>
               </div>
 

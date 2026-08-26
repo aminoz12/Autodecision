@@ -30,6 +30,8 @@ export type BoardLine = {
   vehicle: string | null;
   plate: string | null;
   reference: string;
+  /** Supplier reference used for a stock re-order (alongside `reference`). */
+  referenceCommande: string | null;
   designation: string;
   supplierName: string | null;
   fromStock: boolean;
@@ -41,23 +43,43 @@ export type BoardLine = {
   tourId: string | null;
   tourName: string | null;
   putAway: boolean;
+  /** Prix de vente unitaire (for walk-in returns from the history). */
+  unitPrice: number;
+  /** The part can never be returned. */
+  retourImpossible: boolean;
+  /** A sales return was already recorded for this line. */
+  alreadyReturned: boolean;
 };
 
 export async function loadReceptionBoard(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<BoardLine[]> {
-  const { data, error } = await supabase
-    .from("order_lines")
-    .select(
-      "id,order_id,reference,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
-        "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
-        "suppliers(name),delivery_tours(name)",
-    )
-    .eq("organization_id", orgId)
-    .limit(500);
+  const [{ data, error }, returnsRes] = await Promise.all([
+    supabase
+      .from("order_lines")
+      .select(
+        "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
+          "prix_vente_unitaire,retour_impossible," +
+          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
+          "suppliers(name),delivery_tours(name)",
+      )
+      .eq("organization_id", orgId)
+      .limit(500),
+    supabase
+      .from("sales_returns")
+      .select("order_line_id")
+      .eq("organization_id", orgId)
+      .not("order_line_id", "is", null),
+  ]);
 
   if (error) throw new Error(error.message);
+  if (returnsRes.error) throw new Error(returnsRes.error.message);
+  const returnedLineIds = new Set(
+    (returnsRes.data ?? []).map((r) =>
+      String((r as Record<string, unknown>).order_line_id),
+    ),
+  );
 
   const rows = (data ?? [])
     .filter((raw) => {
@@ -103,6 +125,7 @@ export async function loadReceptionBoard(
       vehicle: (order?.vehicle_model as string | null) ?? null,
       plate: (order?.immatriculation as string | null) ?? null,
       reference: String(row.reference ?? ""),
+      referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       supplierName: supplier ? String(supplier.name ?? "") : null,
       fromStock: Boolean(row.depuis_magasin),
@@ -114,6 +137,9 @@ export async function loadReceptionBoard(
       tourId: (row.tour_id as string | null) ?? null,
       tourName,
       putAway: Boolean(row.retour_stock_fait),
+      unitPrice: toNumber(row.prix_vente_unitaire),
+      retourImpossible: Boolean(row.retour_impossible),
+      alreadyReturned: returnedLineIds.has(String(row.id)),
     };
   });
 
@@ -220,6 +246,7 @@ export async function markOrderSmsTreated(
 export type OrderDetailLine = {
   id: string;
   reference: string;
+  referenceCommande: string | null;
   designation: string;
   supplierName: string | null;
   fromStock: boolean;
@@ -292,7 +319,7 @@ export async function loadOrderDetail(
     supabase
       .from("order_lines")
       .select(
-        "id,reference,nom_produit,quantity,qte_recue,reception_status,prevue_le,received_at," +
+        "id,reference,reference_commande,nom_produit,quantity,qte_recue,reception_status,prevue_le,received_at," +
           "depuis_magasin,prix_vente_unitaire,suppliers(name),delivery_tours(name)",
       )
       .eq("order_id", orderId)
@@ -315,6 +342,7 @@ export async function loadOrderDetail(
     return {
       id: String(row.id),
       reference: String(row.reference ?? ""),
+      referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       supplierName: supplier ? String(supplier.name ?? "") : null,
       fromStock: Boolean(row.depuis_magasin),

@@ -126,6 +126,9 @@ export default function ReceptionPage() {
                   </td>
                   <td>
                     <p className="rl-ref">{row.reference}</p>
+                    {row.referenceCommande && row.referenceCommande !== row.reference && (
+                      <p className="rl-ref-cmd">Réf. cmd. {row.referenceCommande}</p>
+                    )}
                     <p className="rl-muted">{row.designation}</p>
                   </td>
                   <td><span className="rl-brand rl-brand--blue">{row.supplierName}</span></td>

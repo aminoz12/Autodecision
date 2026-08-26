@@ -45,7 +45,7 @@ const LINE_STATUT: Record<
 
 const PAIEMENT_LABEL: Record<string, { label: string; type: "success" | "info" | "warning" }> = {
   "PAYÉ": { label: "Payé", type: "success" },
-  PARTIEL: { label: "Partiel", type: "warning" },
+  PARTIEL: { label: "Acompte", type: "warning" },
   "NON_PAYÉ": { label: "Non payé", type: "warning" },
 };
 
@@ -264,6 +264,9 @@ export default function OrderDetailPage() {
                         </td>
                         <td>
                           <p className="od-ref">{l.reference}</p>
+                          {l.referenceCommande && l.referenceCommande !== l.reference && (
+                            <p className="rl-ref-cmd">Réf. cmd. {l.referenceCommande}</p>
+                          )}
                           <p className="od-desig">{l.designation}</p>
                         </td>
                         <td>

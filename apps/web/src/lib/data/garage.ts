@@ -3,6 +3,13 @@ import { toNumber } from "@/lib/data/saas";
 import { assignOrderTournee, createOrderWithLines } from "@/lib/data/orders";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
+/** Today's date in the local timezone (yyyy-mm-dd), not UTC. */
+function localToday(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 type Embedded<T> = T | T[] | null | undefined;
 function arr<T>(v: Embedded<T>): T[] {
   if (!v) return [];
@@ -146,7 +153,7 @@ export async function createGarageOrder(
   },
 ) {
   const payload: CreateOrderPayload = {
-    date_commande: new Date().toISOString().slice(0, 10),
+    date_commande: localToday(),
     canal_vente: "B2B",
     client_id: clientId,
     client_phone: input.phone?.trim() || "-",

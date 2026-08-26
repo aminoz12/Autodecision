@@ -6,8 +6,12 @@ export function computeOrderMoney(
   paid: number,
   advance: number,
 ) {
+  // Parts + returnable deposits (consigne): the client pays both up front.
   const total = lines.reduce(
-    (s, l) => s + l.quantity * l.prix_vente_unitaire,
+    (s, l) =>
+      s +
+      l.quantity *
+        (l.prix_vente_unitaire + (l.consigne ? l.consigne_price ?? 0 : 0)),
     0,
   );
   return { total, remaining: Math.max(0, total - paid - advance) };
@@ -109,7 +113,7 @@ export function computeTournee(now: Date = new Date()): TourneeInfo {
 }
 
 /** Find (or create) the delivery_tours row for a tournée on its delivery date. */
-async function findOrCreateTour(
+export async function findOrCreateTour(
   supabase: SupabaseClient,
   orgId: string,
   t: TourneeInfo,

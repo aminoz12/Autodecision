@@ -84,7 +84,12 @@ export default function RecherchePiecePage() {
                       {row.kind === "stock" ? "Stock" : "Commande"}
                     </span>
                   </td>
-                  <td className="rl-reffour">{row.reference}</td>
+                  <td className="rl-reffour">
+                    {row.reference}
+                    {row.referenceCommande && row.referenceCommande !== row.reference && (
+                      <span className="rl-ref-cmd"> · cmd. {row.referenceCommande}</span>
+                    )}
+                  </td>
                   <td className="rl-client">{row.designation}</td>
                   <td className="rl-th-center rl-qte">{row.quantity}</td>
                   <td className="rl-muted-strong">{row.source}</td>

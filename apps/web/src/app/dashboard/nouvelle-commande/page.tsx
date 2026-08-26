@@ -42,7 +42,7 @@ import type { CreateOrderPayload } from "@/lib/types/api";
 const CANAUX = ["MAGASIN", "TÉLÉPHONE", "INTERNET", "B2B", "AUTRE"] as const;
 const PAIEMENTS = [
   { value: "NON_PAYÉ", label: "Non payé" },
-  { value: "PARTIEL", label: "Partiel" },
+  { value: "PARTIEL", label: "Acompte" },
   { value: "PAYÉ", label: "Payé" },
 ] as const;
 
@@ -101,8 +101,11 @@ const emptyQuickRow: QuickRow = {
   consignePrice: 0,
 };
 
+/** Today's date in the user's local timezone (yyyy-mm-dd), not UTC. */
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function eur(value: number): string {
@@ -288,7 +291,6 @@ export default function NouvelleCommandePage() {
   /* ---- Payment & delivery ---- */
   const [statutPaiement, setStatutPaiement] = useState<string>("NON_PAYÉ");
   const [montantPaye, setMontantPaye] = useState(0);
-  const [avancePayee, setAvancePayee] = useState(0);
   const [envoyerAuLivreur, setEnvoyerAuLivreur] = useState(false);
 
   /* ---- Avoir as payment ---- */
@@ -413,15 +415,28 @@ export default function NouvelleCommandePage() {
   );
 
   /* ---- Money ---- */
-  const total = useMemo(
-    () => lines.reduce((s, l) => s + l.quantity * l.prix_vente, 0),
+  const consigneTotal = useMemo(
+    () =>
+      lines.reduce(
+        (s, l) => s + (l.consigne ? l.quantity * (l.consigne_price || 0) : 0),
+        0,
+      ),
     [lines],
+  );
+  // Order total = parts + returnable deposits (consigne) charged to the client.
+  const total = useMemo(
+    () => lines.reduce((s, l) => s + l.quantity * l.prix_vente, 0) + consigneTotal,
+    [lines, consigneTotal],
   );
   const selectedCredit = useMemo(
     () => clientCredits.find((c) => c.id === avoirId) ?? null,
     [clientCredits, avoirId],
   );
-  const dueBeforeAvoir = Math.max(0, total - montantPaye - avancePayee);
+  // The paid amount follows the payment status: nothing when "Non payé",
+  // the full total when "Payé", and whatever was entered for an "Acompte".
+  const paidEffective =
+    statutPaiement === "PAYÉ" ? total : statutPaiement === "NON_PAYÉ" ? 0 : montantPaye;
+  const dueBeforeAvoir = Math.max(0, total - paidEffective);
   // Never deduct more than the avoir balance or what is actually due.
   const avoirApplied = selectedCredit
     ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, dueBeforeAvoir)
@@ -467,7 +482,7 @@ export default function NouvelleCommandePage() {
       if (parsed.email) setClientEmail(parsed.email);
       if (parsed.plate) setImmatriculation(parsed.plate);
       if (parsed.vehicle) setVehicleModel(parsed.vehicle);
-      if (parsed.date) setDateCommande(parsed.date);
+      // Date de commande always stays today's date (never the devis date).
       if (parsed.canal) setCanalVente(parsed.canal);
       if (parsed.lines.length > 0) {
         // Fournisseur is intentionally not read from the PDF.
@@ -486,7 +501,7 @@ export default function NouvelleCommandePage() {
         ? `Devis ${parsed.devisNumber}${parsed.clientNumber ? ` (client n° ${parsed.clientNumber})` : ""} lu`
         : "PDF lu";
       setPdfInfo(
-        `${source} — rempli : ${parsed.filled.join(", ")}. Il reste à choisir le fournisseur de chaque pièce.`,
+        `${source} — rempli : ${parsed.filled.filter((f) => f !== "date").join(", ")}. Il reste à choisir le fournisseur de chaque pièce.`,
       );
     } catch (err) {
       setError(
@@ -576,8 +591,8 @@ export default function NouvelleCommandePage() {
         })),
         devis: false,
         statut_paiement: statutPaiement,
-        montant_paye: montantPaye || 0,
-        avance_payee: avancePayee || 0,
+        montant_paye: paidEffective || 0,
+        avance_payee: 0,
         avoir_id: avoirApplied > 0 ? avoirId : undefined,
         avoir_applique: avoirApplied > 0 ? avoirApplied : undefined,
         envoyer_au_livreur: envoyerAuLivreur,
@@ -620,7 +635,6 @@ export default function NouvelleCommandePage() {
     setLines([{ ...emptyLine }]);
     setStatutPaiement("NON_PAYÉ");
     setMontantPaye(0);
-    setAvancePayee(0);
     setAvoirId("");
     setAvoirAmount(0);
     setEnvoyerAuLivreur(false);
@@ -895,7 +909,6 @@ export default function NouvelleCommandePage() {
                 <th>Référence</th>
                 <th>Fournisseur</th>
                 <th className="od-th-center">Qté</th>
-                <th className="od-th-right">Prix achat</th>
                 <th className="od-th-right">Prix vente</th>
                 <th className="od-th-center">Retour imp.</th>
                 <th className="od-th-center">Consigne</th>
@@ -961,18 +974,6 @@ export default function NouvelleCommandePage() {
                       type="number"
                       min={0}
                       step="0.01"
-                      value={l.prix_achat || ""}
-                      onChange={(e) =>
-                        setLine(idx, "prix_achat", Number(e.target.value))
-                      }
-                    />
-                  </td>
-                  <td className="od-td-right">
-                    <input
-                      className="od-input nc-cell-input nc-cell-num"
-                      type="number"
-                      min={0}
-                      step="0.01"
                       value={l.prix_vente || ""}
                       onChange={(e) =>
                         setLine(idx, "prix_vente", Number(e.target.value))
@@ -1016,7 +1017,10 @@ export default function NouvelleCommandePage() {
                     )}
                   </td>
                   <td className="od-td-right od-num od-num-strong">
-                    {eur(l.quantity * l.prix_vente)}
+                    {eur(
+                      l.quantity *
+                        (l.prix_vente + (l.consigne ? l.consigne_price || 0 : 0)),
+                    )}
                   </td>
                   <td className="od-td-menu">
                     <button
@@ -1043,6 +1047,11 @@ export default function NouvelleCommandePage() {
         <div className="od-lines-total">
           Total commande <strong>{eur(total)}</strong>
         </div>
+        {consigneTotal > 0 && (
+          <div className="od-lines-consigne">
+            dont {eur(consigneTotal)} de consigne
+          </div>
+        )}
       </section>
 
       {/* ---- Payment & delivery ---- */}
@@ -1066,32 +1075,36 @@ export default function NouvelleCommandePage() {
             </div>
           </div>
           <div className="od-field">
-            <span className="od-label">Montant payé</span>
-            <input
-              className="od-input"
-              type="number"
-              min={0}
-              step="0.01"
-              value={montantPaye || ""}
-              onChange={(e) => setMontantPaye(Number(e.target.value))}
-            />
+            <span className={`od-label${statutPaiement === "NON_PAYÉ" ? " nc-barre-label" : ""}`}>
+              Montant payé
+            </span>
+            {statutPaiement === "PARTIEL" ? (
+              <input
+                className="od-input"
+                type="number"
+                min={0}
+                max={total}
+                step="0.01"
+                value={montantPaye || ""}
+                onChange={(e) => setMontantPaye(Number(e.target.value))}
+              />
+            ) : (
+              <input
+                className={`od-input nc-readonly${statutPaiement === "NON_PAYÉ" ? " nc-barre" : ""}`}
+                readOnly
+                disabled={statutPaiement === "NON_PAYÉ"}
+                value={statutPaiement === "PAYÉ" ? eur(total) : eur(0)}
+              />
+            )}
           </div>
           <div className="od-field">
-            <span className="od-label">Avance</span>
+            <span className={`od-label${statutPaiement === "PAYÉ" ? " nc-barre-label" : ""}`}>
+              Reste à payer
+            </span>
             <input
-              className="od-input"
-              type="number"
-              min={0}
-              step="0.01"
-              value={avancePayee || ""}
-              onChange={(e) => setAvancePayee(Number(e.target.value))}
-            />
-          </div>
-          <div className="od-field">
-            <span className="od-label">Reste à payer</span>
-            <input
-              className="od-input nc-readonly"
+              className={`od-input nc-readonly${statutPaiement === "PAYÉ" ? " nc-barre" : ""}`}
               readOnly
+              disabled={statutPaiement === "PAYÉ"}
               value={eur(remaining)}
             />
           </div>

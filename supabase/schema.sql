@@ -114,6 +114,8 @@ create table if not exists public.order_lines (
   order_id uuid not null references public.orders (id) on delete cascade,
   nom_produit text not null,
   reference text not null,
+  -- Supplier reference used when a stock part is re-ordered (kept alongside).
+  reference_commande text,
   supplier_id uuid references public.suppliers (id) on delete set null,
   quantity integer not null,
   a_commander_pour_livreur boolean not null default false,

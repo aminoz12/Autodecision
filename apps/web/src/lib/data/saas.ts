@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { computeTournee, findOrCreateTour, type TourneeInfo } from "@/lib/data/orders";
 
 type Embedded<T> = T | T[] | null | undefined;
 
@@ -219,6 +220,8 @@ export type ReceptionLine = {
   clientName: string;
   clientPhone: string | null;
   reference: string;
+  /** Supplier reference used for a stock re-order (alongside `reference`). */
+  referenceCommande: string | null;
   designation: string;
   supplierName: string;
   supplierId: string | null;
@@ -235,10 +238,13 @@ export async function loadReceptionLines(
   const { data, error } = await supabase
     .from("order_lines")
     .select(
-      "id,order_id,reference,nom_produit,supplier_id,quantity,qte_recue,prevue_le,received_at,reception_status,orders(ref_demande,date_commande,client_phone,clients(name,phone)),suppliers(name)",
+      "id,order_id,reference,reference_commande,nom_produit,supplier_id,quantity,qte_recue,prevue_le,received_at,reception_status,orders(ref_demande,date_commande,client_phone,clients(name,phone)),suppliers(name)",
     )
     .eq("organization_id", orgId)
     .neq("reception_status", "RECEIVED")
+    // Parts served from the magasin stock are not awaited from anyone: they
+    // only show up here once re-ordered from a supplier (Stock → Commander).
+    .or("depuis_magasin.not.is.true,supplier_id.not.is.null")
     .order("prevue_le", { ascending: true, nullsFirst: false })
     .limit(200);
 
@@ -260,6 +266,7 @@ export async function loadReceptionLines(
         (order?.client_phone as string | null) ??
         null,
       reference: String(row.reference ?? ""),
+      referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       supplierName: String(supplier?.name ?? "Sans fournisseur"),
       supplierId: (row.supplier_id as string | null) ?? null,
@@ -385,6 +392,7 @@ export type RestockHistoryStatus = "COMMANDE" | "RECU" | "RANGE";
 export type RestockHistoryRow = {
   id: string;
   reference: string;
+  referenceCommande: string | null;
   designation: string;
   quantity: number;
   supplierName: string;
@@ -402,7 +410,7 @@ export async function loadRestockHistory(
   const { data, error } = await supabase
     .from("order_lines")
     .select(
-      "id,reference,nom_produit,quantity,reception_status,retour_stock_fait," +
+      "id,reference,reference_commande,nom_produit,quantity,reception_status,retour_stock_fait," +
         "received_at,prevue_le,order_id,suppliers(name),orders(ref_demande,date_commande)",
     )
     .eq("organization_id", orgId)
@@ -426,6 +434,7 @@ export async function loadRestockHistory(
     return {
       id: String(row.id),
       reference: String(row.reference ?? ""),
+      referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       quantity: toNumber(row.quantity),
       supplierName: String(supplier?.name ?? "Fournisseur"),
@@ -445,22 +454,35 @@ export async function loadRestockHistory(
   );
 }
 
-/** Re-order a stock line from a supplier: it becomes an awaited reception. */
+/**
+ * Re-order a stock line from a supplier: it becomes an awaited reception.
+ * The expected arrival is the tournée matching the time of the order (same
+ * rule as client orders), and the supplier reference is stored next to the
+ * original one — both stay searchable.
+ */
 export async function commandRestockLine(
   supabase: SupabaseClient,
   orgId: string,
   lineId: string,
-  input: { supplierId: string; prixAchat?: number; prevueLe?: string | null },
-): Promise<void> {
+  input: { supplierId: string; referenceCommande?: string | null },
+): Promise<TourneeInfo> {
+  const tournee = computeTournee(new Date());
+  let tourId: string | null = null;
+  try {
+    tourId = await findOrCreateTour(supabase, orgId, tournee);
+  } catch {
+    tourId = null;
+  }
+
+  const refCmd = input.referenceCommande?.trim() || null;
   const update: Record<string, unknown> = {
     supplier_id: input.supplierId,
     a_commander_pour_livreur: true,
     reception_status: "PENDING",
+    prevue_le: tournee.deliveryAt.toISOString(),
+    reference_commande: refCmd,
   };
-  if (input.prixAchat != null && input.prixAchat > 0) {
-    update.prix_achat_unitaire = input.prixAchat;
-  }
-  if (input.prevueLe) update.prevue_le = input.prevueLe;
+  if (tourId) update.tour_id = tourId;
 
   const { error } = await supabase
     .from("order_lines")
@@ -468,6 +490,7 @@ export async function commandRestockLine(
     .eq("id", lineId)
     .eq("organization_id", orgId);
   if (error) throw new Error(error.message);
+  return tournee;
 }
 
 export type StockItem = {
@@ -548,6 +571,8 @@ export type PartSearchResult = {
   kind: "stock" | "order-line";
   id: string;
   reference: string;
+  /** Supplier reference (stock re-orders), when different from `reference`. */
+  referenceCommande?: string | null;
   designation: string;
   quantity: number;
   source: string;
@@ -562,7 +587,7 @@ export async function searchParts(
   if (q.length < 2) return [];
   const pattern = `%${q}%`;
 
-  const [stockBySku, stockByName, linesByRef, linesByName] = await Promise.all([
+  const [stockBySku, stockByName, linesByRef, linesByName, linesByRefCmd] = await Promise.all([
     supabase
       .from("stock_items")
       .select("id,sku,name,quantity_on_hand")
@@ -577,19 +602,25 @@ export async function searchParts(
       .limit(20),
     supabase
       .from("order_lines")
-      .select("id,reference,nom_produit,quantity,orders(ref_demande)")
+      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
       .eq("organization_id", orgId)
       .ilike("reference", pattern)
       .limit(20),
     supabase
       .from("order_lines")
-      .select("id,reference,nom_produit,quantity,orders(ref_demande)")
+      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
       .eq("organization_id", orgId)
       .ilike("nom_produit", pattern)
       .limit(20),
+    supabase
+      .from("order_lines")
+      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
+      .eq("organization_id", orgId)
+      .ilike("reference_commande", pattern)
+      .limit(20),
   ]);
 
-  for (const res of [stockBySku, stockByName, linesByRef, linesByName]) {
+  for (const res of [stockBySku, stockByName, linesByRef, linesByName, linesByRefCmd]) {
     if (res.error) throw new Error(res.error.message);
   }
 
@@ -611,7 +642,11 @@ export async function searchParts(
     });
   }
 
-  for (const raw of [...(linesByRef.data ?? []), ...(linesByName.data ?? [])]) {
+  for (const raw of [
+    ...(linesByRef.data ?? []),
+    ...(linesByRefCmd.data ?? []),
+    ...(linesByName.data ?? []),
+  ]) {
     const row = raw as Record<string, unknown>;
     const order = first(row.orders as Embedded<Record<string, unknown>>);
     const key = `line:${row.id}`;
@@ -621,6 +656,7 @@ export async function searchParts(
       kind: "order-line",
       id: String(row.id),
       reference: String(row.reference ?? ""),
+      referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
       quantity: toNumber(row.quantity),
       source: String(order?.ref_demande ?? "Commande"),

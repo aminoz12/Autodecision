@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   PackageOpen,
+  PlusCircle,
   RotateCcw,
   Settings,
   ShoppingCart,
@@ -27,10 +28,11 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Tableau de bord", icon: Home },
-  { href: "/dashboard/commandes", label: "Ventes / Commandes", icon: ShoppingCart },
+  { href: "/dashboard/nouvelle-commande", label: "Nouvelle Commande", icon: PlusCircle },
+  { href: "/dashboard/commandes", label: "Suivis Des Commandes", icon: ShoppingCart },
   { href: "/dashboard/garages", label: "Garages", icon: Building2 },
   { href: "/dashboard/stock", label: "Stock", icon: Box },
-  { href: "/dashboard/reception", label: "Réceptions", icon: PackageOpen },
+  { href: "/dashboard/reception", label: "Pointage Pièces", icon: PackageOpen },
   { href: "/dashboard/reliquats", label: "Reliquats", icon: Clock },
   { href: "/dashboard/retours", label: "Retours", icon: RotateCcw },
   { href: "/dashboard/avoirs", label: "Avoirs", icon: FileText },

@@ -1634,6 +1634,13 @@ body {
   color: var(--text-secondary);
 }
 .od-lines-total strong { font-size: 18px; font-weight: 800; color: var(--text-primary); }
+.od-lines-consigne {
+  text-align: right;
+  padding: 0 52px 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--clr-danger);
+}
 
 .od-note {
   display: flex;
@@ -3290,6 +3297,17 @@ body {
 .rc-act--reliquat { background: #FFF7ED; color: #C2410C; border-color: #FED7AA; }
 .rc-act--reliquat:hover { background: #FFEDD5; }
 .rc-act--nonrecu { background: #FEF2F2; color: #DC2626; border-color: #FECACA; }
+.rc-act--retour { background: #EEF2FF; color: #4338CA; border-color: #C7D2FE; }
+.rc-act--retour:hover { background: #E0E7FF; }
+
+/* Historique search bar */
+.rc-hist-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.rc-hist-toolbar .rt-search { flex: 1 1 320px; }
 .rc-act--nonrecu:hover { background: #FEE2E2; }
 .rc-act:disabled { background: #F9FAFB; color: #D1D5DB; border-color: #F3F4F6; cursor: not-allowed; }
 
@@ -3686,6 +3704,15 @@ body {
 .nc-add-line:hover { border-color: #5b4ee5; color: #5b4ee5; background: #F5F3FF; }
 
 .nc-readonly { background: #F9FAFB; color: var(--text-secondary); font-weight: 600; cursor: default; }
+
+/* Payment fields that do not apply to the selected statut (struck through). */
+.nc-barre {
+  text-decoration: line-through;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.nc-barre-label { text-decoration: line-through; opacity: 0.6; }
+
 
 .nc-toggle { margin-top: 18px; max-width: 360px; }
 
@@ -4390,3 +4417,11 @@ body {
 
 /* Garagiste: quote accept/refuse actions */
 .gp-quote-actions { display: inline-flex; gap: 10px; }
+
+/* Supplier reference shown next to the original reference (stock re-orders) */
+.rl-ref-cmd,
+.stk-ref-cmd {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4338CA;
+}
