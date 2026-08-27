@@ -137,6 +137,7 @@ export default function NouvelleCommandePage() {
   const [clientEmail, setClientEmail] = useState("");
   const [immatriculation, setImmatriculation] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
+  const [kilometrage, setKilometrage] = useState("");
 
   /* ---- Document ---- */
   const [dateCommande, setDateCommande] = useState(todayISO());
@@ -489,6 +490,9 @@ export default function NouvelleCommandePage() {
       if (parsed.email) setClientEmail(parsed.email);
       if (parsed.plate) setImmatriculation(parsed.plate);
       if (parsed.vehicle) setVehicleModel(parsed.vehicle);
+      // "Kilométrage : 0" on a devis means unknown — leave the field empty.
+      const km = (parsed.mileage ?? "").replace(/\D/g, "");
+      if (km && Number(km) > 0) setKilometrage(km);
       // Date de commande always stays today's date (never the devis date).
       if (parsed.canal) setCanalVente(parsed.canal);
       if (parsed.lines.length > 0) {
@@ -583,6 +587,7 @@ export default function NouvelleCommandePage() {
         client_email: clientEmail.trim() || undefined,
         immatriculation: immatriculation.trim() || undefined,
         vehicle_model: vehicleModel.trim() || undefined,
+        kilometrage: kilometrage.trim() ? Number(kilometrage.replace(/\D/g, "")) : undefined,
         lines: validLines.map((l) => ({
           nom_produit: l.nom_produit.trim(),
           reference: l.reference.trim(),
@@ -637,6 +642,7 @@ export default function NouvelleCommandePage() {
     setClientEmail("");
     setImmatriculation("");
     setVehicleModel("");
+    setKilometrage("");
     setDateCommande(todayISO());
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
@@ -856,6 +862,19 @@ export default function NouvelleCommandePage() {
               placeholder="Renault Master"
               value={vehicleModel}
               onChange={(e) => setVehicleModel(e.target.value)}
+            />
+          </div>
+          <div className="od-field">
+            <span className="od-label">Kilométrage</span>
+            <input
+              className="od-input"
+              type="number"
+              min={0}
+              step={1}
+              inputMode="numeric"
+              placeholder="km"
+              value={kilometrage}
+              onChange={(e) => setKilometrage(e.target.value)}
             />
           </div>
         </div>

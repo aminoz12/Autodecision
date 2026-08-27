@@ -283,6 +283,23 @@ export async function markLineReceived(
   orgId: string,
   line: Pick<ReceptionLine, "id" | "reference" | "designation" | "quantity" | "receivedQuantity">,
 ): Promise<void> {
+  await receiveLineCore(supabase, orgId, line);
+  // A stock part is on the shelf as soon as it is received: no separate
+  // "Rangé" step. Client lines are untouched (depuis_magasin = false).
+  const { error } = await supabase
+    .from("order_lines")
+    .update({ retour_stock_fait: true })
+    .eq("id", line.id)
+    .eq("organization_id", orgId)
+    .eq("depuis_magasin", true);
+  if (error) throw new Error(error.message);
+}
+
+async function receiveLineCore(
+  supabase: SupabaseClient,
+  orgId: string,
+  line: Pick<ReceptionLine, "id" | "reference" | "designation" | "quantity" | "receivedQuantity">,
+): Promise<void> {
   const rpc = await supabase.rpc("receive_order_line", { p_line_id: line.id });
   if (!rpc.error) return;
   if (!isMissingRpcError(rpc.error)) throw new Error(rpc.error.message);

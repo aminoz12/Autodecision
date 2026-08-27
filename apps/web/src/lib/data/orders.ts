@@ -322,6 +322,7 @@ export async function createOrderWithLines(
         client_email: payload.client_email ?? null,
         immatriculation: payload.immatriculation ?? null,
         vehicle_model: payload.vehicle_model ?? null,
+        kilometrage: payload.kilometrage ?? null,
         montant_total: total,
         devis: isDevis,
         devis_status: payload.devis_status ?? null,

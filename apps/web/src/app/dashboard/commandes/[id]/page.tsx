@@ -19,13 +19,15 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { workflowLabel } from "@/lib/data/dashboard";
 import {
   loadOrderDetail,
+  setLineHandedOver,
   type OrderDetail,
+  type OrderDetailLine,
   type ReceptionStatus,
 } from "@/lib/data/commandes";
 
@@ -95,11 +97,49 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  /* ---- Remise au client (units handed over) ---- */
+  const [handing, setHanding] = useState<{ lineId: string; qty: string } | null>(null);
+  const [handBusy, setHandBusy] = useState(false);
+  const [handError, setHandError] = useState<string | null>(null);
+
+  const openHanding = useCallback((l: OrderDetailLine) => {
+    // Default: everything the client can take right now (on the shelf, or
+    // already received from the supplier).
+    const available = l.fromStock ? l.quantity : Math.min(l.quantity, l.received);
+    const suggested = Math.max(l.handedOver, Math.min(l.quantity, available));
+    setHanding({ lineId: l.id, qty: String(suggested > 0 ? suggested : l.quantity) });
+    setHandError(null);
+  }, []);
+
+  const submitHanding = useCallback(
+    async (l: OrderDetailLine) => {
+      if (!profile?.organization_id || !handing) return;
+      const qty = Number(handing.qty);
+      if (!Number.isFinite(qty) || qty < 0 || qty > l.quantity) {
+        setHandError(`Indiquez une quantité entre 0 et ${l.quantity}.`);
+        return;
+      }
+      setHandBusy(true);
+      setHandError(null);
+      try {
+        await setLineHandedOver(supabase, profile.organization_id, l.id, qty);
+        setHanding(null);
+        setReloadKey((k) => k + 1);
+      } catch (e) {
+        setHandError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setHandBusy(false);
+      }
+    },
+    [profile?.organization_id, handing, supabase],
+  );
 
   useEffect(() => {
     if (!profile?.organization_id || !orderId) return;
     let cancelled = false;
-    setLoading(true);
+    if (reloadKey === 0) setLoading(true);
     loadOrderDetail(supabase, profile.organization_id, orderId)
       .then((o) => {
         if (!cancelled) setOrder(o);
@@ -113,7 +153,7 @@ export default function OrderDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase, profile?.organization_id, orderId]);
+  }, [supabase, profile?.organization_id, orderId, reloadKey]);
 
   /* ---- Loading / error / not found ---- */
   if (loading) {
@@ -224,7 +264,12 @@ export default function OrderDetailPage() {
                   <Car className="h-4 w-4" />
                   Véhicule
                 </div>
-                <p className="od-info-name">{order.vehicle ?? "—"}</p>
+                <p className="od-info-name">
+                  {order.vehicle ?? "—"}
+                  {order.kilometrage != null && (
+                    <span className="rl-muted"> · {order.kilometrage.toLocaleString("fr-FR")} km</span>
+                  )}
+                </p>
                 {order.plate && (
                   <p className="od-info-line">
                     <Info className="h-3.5 w-3.5" />
@@ -250,6 +295,7 @@ export default function OrderDetailPage() {
                     <th>Statut</th>
                     <th className="od-th-right">PU</th>
                     <th className="od-th-center">Qté</th>
+                    <th>Remis au client</th>
                     <th className="od-th-right">Total</th>
                   </tr>
                 </thead>
@@ -257,6 +303,8 @@ export default function OrderDetailPage() {
                   {order.lines.map((l, idx) => {
                     const St = LINE_STATUT[l.status];
                     const StIcon = St.icon;
+                    const remaining = Math.max(0, l.quantity - l.handedOver);
+                    const editing = handing?.lineId === l.id;
                     return (
                       <tr key={l.id}>
                         <td className="od-td-num">
@@ -306,6 +354,66 @@ export default function OrderDetailPage() {
                         </td>
                         <td className="od-td-right od-num">{eur(l.prixVente)}</td>
                         <td className="od-td-center od-num">{l.quantity}</td>
+                        <td>
+                          {editing ? (
+                            <div className="od-remise-edit">
+                              <input
+                                className="od-input od-remise-input"
+                                type="number"
+                                min={0}
+                                max={l.quantity}
+                                step={1}
+                                value={handing.qty}
+                                onChange={(e) =>
+                                  setHanding({ lineId: l.id, qty: e.target.value })
+                                }
+                                autoFocus
+                              />
+                              <span className="rl-muted">/ {l.quantity}</span>
+                              <button
+                                type="button"
+                                className="rc-act rc-act--recu"
+                                disabled={handBusy}
+                                onClick={() => void submitHanding(l)}
+                              >
+                                OK
+                              </button>
+                              <button
+                                type="button"
+                                className="rc-act"
+                                disabled={handBusy}
+                                onClick={() => setHanding(null)}
+                              >
+                                Annuler
+                              </button>
+                              {handError && <p className="od-remise-error">{handError}</p>}
+                            </div>
+                          ) : (
+                            <div className="od-remise">
+                              {l.handedOver >= l.quantity ? (
+                                <span className="rc-statut rc-statut--recu">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Remis {l.handedOver}/{l.quantity}
+                                </span>
+                              ) : l.handedOver > 0 ? (
+                                <span className="rc-statut rc-statut--reliquat">
+                                  Remis {l.handedOver}/{l.quantity} · reste {remaining}
+                                </span>
+                              ) : (
+                                <span className="rc-statut rc-statut--attente">
+                                  Non remis · {l.quantity} à remettre
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                className="rc-act rc-act--remise"
+                                onClick={() => openHanding(l)}
+                              >
+                                {l.handedOver > 0 ? "Modifier" : "Remettre"}
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         <td className="od-td-right od-num od-num-strong">
                           {eur(l.total)}
                         </td>
@@ -314,7 +422,7 @@ export default function OrderDetailPage() {
                   })}
                   {order.lines.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="rc-empty-cell">
+                      <td colSpan={8} className="rc-empty-cell">
                         Aucune pièce sur cette commande.
                       </td>
                     </tr>

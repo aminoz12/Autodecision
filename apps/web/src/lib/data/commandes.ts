@@ -38,6 +38,8 @@ export type BoardLine = {
   fromStock: boolean;
   quantity: number;
   received: number;
+  /** Units already handed over to the client. */
+  handedOver: number;
   status: ReceptionStatus;
   receivedAt: string | null;
   expectedAt: string | null;
@@ -60,7 +62,7 @@ export async function loadReceptionBoard(
     supabase
       .from("order_lines")
       .select(
-        "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
+        "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
           "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
           "suppliers(name),delivery_tours(name)",
@@ -133,6 +135,7 @@ export async function loadReceptionBoard(
       fromStock: Boolean(row.depuis_magasin),
       quantity: toNumber(row.quantity),
       received: toNumber(row.qte_recue),
+      handedOver: toNumber(row.qte_remise),
       status: String(row.reception_status ?? "PENDING") as ReceptionStatus,
       receivedAt: (row.received_at as string | null) ?? null,
       expectedAt: (row.prevue_le as string | null) ?? null,
@@ -148,6 +151,29 @@ export async function loadReceptionBoard(
   return rows.sort((a, b) =>
     String(b.orderDate ?? "").localeCompare(String(a.orderDate ?? "")),
   );
+}
+
+/**
+ * Record how many units of a line the client has taken so far (absolute
+ * value, capped to the ordered quantity). Lets a client pick up the units
+ * available on the shelf today and the rest when the supplier delivers.
+ */
+export async function setLineHandedOver(
+  supabase: SupabaseClient,
+  orgId: string,
+  lineId: string,
+  qty: number,
+): Promise<void> {
+  const value = Math.max(0, Math.floor(qty));
+  const { error } = await supabase
+    .from("order_lines")
+    .update({
+      qte_remise: value,
+      remise_at: value > 0 ? new Date().toISOString() : null,
+    })
+    .eq("id", lineId)
+    .eq("organization_id", orgId);
+  if (error) throw new Error(error.message);
 }
 
 /** Mark a received stock line as put away (rangé en stock). */
@@ -254,6 +280,8 @@ export type OrderDetailLine = {
   fromStock: boolean;
   quantity: number;
   received: number;
+  /** Units already handed over to the client. */
+  handedOver: number;
   status: ReceptionStatus;
   expectedAt: string | null;
   receivedAt: string | null;
@@ -274,6 +302,7 @@ export type OrderDetail = {
   clientEmail: string | null;
   plate: string | null;
   vehicle: string | null;
+  kilometrage: number | null;
   vendeurName: string;
   total: number;
   paye: number;
@@ -303,7 +332,7 @@ export async function loadOrderDetail(
     .from("orders")
     .select(
       "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
-        "immatriculation,vehicle_model,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
+        "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
         "clients(name,phone,email)",
     )
@@ -321,7 +350,7 @@ export async function loadOrderDetail(
     supabase
       .from("order_lines")
       .select(
-        "id,reference,reference_commande,nom_produit,quantity,qte_recue,reception_status,prevue_le,received_at," +
+        "id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,prevue_le,received_at," +
           "depuis_magasin,prix_vente_unitaire,suppliers(name),delivery_tours(name)",
       )
       .eq("order_id", orderId)
@@ -350,6 +379,7 @@ export async function loadOrderDetail(
       fromStock: Boolean(row.depuis_magasin),
       quantity: qty,
       received: toNumber(row.qte_recue),
+      handedOver: toNumber(row.qte_remise),
       status: String(row.reception_status ?? "PENDING") as ReceptionStatus,
       expectedAt: (row.prevue_le as string | null) ?? null,
       receivedAt: (row.received_at as string | null) ?? null,
@@ -377,6 +407,7 @@ export async function loadOrderDetail(
       null,
     plate: (order.immatriculation as string | null) ?? null,
     vehicle: (order.vehicle_model as string | null) ?? null,
+    kilometrage: order.kilometrage == null ? null : toNumber(order.kilometrage),
     vendeurName: String(
       (vendeurRes.data as Record<string, unknown> | null)?.display_name ?? "—",
     ),

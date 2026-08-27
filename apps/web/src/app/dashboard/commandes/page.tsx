@@ -33,6 +33,7 @@ import {
   markLinePutAway,
   markOrderSmsTreated,
   recordSmsSent,
+  setLineHandedOver,
   setLineReceptionStatus,
   type BoardLine,
   type ReceptionStatus,
@@ -356,6 +357,33 @@ export default function ReceptionCommandesPage() {
       );
     });
 
+  // Hand over to the client everything currently available on this line
+  // (on the shelf for stock lines, received units otherwise). Custom
+  // quantities are set from the order detail page.
+  const actHandOver = (line: BoardLine) =>
+    withBusy(line.id, async () => {
+      if (!orgId) return;
+      const available = line.fromStock ? line.quantity : Math.min(line.quantity, line.received);
+      const qty = Math.max(line.handedOver, available);
+      if (qty <= line.handedOver) return;
+      await setLineHandedOver(supabase, orgId, line.id, qty);
+      setBoard((prev) =>
+        prev.map((l) => (l.id === line.id ? { ...l, handedOver: qty } : l)),
+      );
+    });
+
+  // Per order: units already taken by the client vs. ordered (all lines).
+  const handedByOrder = useMemo(() => {
+    const map = new Map<string, { handed: number; total: number }>();
+    for (const l of board) {
+      const cur = map.get(l.orderId) ?? { handed: 0, total: 0 };
+      cur.handed += l.handedOver;
+      cur.total += l.quantity;
+      map.set(l.orderId, cur);
+    }
+    return map;
+  }, [board]);
+
   const actStatus = (line: BoardLine, status: "BACKORDER" | "NOT_RECEIVED") =>
     withBusy(line.id, async () => {
       if (!orgId) return;
@@ -424,7 +452,7 @@ export default function ReceptionCommandesPage() {
     showActions: boolean;
     onReturn?: (line: BoardLine) => void;
   }) {
-    const colCount = 9 + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
+    const colCount = 10 + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
     return (
       <section className="od-card rc-table-card">
         <div className="rc-table-wrap">
@@ -438,6 +466,7 @@ export default function ReceptionCommandesPage() {
                 <th>Fournisseur</th>
                 <th className="rc-th-center">Qté cmd.</th>
                 <th className="rc-th-center">Qté reçue</th>
+                <th>Remis client</th>
                 <th>Statut</th>
                 <th>Reçu le</th>
                 {showActions && <th className="rc-th-center">Actions</th>}
@@ -466,6 +495,17 @@ export default function ReceptionCommandesPage() {
                     <td>
                       <p className="rl-client">{r.clientName}</p>
                       {r.clientPhone && <p className="rl-muted">{r.clientPhone}</p>}
+                      {(() => {
+                        const h = handedByOrder.get(r.orderId);
+                        if (!h || h.handed === 0) return null;
+                        const left = Math.max(0, h.total - h.handed);
+                        return (
+                          <p className="rl-handed">
+                            Client a pris {h.handed}/{h.total} pièce(s)
+                            {left > 0 ? ` · reste ${left}` : " · complet"}
+                          </p>
+                        );
+                      })()}
                     </td>
                     <td>
                       <p className="rl-ref">{r.reference}</p>
@@ -487,6 +527,42 @@ export default function ReceptionCommandesPage() {
                     </td>
                     <td className="rc-th-center rl-qte">{r.quantity}</td>
                     <td className="rc-th-center rl-qte">{r.received}</td>
+                    <td>
+                      {(() => {
+                        const left = Math.max(0, r.quantity - r.handedOver);
+                        const available = r.fromStock
+                          ? r.quantity
+                          : Math.min(r.quantity, r.received);
+                        const canHand = available > r.handedOver && Boolean(r.clientId);
+                        return (
+                          <div className="rc-remise">
+                            {r.handedOver >= r.quantity ? (
+                              <span className="rc-statut rc-statut--recu">
+                                <Check className="h-3.5 w-3.5" />
+                                Remis {r.handedOver}/{r.quantity}
+                              </span>
+                            ) : r.handedOver > 0 ? (
+                              <span className="rc-statut rc-statut--reliquat">
+                                Remis {r.handedOver}/{r.quantity} · reste {left}
+                              </span>
+                            ) : (
+                              <span className="rc-statut rc-statut--attente">Non remis</span>
+                            )}
+                            {canHand && (
+                              <button
+                                type="button"
+                                className="rc-act rc-act--remise"
+                                disabled={isBusy}
+                                onClick={() => actHandOver(r)}
+                                title="Le client emporte les pièces disponibles"
+                              >
+                                Remettre {Math.max(0, available - r.handedOver)}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td>
                       <span className={`rc-statut rc-statut--${St.cls}`}>
                         <StIcon className="h-3.5 w-3.5" />

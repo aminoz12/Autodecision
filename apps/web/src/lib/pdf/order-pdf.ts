@@ -683,7 +683,10 @@ export function parseDevisRows(rows: PdfRow[]): ParsedOrder {
         if (v) result.motorisation = v;
       } else if (!result.mileage && /^kilometrage\b/.test(n)) {
         const v = labelValue(row, cell);
-        if (v) result.mileage = v;
+        if (v) {
+          result.mileage = v;
+          if (Number(v.replace(/\D/g, "")) > 0) result.filled.push("kilométrage");
+        }
       } else if (!result.clientName && clientRowIdx === -1 && /^(client|nom)\s*:/.test(n)) {
         const v = labelValue(row, cell);
         if (v) {

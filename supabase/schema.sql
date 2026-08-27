@@ -88,6 +88,7 @@ create table if not exists public.orders (
   client_email text,
   immatriculation text,
   vehicle_model text,
+  kilometrage integer,
   montant_total numeric(14,2) not null,
   devis boolean not null default false,
   statut_paiement public.statut_paiement not null,
@@ -122,6 +123,9 @@ create table if not exists public.order_lines (
   depuis_magasin boolean not null default false,
   retour_stock_fait boolean not null default false,
   retour_impossible boolean not null default false,
+  -- Units already handed over to the client (partial pick-ups).
+  qte_remise integer not null default 0,
+  remise_at timestamptz,
   consigne boolean not null default false,
   consigne_price numeric(14,2),
   prix_achat_unitaire numeric(14,2) not null,

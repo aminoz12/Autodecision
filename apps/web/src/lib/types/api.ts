@@ -51,6 +51,8 @@ export type CreateOrderPayload = {
   client_email?: string;
   immatriculation?: string;
   vehicle_model?: string;
+  /** Vehicle mileage (km) at the time of the order. */
+  kilometrage?: number;
   lines: OrderLineDto[];
   devis?: boolean;
   devis_status?: string;
