@@ -34,7 +34,7 @@ import {
 const quickActions = [
   { icon: Search, title: "Recherche pièce", desc: "Rechercher une pièce par plaque, véhicule ou référence.", color: "#EF4444", bg: "#FEE2E2", href: "/dashboard/recherche-piece" },
   { icon: Plus, title: "Nouvelle commande", desc: "Créer une commande fournisseur ou client.", color: "#22C55E", bg: "#DCFCE7", href: "/dashboard/nouvelle-commande" },
-  { icon: Package, title: "Réception", desc: "Valider les pièces reçues des fournisseurs.", color: "#3B82F6", bg: "#DBEAFE", href: "/dashboard/reception" },
+  { icon: Package, title: "Suivis des commandes", desc: "Pointer les pièces reçues des fournisseurs.", color: "#3B82F6", bg: "#DBEAFE", href: "/dashboard/commandes" },
   { icon: RotateCcw, title: "Retour pièce", desc: "Créer ou traiter une demande de retour.", color: "#F59E0B", bg: "#FEF3C7", href: "/dashboard/retours" },
   { icon: BarChart3, title: "Rapports", desc: "Consulter vos indicateurs et performances.", color: "#8B5CF6", bg: "#F3E8FF", href: "/dashboard/rapports" },
 ];
@@ -227,7 +227,7 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
-          <Link href="/dashboard/reception" className="table-card-link">
+          <Link href="/dashboard/commandes" className="table-card-link">
             Voir toutes les réceptions <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
