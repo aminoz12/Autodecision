@@ -62,6 +62,8 @@ interface LineForm {
   retours_impossible?: boolean;
   consigne?: boolean;
   consigne_price?: number;
+  /** Stock magasin line: the client took the part(s) right away. */
+  client_a_pris?: boolean;
   pour_qui?: PourQui;
   garage_id?: string;
   comptoir_name?: string;
@@ -88,6 +90,7 @@ interface QuickRow {
   retoursImpossible: boolean;
   consigne: boolean;
   consignePrice: number;
+  clientAPris: boolean;
 }
 
 const emptyQuickRow: QuickRow = {
@@ -101,6 +104,7 @@ const emptyQuickRow: QuickRow = {
   retoursImpossible: false,
   consigne: false,
   consignePrice: 0,
+  clientAPris: false,
 };
 
 /** Today's date in the user's local timezone (yyyy-mm-dd), not UTC. */
@@ -255,6 +259,8 @@ export default function NouvelleCommandePage() {
               retour_impossible: r.retoursImpossible,
               consigne: r.consigne,
               consigne_price: r.consigne ? r.consignePrice || 0 : undefined,
+              qte_remise:
+                !forStock && !r.fournisseur && r.clientAPris ? r.qty || 1 : 0,
               prix_achat_unitaire: 0,
               prix_vente_unitaire: 0,
             },
@@ -598,6 +604,7 @@ export default function NouvelleCommandePage() {
           retour_impossible: Boolean(l.retours_impossible),
           consigne: Boolean(l.consigne),
           consigne_price: l.consigne ? l.consigne_price || 0 : undefined,
+          qte_remise: !l.fournisseur_id && l.client_a_pris ? l.quantity || 1 : 0,
           prix_achat_unitaire: l.prix_achat || 0,
           prix_vente_unitaire: l.prix_vente || 0,
         })),
@@ -938,6 +945,7 @@ export default function NouvelleCommandePage() {
                 <th className="od-th-right">Prix vente</th>
                 <th className="od-th-center">Retour imp.</th>
                 <th className="od-th-center">Consigne</th>
+                <th className="od-th-center">Remis client</th>
                 <th className="od-th-right">Total</th>
                 <th aria-label="Actions" />
               </tr>
@@ -1039,6 +1047,24 @@ export default function NouvelleCommandePage() {
                         onChange={(e) =>
                           setLine(idx, "consigne_price", Number(e.target.value))
                         }
+                      />
+                    )}
+                  </td>
+                  <td className="od-td-center">
+                    {l.fournisseur_id ? (
+                      <span className="rl-muted" title="Pièce commandée chez un fournisseur : à remettre à la réception">
+                        —
+                      </span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        className="nc-cell-check"
+                        checked={Boolean(l.client_a_pris)}
+                        onChange={(e) =>
+                          setLine(idx, "client_a_pris", e.target.checked)
+                        }
+                        aria-label="Remis au client"
+                        title="Le client a pris la pièce du stock magasin"
                       />
                     )}
                   </td>
@@ -1410,6 +1436,18 @@ export default function NouvelleCommandePage() {
                     />
                     Consigne
                   </label>
+                  {!row.fournisseur && row.pourQui !== "STOCK" && (
+                    <label className="nc-check">
+                      <input
+                        type="checkbox"
+                        checked={row.clientAPris}
+                        onChange={(e) =>
+                          setQuickRow(idx, "clientAPris", e.target.checked)
+                        }
+                      />
+                      Client a pris
+                    </label>
+                  )}
                   {row.consigne && (
                     <input
                       className="od-input nc-consigne-price"

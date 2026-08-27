@@ -367,6 +367,8 @@ export async function createOrderWithLines(
     retour_impossible: Boolean(l.retour_impossible),
     consigne: Boolean(l.consigne),
     consigne_price: l.consigne ? l.consigne_price ?? 0 : null,
+    qte_remise: Math.min(l.quantity, Math.max(0, l.qte_remise ?? 0)),
+    remise_at: (l.qte_remise ?? 0) > 0 ? new Date().toISOString() : null,
     prix_achat_unitaire: l.prix_achat_unitaire,
     prix_vente_unitaire: l.prix_vente_unitaire,
     tour_id: tourId,

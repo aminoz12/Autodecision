@@ -39,6 +39,8 @@ export type OrderLineDto = {
   consigne?: boolean;
   /** Per-unit deposit amount when consigne is set. */
   consigne_price?: number;
+  /** Units the client took at the counter when the order was created (stock magasin). */
+  qte_remise?: number;
   prix_achat_unitaire: number;
   prix_vente_unitaire: number;
 };

@@ -447,12 +447,16 @@ export default function ReceptionCommandesPage() {
     rows,
     showActions,
     onReturn,
+    showHandOver = true,
   }: {
     rows: BoardLine[];
     showActions: boolean;
     onReturn?: (line: BoardLine) => void;
+    /** "Remis client" column (hidden on the Historique tab). */
+    showHandOver?: boolean;
   }) {
-    const colCount = 10 + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
+    const colCount =
+      9 + (showHandOver ? 1 : 0) + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
     return (
       <section className="od-card rc-table-card">
         <div className="rc-table-wrap">
@@ -466,7 +470,7 @@ export default function ReceptionCommandesPage() {
                 <th>Fournisseur</th>
                 <th className="rc-th-center">Qté cmd.</th>
                 <th className="rc-th-center">Qté reçue</th>
-                <th>Remis client</th>
+                {showHandOver && <th>Remis client</th>}
                 <th>Statut</th>
                 <th>Reçu le</th>
                 {showActions && <th className="rc-th-center">Actions</th>}
@@ -527,6 +531,7 @@ export default function ReceptionCommandesPage() {
                     </td>
                     <td className="rc-th-center rl-qte">{r.quantity}</td>
                     <td className="rc-th-center rl-qte">{r.received}</td>
+                    {showHandOver && (
                     <td>
                       {(() => {
                         const left = Math.max(0, r.quantity - r.handedOver);
@@ -563,6 +568,7 @@ export default function ReceptionCommandesPage() {
                         );
                       })()}
                     </td>
+                    )}
                     <td>
                       <span className={`rc-statut rc-statut--${St.cls}`}>
                         <StIcon className="h-3.5 w-3.5" />
@@ -954,7 +960,12 @@ export default function ReceptionCommandesPage() {
                   </button>
                 )}
               </div>
-              <LinesTable rows={historyFiltered} showActions={false} onReturn={openReturn} />
+              <LinesTable
+                rows={historyFiltered}
+                showActions={false}
+                onReturn={openReturn}
+                showHandOver={false}
+              />
             </>
           )}
 
