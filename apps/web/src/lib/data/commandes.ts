@@ -27,6 +27,8 @@ export type BoardLine = {
   clientId: string | null;
   clientName: string;
   clientPhone: string | null;
+  /** The client is a garage (professional account). */
+  isGarage: boolean;
   vehicle: string | null;
   plate: string | null;
   reference: string;
@@ -64,7 +66,7 @@ export async function loadReceptionBoard(
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
-          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone))," +
+          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage))," +
           "suppliers(name),delivery_tours(name)",
       )
       .eq("organization_id", orgId)
@@ -125,6 +127,7 @@ export async function loadReceptionBoard(
         (client?.phone as string | null) ??
         (order?.client_phone as string | null) ??
         null,
+      isGarage: client?.is_garage === true,
       vehicle: (order?.vehicle_model as string | null) ?? null,
       plate: (order?.immatriculation as string | null) ?? null,
       reference: String(row.reference ?? ""),

@@ -4,6 +4,7 @@ import {
   Ban,
   Banknote,
   Box,
+  Building2,
   Check,
   CheckCircle2,
   Clock,
@@ -30,7 +31,6 @@ import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
 import {
   loadReceptionBoard,
   loadSmsStates,
-  markLinePutAway,
   markOrderSmsTreated,
   recordSmsSent,
   setLineHandedOver,
@@ -80,6 +80,20 @@ function fmtDayTime(value: string | null): string {
 /*  Page                                                              */
 /* ------------------------------------------------------------------ */
 
+/** Who a line is for: walk-in client, garage, or the magasin stock. */
+type LineKind = "CLIENT" | "GARAGE" | "STOCK";
+
+function lineKind(l: BoardLine): LineKind {
+  if (l.fromStock) return "STOCK";
+  return l.isGarage ? "GARAGE" : "CLIENT";
+}
+
+const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
+  { id: "CLIENT", label: "Client", icon: User },
+  { id: "GARAGE", label: "Garages", icon: Building2 },
+  { id: "STOCK", label: "Retour en stock", icon: Box },
+];
+
 export default function ReceptionCommandesPage() {
   const { profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
@@ -93,6 +107,8 @@ export default function ReceptionCommandesPage() {
 
   const [tab, setTab] = useState("apointer");
   const [tourFilter, setTourFilter] = useState<string | null>(null);
+  /** Client / Garages / Retour en stock filter under the tournées. */
+  const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
   const [smsFilter, setSmsFilter] = useState<"all" | "complet" | "partiel">("all");
 
   const load = useCallback(async () => {
@@ -241,12 +257,24 @@ export default function ReceptionCommandesPage() {
     });
   }, [pending]);
 
-  const pointerRows = useMemo(
+  const tourRows = useMemo(
     () =>
       tourFilter === null
         ? pending
         : pending.filter((l) => (l.tourName ?? "Hors tournée") === tourFilter),
     [pending, tourFilter],
+  );
+  const kindCounts = useMemo(() => {
+    const c: Record<LineKind, number> = { CLIENT: 0, GARAGE: 0, STOCK: 0 };
+    for (const l of tourRows) c[lineKind(l)] += 1;
+    return c;
+  }, [tourRows]);
+  const pointerRows = useMemo(
+    () =>
+      kindFilter === null
+        ? tourRows
+        : tourRows.filter((l) => lineKind(l) === kindFilter),
+    [tourRows, kindFilter],
   );
 
   /**
@@ -292,26 +320,6 @@ export default function ReceptionCommandesPage() {
     return rows;
   }, [board, sms]);
 
-  /**
-   * Received STOCK lines awaiting put-away (à ranger en stock) — only those
-   * that were actually re-ordered from a supplier. Stock lines never re-ordered
-   * (supplier null) belong on the Stock page under "À recommander".
-   */
-  const putAwayRows = useMemo(
-    () =>
-      board
-        .filter(
-          (l) =>
-            l.fromStock &&
-            l.supplierName &&
-            l.status === "RECEIVED" &&
-            !l.putAway,
-        )
-        .sort((a, b) =>
-          String(b.receivedAt ?? "").localeCompare(String(a.receivedAt ?? "")),
-        ),
-    [board],
-  );
 
   const smsRows = useMemo(
     () =>
@@ -421,21 +429,12 @@ export default function ReceptionCommandesPage() {
       });
     });
 
-  const actPutAway = (line: BoardLine) =>
-    withBusy(line.id, async () => {
-      if (!orgId) return;
-      await markLinePutAway(supabase, orgId, line.id);
-      setBoard((prev) =>
-        prev.map((l) => (l.id === line.id ? { ...l, putAway: true } : l)),
-      );
-    });
 
   /* ---- tabs ---- */
   const TABS: { id: string; label: string; sub: string; icon: LucideIcon; count?: number }[] = [
     { id: "apointer", label: "À pointer", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length },
     { id: "sms", label: "Commande SMS", sub: "Clients prêts à prévenir", icon: User, count: smsOrders.length },
     { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length },
-    { id: "retour", label: "Retour en stock", sub: "À ranger en stock", icon: Box, count: putAwayRows.length },
     { id: "historique", label: "Historique", sub: "Réceptions passées", icon: FileText },
   ];
 
@@ -747,6 +746,25 @@ export default function ReceptionCommandesPage() {
                 </div>
               )}
 
+              <div className="rc-kinds">
+                {KINDS.map((k) => {
+                  const Icon = k.icon;
+                  const active = kindFilter === k.id;
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      onClick={() => setKindFilter(active ? null : k.id)}
+                      className={`rc-kind rc-kind--${k.id.toLowerCase()}${active ? " rc-kind--active" : ""}`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {k.label}
+                      <span className="rc-kind-count">{kindCounts[k.id]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               <LinesTable rows={pointerRows} showActions />
 
               <div className="od-note rc-note">
@@ -969,98 +987,6 @@ export default function ReceptionCommandesPage() {
             </>
           )}
 
-          {/* ---- Retour en stock — received stock lines to put away ---- */}
-          {tab === "retour" && (
-            <>
-              <section className="od-card rc-table-card">
-                <div className="rc-table-wrap">
-                  <table className="rc-table">
-                    <thead>
-                      <tr>
-                        <th>N° CMD / Date</th>
-                        <th>Référence / Désignation</th>
-                        <th>Fournisseur</th>
-                        <th className="rc-th-center">Qté</th>
-                        <th>Reçu le</th>
-                        <th className="rc-th-center">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {putAwayRows.map((r) => (
-                        <tr key={r.id} className="rc-row rc-row--stock">
-                          <td>
-                            <Link
-                              href={`/dashboard/commandes/${r.orderId}`}
-                              className="rc-cmd"
-                            >
-                              {r.orderRef}
-                            </Link>
-                            <p className="rl-muted">{fmtDay(r.orderDate)}</p>
-                          </td>
-                          <td>
-                            <p className="rl-ref">{r.reference}</p>
-                            <p className="rl-muted">{r.designation}</p>
-                          </td>
-                          <td>
-                            <span
-                              className="rc-brand"
-                              style={{ color: r.supplierName ? "#DC2626" : "#1D4ED8" }}
-                            >
-                              {r.supplierName ?? "Stock magasin"}
-                            </span>
-                          </td>
-                          <td className="rc-th-center rl-qte">{r.quantity}</td>
-                          <td className="rl-muted-strong">{fmtDayTime(r.receivedAt)}</td>
-                          <td>
-                            <div className="rc-actions">
-                              <button
-                                type="button"
-                                className="rc-act rc-act--recu"
-                                disabled={busy.has(r.id)}
-                                onClick={() => actPutAway(r)}
-                              >
-                                Rangé{" "}
-                                {busy.has(r.id) ? (
-                                  <Loader2 className="h-3.5 w-3.5 nc-spin" />
-                                ) : (
-                                  <Check className="h-3.5 w-3.5" />
-                                )}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {!loading && putAwayRows.length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="rc-empty-cell">
-                            Aucune pièce à ranger en stock.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="av-foot">
-                  <span className="av-foot-count">
-                    {putAwayRows.length} pièce(s) à ranger
-                  </span>
-                </div>
-              </section>
-
-              <div className="od-note rc-note">
-                <Info className="h-4 w-4" />
-                <div className="rc-note-text">
-                  <p className="rl-note-strong">
-                    Pièces de stock reçues, à ranger dans le magasin.
-                  </p>
-                  <p className="rl-note-sub">
-                    Cliquez sur «&nbsp;Rangé&nbsp;» une fois la pièce mise en rayon —
-                    elle disparaîtra de cette liste.
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
         </>
       )}
 
