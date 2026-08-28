@@ -19,7 +19,20 @@ cp apps/web/.env.example apps/web/.env.local   # fill in your Supabase URL + ano
 npm run dev                                     # http://localhost:3000
 ```
 
-## Database setup (Supabase SQL Editor, in order)
+## Database setup
+
+The versioned migrations in `supabase/migrations/` are the source of truth.
+
+```bash
+npx supabase login
+npx supabase link --project-ref <your-project-ref>
+npx supabase db push
+```
+
+Do not run the manual SQL files below on an already migrated project: they are
+legacy recovery/setup artifacts and do not contain every later migration.
+
+## Legacy manual database setup (fresh recovery only)
 
 1. `supabase/full_saas.sql` — full schema: tables, enums, RLS policies, signup trigger, RPCs
 2. `supabase/operational_rpc.sql` — `receive_order_line`, `adjust_stock_item`
@@ -39,20 +52,11 @@ trigger (owner becomes ADMIN, 14-day TRIAL). All roles log into `/dashboard`.
 5. In Supabase → Authentication → URL Configuration, add the Vercel URL to
    Site URL / Redirect URLs.
 
-## Schema migrations (recommended next step)
+## Schema migration workflow
 
-Adopt the Supabase CLI so the database is version-controlled instead of ad-hoc SQL files:
-
-```bash
-npm install -g supabase
-supabase login
-supabase init                       # creates supabase/config.toml
-supabase link --project-ref <your-project-ref>
-supabase db pull                    # baseline migration from the live DB
-```
-
-After that, every schema change is a new file in `supabase/migrations/` applied with
-`supabase db push`.
+Migrations are already tracked. Create each database change as a new file in
+`supabase/migrations/` and deploy it with `npx supabase db push`; do not use
+`db pull` as a replacement for the committed migration history.
 
 ## Project layout
 

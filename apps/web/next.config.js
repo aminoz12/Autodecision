@@ -17,7 +17,7 @@ const nextConfig = {
     "9d96-41-248-94-133.ngrok-free.app",
   ],
   turbopack: {
-    root: __dirname,
+    root: path.join(__dirname, "..", ".."),
   },
   webpack: (config, { dev }) => {
     if (dev) {

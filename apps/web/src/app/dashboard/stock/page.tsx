@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import {
-  commandRestockLine,
+  reorderStockLines,
   loadRestockAlerts,
   loadRestockHistory,
   loadStockItems,
@@ -63,8 +63,10 @@ export default function StockPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Commander modal
-  const [target, setTarget] = useState<RestockAlert | null>(null);
+  // Commander modal — one or several parts, ONE supplier for all of them.
+  const [targets, setTargets] = useState<RestockAlert[]>([]);
+  const target = targets.length === 1 ? targets[0] : null;
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [supplierId, setSupplierId] = useState("");
   const [refCommande, setRefCommande] = useState("");
   const [tournee, setTournee] = useState<TourneeInfo | null>(null);
@@ -108,8 +110,9 @@ export default function StockPage() {
     [rows, alerts],
   );
 
-  function openCommander(a: RestockAlert) {
-    setTarget(a);
+  function openCommander(list: RestockAlert[]) {
+    if (list.length === 0) return;
+    setTargets(list);
     setSupplierId("");
     setRefCommande("");
     // Arrival follows the tournée matching the time the order is placed.
@@ -118,9 +121,23 @@ export default function StockPage() {
     setNotice(null);
   }
 
+  const allSelected = alerts.length > 0 && alerts.every((a) => selected.has(a.id));
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(alerts.map((a) => a.id)));
+  }
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  const selectedAlerts = alerts.filter((a) => selected.has(a.id));
+
   async function submitCommander(e: React.FormEvent) {
     e.preventDefault();
-    if (!orgId || !target) return;
+    if (!orgId || targets.length === 0) return;
     if (!supplierId) {
       setModalError("Choisissez un fournisseur.");
       return;
@@ -129,14 +146,21 @@ export default function StockPage() {
     setModalError(null);
     try {
       const sb = createClient();
-      const t = await commandRestockLine(sb, orgId, target.id, {
+      // One restock order (no client) for every selected part, same supplier.
+      const res = await reorderStockLines(sb, orgId, {
+        lineIds: targets.map((t) => t.id),
         supplierId,
-        referenceCommande: refCommande,
+        referenceCommandes: target ? { [target.id]: refCommande } : {},
       });
+      const t = tournee ?? computeTournee(new Date());
+      const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? "fournisseur";
       setNotice(
-        `${target.reference} commandée — ${t.name}, arrivée prévue ${fmtTournee(t)}.`,
+        targets.length === 1
+          ? `${targets[0].reference} commandée chez ${supplierName} — ${res.orderRef}, ${res.tourName || t.name}, arrivée prévue ${fmtTournee(t)}.`
+          : `${targets.length} pièces commandées chez ${supplierName} — commande stock ${res.orderRef}, ${res.tourName || t.name}, arrivée prévue ${fmtTournee(t)}.`,
       );
-      setTarget(null);
+      setTargets([]);
+      setSelected(new Set());
       await load();
     } catch (err) {
       setModalError(err instanceof Error ? err.message : String(err));
@@ -210,11 +234,41 @@ export default function StockPage() {
               {alerts.length}
             </span>
           )}
+          {alerts.length > 0 && (
+            <div className="stk-bulk">
+              <label className="rc-check rc-check--label">
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                Tout sélectionner
+              </label>
+              <button
+                type="button"
+                className="od-btn od-btn--primary st-cmd-btn"
+                disabled={selectedAlerts.length === 0}
+                onClick={() => openCommander(selectedAlerts)}
+                title="Commander toutes les pièces cochées chez le même fournisseur"
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Commander la sélection
+                {selectedAlerts.length > 0 && (
+                  <span className="rc-tab-count">{selectedAlerts.length}</span>
+                )}
+              </button>
+            </div>
+          )}
         </div>
         <div className="rl-table-wrap">
           <table className="stk-table">
             <thead>
               <tr>
+                <th className="rc-th-check">
+                  <input
+                    type="checkbox"
+                    className="rc-check"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    aria-label="Tout sélectionner"
+                  />
+                </th>
                 <th>Référence / Désignation</th>
                 <th>Commande / Client</th>
                 <th className="stk-th-center">Qté</th>
@@ -224,7 +278,16 @@ export default function StockPage() {
             </thead>
             <tbody>
               {alerts.map((a) => (
-                <tr key={a.id}>
+                <tr key={a.id} className={selected.has(a.id) ? "rc-row--selected" : undefined}>
+                  <td className="rc-th-check">
+                    <input
+                      type="checkbox"
+                      className="rc-check"
+                      checked={selected.has(a.id)}
+                      onChange={() => toggleOne(a.id)}
+                      aria-label={`Sélectionner ${a.reference}`}
+                    />
+                  </td>
                   <td>
                     <p className="stk-ref">{a.reference}</p>
                     <p className="stk-desig">{a.designation}</p>
@@ -241,7 +304,7 @@ export default function StockPage() {
                     <button
                       type="button"
                       className="od-btn od-btn--primary st-cmd-btn"
-                      onClick={() => openCommander(a)}
+                      onClick={() => openCommander([a])}
                     >
                       <ShoppingCart className="h-3.5 w-3.5" />
                       Commander
@@ -251,7 +314,7 @@ export default function StockPage() {
               ))}
               {!loading && alerts.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="stk-empty">
+                  <td colSpan={6} className="stk-empty">
                     Aucune pièce à recommander. Votre stock est à jour 👍
                   </td>
                 </tr>
@@ -336,21 +399,36 @@ export default function StockPage() {
       {notice && <div className="nc-ok">{notice}</div>}
 
       {/* ---- Commander modal ---- */}
-      {target && (
-        <div className="ga-modal-overlay" onClick={() => !commanding && setTarget(null)}>
+      {targets.length > 0 && (
+        <div className="ga-modal-overlay" onClick={() => !commanding && setTargets([])}>
           <div className="ga-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ga-modal-head">
-              <h2 className="ga-modal-title">Commander la pièce</h2>
-              <button type="button" className="ga-modal-close" onClick={() => setTarget(null)} aria-label="Fermer">
+              <h2 className="ga-modal-title">
+                {targets.length === 1
+                  ? "Commander la pièce"
+                  : `Commander ${targets.length} pièces (même fournisseur)`}
+              </h2>
+              <button type="button" className="ga-modal-close" onClick={() => setTargets([])} aria-label="Fermer">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <form className="ga-modal-form" onSubmit={submitCommander}>
               {modalError && <div className="nc-error">{modalError}</div>}
 
-              <div className="st-cmd-part">
-                <p className="rl-ref">{target.reference}</p>
-                <p className="rl-muted">{target.designation} · Qté {target.quantity}</p>
+              <div className="st-cmd-part st-cmd-part--list">
+                {targets.map((t) => (
+                  <div key={t.id} className="st-cmd-part-row">
+                    <span>
+                      <p className="rl-ref">{t.reference}</p>
+                      <p className="rl-muted">{t.designation}</p>
+                    </span>
+                    <span className="stk-qty">×{t.quantity}</span>
+                  </div>
+                ))}
+                <p className="st-cmd-hint">
+                  Une commande de réapprovisionnement séparée est créée pour le stock :
+                  les pièces ne restent pas liées au client.
+                </p>
               </div>
 
               <div className="od-field">
@@ -373,6 +451,7 @@ export default function StockPage() {
               </div>
 
               <div className="ga-modal-row">
+                {target && (
                 <div className="od-field">
                   <span className="od-label">Référence commandée</span>
                   <input
@@ -385,6 +464,7 @@ export default function StockPage() {
                     La référence d&apos;origine <strong>{target.reference}</strong> est conservée ; les deux seront recherchables.
                   </span>
                 </div>
+                )}
                 <div className="od-field">
                   <span className="od-label">Arrivée prévue</span>
                   <input
@@ -397,7 +477,7 @@ export default function StockPage() {
               </div>
 
               <div className="ga-modal-actions">
-                <button type="button" className="od-btn od-btn--ghost" onClick={() => setTarget(null)} disabled={commanding}>Annuler</button>
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setTargets([])} disabled={commanding}>Annuler</button>
                 <button type="submit" className="od-btn od-btn--primary" disabled={commanding}>
                   {commanding ? <Loader2 className="h-4 w-4 nc-spin" /> : <ShoppingCart className="h-4 w-4" />}
                   {commanding ? "Commande…" : "Commander"}

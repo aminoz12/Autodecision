@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toNumber } from "@/lib/data/saas";
-import { assignOrderTournee, createOrderWithLines } from "@/lib/data/orders";
+import { createOrderWithLines } from "@/lib/data/orders";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
 /** Today's date in the local timezone (yyyy-mm-dd), not UTC. */
@@ -183,7 +183,8 @@ export async function createGarageOrder(
 }
 
 /** Garagiste accepts a quoted devis → it becomes a confirmed order. */
-export async function acceptDevisOrder(
+/* Legacy browser-side quote mutations retained for migration context only.
+export async function acceptDevisOrderLegacy(
   supabase: SupabaseClient,
   orgId: string,
   orderId: string,
@@ -223,17 +224,30 @@ export async function acceptDevisOrder(
     .insert({ organization_id: orgId, order_id: orderId, workflow_status: "TO_COLLECT" });
 }
 
+*/
+
+export async function acceptDevisOrder(
+  supabase: SupabaseClient,
+  _orgId: string,
+  orderId: string,
+): Promise<void> {
+  const { error } = await supabase.rpc("resolve_garage_quote", {
+    p_order_id: orderId,
+    p_action: "ACCEPT",
+  });
+  if (error) throw new Error(error.message);
+}
+
 /** Garagiste refuses a quoted devis. */
 export async function refuseDevisOrder(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   orderId: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("orders")
-    .update({ devis_status: "REFUSED" })
-    .eq("id", orderId)
-    .eq("organization_id", orgId);
+  const { error } = await supabase.rpc("resolve_garage_quote", {
+    p_order_id: orderId,
+    p_action: "REFUSE",
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -285,24 +299,14 @@ export async function loadGarageReturns(
 
 export async function createGarageReturn(
   supabase: SupabaseClient,
-  orgId: string,
-  clientId: string,
+  _orgId: string,
+  _clientId: string,
   input: { orderId?: string | null; designation: string; reason: string },
 ): Promise<void> {
-  const year = new Date().getFullYear();
-  const ref = `RET-${year}-${String(Math.floor(Date.now() % 100000)).padStart(5, "0")}`;
-  const { error } = await supabase.from("sales_returns").insert({
-    organization_id: orgId,
-    client_id: clientId,
-    order_id: input.orderId || null,
-    ref,
-    designation: input.designation.trim(),
-    reason: input.reason.trim(),
-    motif: input.reason.trim(),
-    type_retour: "RETOURNABLE",
-    statut_traitement: "A_TRAITER",
-    decote_pct: 0,
-    montant: 0,
+  const { error } = await supabase.rpc("request_garage_return", {
+    p_order_id: input.orderId || null,
+    p_designation: input.designation,
+    p_reason: input.reason,
   });
   if (error) throw new Error(error.message);
 }
@@ -412,11 +416,40 @@ export const DEVIS_LABEL: Record<string, { label: string; cls: string }> = {
 };
 
 export const WORKFLOW_LABEL: Record<string, { label: string; cls: string }> = {
-  PENDING: { label: "En attente", cls: "amber" },
-  TO_COLLECT: { label: "À préparer", cls: "blue" },
-  IN_TRANSIT: { label: "En livraison", cls: "violet" },
+  PENDING: { label: "En attente de réception", cls: "amber" },
+  TO_COLLECT: { label: "En préparation", cls: "blue" },
+  IN_TRANSIT: { label: "En cours de livraison", cls: "violet" },
   DELIVERED: { label: "Livrée", cls: "green" },
 };
+
+/**
+ * What the garagiste sees for a confirmed order (devis = false):
+ *   AWAITING_RECEPTION — the magasin still waits for supplier parts
+ *   PREPARING          — every part is in the magasin, order being prepared
+ *   IN_DELIVERY        — handed to a livreur
+ *   DELIVERED          — done
+ * Lines the magasin answered "non disponible" (NOT_RECEIVED) never arrive,
+ * so they do not hold the order back.
+ */
+export type GarageStage = "AWAITING_RECEPTION" | "PREPARING" | "IN_DELIVERY" | "DELIVERED";
+
+export const GARAGE_STAGE_LABEL: Record<GarageStage, { label: string; cls: string }> = {
+  AWAITING_RECEPTION: { label: "Commande en attente de réception", cls: "amber" },
+  PREPARING: { label: "Commande en préparation", cls: "blue" },
+  IN_DELIVERY: { label: "Commande en cours de livraison", cls: "violet" },
+  DELIVERED: { label: "Commande livrée", cls: "green" },
+};
+
+export function garageStage(
+  order: Pick<GarageOrder, "workflow" | "lines">,
+): GarageStage {
+  if (order.workflow === "DELIVERED") return "DELIVERED";
+  if (order.workflow === "IN_TRANSIT") return "IN_DELIVERY";
+  const awaited = order.lines.filter(
+    (l) => l.status === "PENDING" || l.status === "BACKORDER",
+  );
+  return awaited.length > 0 ? "AWAITING_RECEPTION" : "PREPARING";
+}
 
 export const RETURN_LABEL: Record<string, { label: string; cls: string }> = {
   A_TRAITER: { label: "À traiter", cls: "amber" },

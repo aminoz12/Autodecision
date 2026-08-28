@@ -7,9 +7,10 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import {
   acceptDevisOrder,
   DEVIS_LABEL,
+  GARAGE_STAGE_LABEL,
+  garageStage,
   loadGarageOrders,
   refuseDevisOrder,
-  WORKFLOW_LABEL,
   type GarageOrder,
 } from "@/lib/data/garage";
 
@@ -95,10 +96,12 @@ export default function GarageOrdersPage() {
           {orders.map((o) => {
             const isDevis = o.devis;
             const quoted = isDevis && o.devisStatus === "QUOTED";
+            const stage = isDevis ? null : garageStage(o);
             const badge = isDevis
               ? DEVIS_LABEL[o.devisStatus ?? "REQUESTED"] ?? { label: "Devis", cls: "amber" }
-              : WORKFLOW_LABEL[o.workflow] ?? { label: o.workflow, cls: "amber" };
+              : GARAGE_STAGE_LABEL[stage ?? "AWAITING_RECEPTION"];
             const received = o.lines.filter((l) => l.status === "RECEIVED").length;
+            const expected = o.lines.filter((l) => l.status !== "NOT_RECEIVED").length;
             const quoteTotal = o.lines
               .filter((l) => l.disponible !== false)
               .reduce((s, l) => s + l.lineTotal, 0);
@@ -167,7 +170,15 @@ export default function GarageOrdersPage() {
                   </div>
                 ) : (
                   <div className="gp-order-foot">
-                    <span className="gp-order-prog">{received}/{o.lines.length} pièce(s) reçue(s)</span>
+                    <span className="gp-order-prog">
+                      {stage === "IN_DELIVERY"
+                        ? `En cours de livraison${o.deliveryAt ? ` · départ ${frDate(o.deliveryAt)}` : ""}`
+                        : stage === "DELIVERED"
+                          ? "Livrée"
+                          : stage === "PREPARING"
+                            ? "Toutes les pièces sont au magasin — préparation en cours"
+                            : `${received}/${expected} pièce(s) reçue(s) au magasin`}
+                    </span>
                     <span className="gp-order-total">
                       {eur(o.total)}
                       {o.balance > 0 && <span className="gp-order-balance"> · reste {eur(o.balance)}</span>}

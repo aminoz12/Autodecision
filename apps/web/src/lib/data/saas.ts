@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeTournee, findOrCreateTour, type TourneeInfo } from "@/lib/data/orders";
 
 type Embedded<T> = T | T[] | null | undefined;
 
@@ -38,15 +37,6 @@ export function fmtDateTime(value: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function isMissingRpcError(error: unknown): boolean {
-  const err = error as { code?: string; message?: string } | null;
-  return (
-    err?.code === "PGRST202" ||
-    err?.code === "42883" ||
-    Boolean(err?.message?.toLowerCase().includes("could not find the function"))
-  );
 }
 
 export type SupplierSummary = {
@@ -238,9 +228,10 @@ export async function loadReceptionLines(
   const { data, error } = await supabase
     .from("order_lines")
     .select(
-      "id,order_id,reference,reference_commande,nom_produit,supplier_id,quantity,qte_recue,prevue_le,received_at,reception_status,orders(ref_demande,date_commande,client_phone,clients(name,phone)),suppliers(name)",
+      "id,order_id,reference,reference_commande,nom_produit,supplier_id,quantity,qte_recue,prevue_le,received_at,reception_status,orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name,phone)),suppliers(name)",
     )
     .eq("organization_id", orgId)
+    .eq("orders.devis", false)
     .neq("reception_status", "RECEIVED")
     // Parts served from the magasin stock are not awaited from anyone: they
     // only show up here once re-ordered from a supplier (Stock → Commander).
@@ -260,10 +251,12 @@ export async function loadReceptionLines(
       orderId: String(row.order_id),
       orderRef: String(order?.ref_demande ?? row.order_id ?? ""),
       orderDate: (order?.date_commande as string | null) ?? null,
-      clientName: String(client?.name ?? "Client non lie"),
+      clientName: String(
+        client?.name ?? (order?.is_restock ? "Réappro stock" : "Client comptoir"),
+      ),
       clientPhone:
         (client?.phone as string | null) ??
-        (order?.client_phone as string | null) ??
+        (order?.is_restock ? null : (order?.client_phone as string | null)) ??
         null,
       reference: String(row.reference ?? ""),
       referenceCommande: (row.reference_commande as string | null) || null,
@@ -280,71 +273,11 @@ export async function loadReceptionLines(
 
 export async function markLineReceived(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   line: Pick<ReceptionLine, "id" | "reference" | "designation" | "quantity" | "receivedQuantity">,
 ): Promise<void> {
-  await receiveLineCore(supabase, orgId, line);
-  // A stock part is on the shelf as soon as it is received: no separate
-  // "Rangé" step. Client lines are untouched (depuis_magasin = false).
-  const { error } = await supabase
-    .from("order_lines")
-    .update({ retour_stock_fait: true })
-    .eq("id", line.id)
-    .eq("organization_id", orgId)
-    .eq("depuis_magasin", true);
-  if (error) throw new Error(error.message);
-}
-
-async function receiveLineCore(
-  supabase: SupabaseClient,
-  orgId: string,
-  line: Pick<ReceptionLine, "id" | "reference" | "designation" | "quantity" | "receivedQuantity">,
-): Promise<void> {
-  const rpc = await supabase.rpc("receive_order_line", { p_line_id: line.id });
-  if (!rpc.error) return;
-  if (!isMissingRpcError(rpc.error)) throw new Error(rpc.error.message);
-
-  const qtyToReceive = Math.max(line.quantity - line.receivedQuantity, 0);
-  const receivedAt = new Date().toISOString();
-  const { error: lineErr } = await supabase
-    .from("order_lines")
-    .update({
-      qte_recue: line.quantity,
-      reception_status: "RECEIVED",
-      received_at: receivedAt,
-    })
-    .eq("id", line.id)
-    .eq("organization_id", orgId);
-
-  if (lineErr) throw new Error(lineErr.message);
-  if (qtyToReceive <= 0) return;
-
-  const sku = line.reference.trim();
-  const { data: existing, error: existingErr } = await supabase
-    .from("stock_items")
-    .select("id,quantity_on_hand")
-    .eq("organization_id", orgId)
-    .eq("sku", sku)
-    .maybeSingle();
-
-  if (existingErr) throw new Error(existingErr.message);
-
-  if (existing) {
-    const current = existing as { id: string; quantity_on_hand: number };
-    const { error } = await supabase
-      .from("stock_items")
-      .update({ quantity_on_hand: toNumber(current.quantity_on_hand) + qtyToReceive })
-      .eq("id", current.id)
-      .eq("organization_id", orgId);
-    if (error) throw new Error(error.message);
-    return;
-  }
-
-  const { error } = await supabase.from("stock_items").insert({
-    organization_id: orgId,
-    sku,
-    name: line.designation,
-    quantity_on_hand: qtyToReceive,
+  const { error } = await supabase.rpc("receive_order_line", {
+    p_line_id: line.id,
   });
   if (error) throw new Error(error.message);
 }
@@ -374,12 +307,16 @@ export async function loadRestockAlerts(
     .from("order_lines")
     .select(
       "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
-        "orders(ref_demande,date_commande,client_phone,clients(name))",
+        "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))",
     )
     .eq("organization_id", orgId)
     .eq("depuis_magasin", true)
     .is("supplier_id", null)
+    // Already re-ordered → a restock order exists for this sale line.
+    .is("restock_line_id", null)
     .eq("retour_stock_fait", false)
+    .eq("orders.devis", false)
+    .eq("orders.is_restock", false)
     .limit(500);
 
   if (error) throw new Error(error.message);
@@ -471,43 +408,50 @@ export async function loadRestockHistory(
   );
 }
 
+export type RestockOrderResult = {
+  orderId: string;
+  orderRef: string;
+  tourName: string;
+  deliveryAt: string | null;
+};
+
 /**
- * Re-order a stock line from a supplier: it becomes an awaited reception.
- * The expected arrival is the tournée matching the time of the order (same
- * rule as client orders), and the supplier reference is stored next to the
- * original one — both stay searchable.
+ * Re-order stock parts from ONE supplier. The database creates a separate
+ * restock order (no client — the sale lines stay untouched on the client's
+ * order) with one awaited line per part, scheduled on the tournée matching
+ * the time of the order. `referenceCommandes` maps sale line id → supplier
+ * reference (kept next to the original reference, both searchable).
  */
-export async function commandRestockLine(
+export async function reorderStockLines(
   supabase: SupabaseClient,
-  orgId: string,
-  lineId: string,
-  input: { supplierId: string; referenceCommande?: string | null },
-): Promise<TourneeInfo> {
-  const tournee = computeTournee(new Date());
-  let tourId: string | null = null;
-  try {
-    tourId = await findOrCreateTour(supabase, orgId, tournee);
-  } catch {
-    tourId = null;
+  _orgId: string,
+  input: {
+    lineIds: string[];
+    supplierId: string;
+    referenceCommandes?: Record<string, string | null | undefined>;
+  },
+): Promise<RestockOrderResult> {
+  const refs: Record<string, string> = {};
+  for (const [id, ref] of Object.entries(input.referenceCommandes ?? {})) {
+    const v = ref?.trim();
+    if (v) refs[id] = v;
   }
-
-  const refCmd = input.referenceCommande?.trim() || null;
-  const update: Record<string, unknown> = {
-    supplier_id: input.supplierId,
-    a_commander_pour_livreur: true,
-    reception_status: "PENDING",
-    prevue_le: tournee.deliveryAt.toISOString(),
-    reference_commande: refCmd,
-  };
-  if (tourId) update.tour_id = tourId;
-
-  const { error } = await supabase
-    .from("order_lines")
-    .update(update)
-    .eq("id", lineId)
-    .eq("organization_id", orgId);
+  const { data, error } = await supabase.rpc("reorder_stock_lines", {
+    p_line_ids: input.lineIds,
+    p_supplier_id: input.supplierId,
+    p_reference_commandes: refs,
+  });
   if (error) throw new Error(error.message);
-  return tournee;
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { order_id?: string; ref_demande?: string; tour_name?: string; delivery_at?: string | null }
+    | null;
+  if (!row?.order_id) throw new Error("La commande de réapprovisionnement n'a pas pu être créée.");
+  return {
+    orderId: String(row.order_id),
+    orderRef: String(row.ref_demande ?? ""),
+    tourName: String(row.tour_name ?? ""),
+    deliveryAt: row.delivery_at ?? null,
+  };
 }
 
 export type StockItem = {
@@ -551,37 +495,7 @@ export async function adjustStockItem(
     p_name: input.name || input.sku,
     p_sku: input.sku,
   });
-  if (!rpc.error) return;
-  if (!isMissingRpcError(rpc.error)) throw new Error(rpc.error.message);
-
-  const sku = input.sku.trim();
-  const { data: existing, error: existingErr } = await supabase
-    .from("stock_items")
-    .select("id,quantity_on_hand")
-    .eq("organization_id", orgId)
-    .eq("sku", sku)
-    .maybeSingle();
-
-  if (existingErr) throw new Error(existingErr.message);
-
-  if (existing) {
-    const row = existing as { id: string; quantity_on_hand: number };
-    const { error } = await supabase
-      .from("stock_items")
-      .update({ quantity_on_hand: toNumber(row.quantity_on_hand) + input.delta })
-      .eq("id", row.id)
-      .eq("organization_id", orgId);
-    if (error) throw new Error(error.message);
-    return;
-  }
-
-  const { error } = await supabase.from("stock_items").insert({
-    organization_id: orgId,
-    sku,
-    name: input.name.trim(),
-    quantity_on_hand: input.delta,
-  });
-  if (error) throw new Error(error.message);
+  if (rpc.error) throw new Error(rpc.error.message);
 }
 
 export type PartSearchResult = {
@@ -829,15 +743,14 @@ export type ReturnTreatment =
  */
 export async function updateReturnTreatment(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   returnId: string,
   treatment: ReturnTreatment,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("sales_returns")
-    .update({ statut_traitement: treatment })
-    .eq("organization_id", orgId)
-    .eq("id", returnId);
+  const { error } = await supabase.rpc("set_return_treatment", {
+    p_return_id: returnId,
+    p_treatment: treatment,
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -880,7 +793,7 @@ export async function loadRefundableOrders(
           "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,retour_impossible)",
       )
       .eq("organization_id", orgId)
-      .eq("devis", false)
+      .eq("devis", false).eq("is_restock", false)
       .order("date_commande", { ascending: false })
       .limit(150),
     supabase
@@ -962,7 +875,10 @@ async function nextAvoirSeq(
  * back to its supplier) nothing is paid to a client: the return simply
  * enters the supplier pipeline (A_TRAITER) on the Retours page.
  */
-export async function createWalkInReturn(
+/*
+ * Historical browser-side implementation. Return creation is now a single
+ * database transaction so a return cannot exist without its credit note.
+export async function createWalkInReturnLegacy(
   supabase: SupabaseClient,
   orgId: string,
   input: {
@@ -971,7 +887,7 @@ export async function createWalkInReturn(
     reason: string;
     lines: RefundableLine[];
     compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
-    /** Supplier the part goes back to (FOURNISSEUR mode). */
+    // Supplier the part goes back to (FOURNISSEUR mode).
     supplierId?: string | null;
   },
 ): Promise<{ avoirNum: string | null }> {
@@ -1033,6 +949,37 @@ export async function createWalkInReturn(
     );
   }
   return { avoirNum: num };
+}
+*/
+
+export async function createWalkInReturn(
+  supabase: SupabaseClient,
+  _orgId: string,
+  input: {
+    orderId: string;
+    clientId: string | null;
+    reason: string;
+    lines: RefundableLine[];
+    compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
+    supplierId?: string | null;
+  },
+): Promise<{ avoirNum: string | null }> {
+  const refundable = input.lines.filter(
+    (line) => !line.retourImpossible && !line.alreadyReturned,
+  );
+  if (refundable.length === 0) {
+    throw new Error("Aucune ligne remboursable selectionnee.");
+  }
+
+  const { data, error } = await supabase.rpc("create_walk_in_return", {
+    p_order_id: input.orderId,
+    p_line_ids: refundable.map((line) => line.id),
+    p_reason: input.reason,
+    p_compensation: input.compensation ?? "REMBOURSEMENT",
+    p_supplier_id: input.supplierId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return { avoirNum: typeof data === "string" ? data : null };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1275,7 +1222,7 @@ export async function loadReportsOverview(
         .from("orders")
         .select("montant_total,montant_paye,solde_restant")
         .eq("organization_id", orgId)
-        .eq("devis", false)
+        .eq("devis", false).eq("is_restock", false)
         .order("id")
         .range(from, to),
     ),
@@ -1365,17 +1312,14 @@ export async function loadOrganizationSettings(
 
 export async function updateOrganizationSettings(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   input: Pick<OrganizationSettings, "name" | "phone" | "address" | "city">,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("organizations")
-    .update({
-      name: input.name.trim(),
-      phone: input.phone?.trim() || null,
-      address: input.address?.trim() || null,
-      city: input.city?.trim() || null,
-    })
-    .eq("id", orgId);
+  const { error } = await supabase.rpc("update_organization_settings", {
+    p_name: input.name,
+    p_phone: input.phone ?? "",
+    p_address: input.address ?? "",
+    p_city: input.city ?? "",
+  });
   if (error) throw new Error(error.message);
 }

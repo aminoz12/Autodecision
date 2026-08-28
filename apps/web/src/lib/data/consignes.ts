@@ -63,27 +63,25 @@ export async function loadConsignes(
 /** Core brought back → refund the deposit and close the consigne. */
 export async function markConsigneReturned(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   id: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("consignment_entries")
-    .update({ status: "RENDUE" })
-    .eq("id", id)
-    .eq("organization_id", orgId);
+  const { error } = await supabase.rpc("set_consignment_status", {
+    p_entry_id: id,
+    p_status: "RENDUE",
+  });
   if (error) throw new Error(error.message);
 }
 
 /** Re-open a consigne marked returned by mistake. */
 export async function reopenConsigne(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   id: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("consignment_entries")
-    .update({ status: "ACTIF" })
-    .eq("id", id)
-    .eq("organization_id", orgId);
+  const { error } = await supabase.rpc("set_consignment_status", {
+    p_entry_id: id,
+    p_status: "ACTIF",
+  });
   if (error) throw new Error(error.message);
 }

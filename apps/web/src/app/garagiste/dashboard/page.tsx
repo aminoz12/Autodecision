@@ -1,10 +1,19 @@
 "use client";
 
-import { Clock, CreditCard, Plus, RotateCcw, ShoppingCart, Wallet } from "lucide-react";
+import {
+  CreditCard,
+  Hourglass,
+  PackageCheck,
+  Plus,
+  RotateCcw,
+  ShoppingCart,
+  Truck,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { loadGarageOrders, type GarageOrder } from "@/lib/data/garage";
+import { garageStage, loadGarageOrders, type GarageOrder } from "@/lib/data/garage";
 
 const ACTIONS = [
   { href: "/garagiste/dashboard/commander", title: "Commander", desc: "Passer une nouvelle commande de pièces.", icon: Plus, color: "#5b4ee5", bg: "#EEF2FF" },
@@ -34,14 +43,17 @@ export default function GarageHomePage() {
     void load();
   }, [load]);
 
-  const summary = useMemo(
-    () => ({
+  const summary = useMemo(() => {
+    const confirmed = orders.filter((o) => !o.devis);
+    const stages = confirmed.map(garageStage);
+    return {
       total: orders.length,
-      inProgress: orders.filter((o) => o.workflow !== "DELIVERED").length,
+      awaiting: stages.filter((s) => s === "AWAITING_RECEPTION").length,
+      preparing: stages.filter((s) => s === "PREPARING").length,
+      delivering: stages.filter((s) => s === "IN_DELIVERY").length,
       balance: orders.reduce((s, o) => s + o.balance, 0),
-    }),
-    [orders],
-  );
+    };
+  }, [orders]);
 
   return (
     <div className="gp-page">
@@ -55,7 +67,9 @@ export default function GarageHomePage() {
 
       <div className="gp-stats">
         <div className="gp-stat"><span className="gp-stat-label"><ShoppingCart className="h-4 w-4" /> Commandes</span><span className="gp-stat-value">{summary.total}</span></div>
-        <div className="gp-stat"><span className="gp-stat-label"><Clock className="h-4 w-4" /> En cours</span><span className="gp-stat-value" style={{ color: "#2563EB" }}>{summary.inProgress}</span></div>
+        <div className="gp-stat"><span className="gp-stat-label"><Hourglass className="h-4 w-4" /> En attente de réception</span><span className="gp-stat-value" style={{ color: "#B45309" }}>{summary.awaiting}</span></div>
+        <div className="gp-stat"><span className="gp-stat-label"><PackageCheck className="h-4 w-4" /> En préparation</span><span className="gp-stat-value" style={{ color: "#1D4ED8" }}>{summary.preparing}</span></div>
+        <div className="gp-stat"><span className="gp-stat-label"><Truck className="h-4 w-4" /> En cours de livraison</span><span className="gp-stat-value" style={{ color: "#6D28D9" }}>{summary.delivering}</span></div>
         <div className="gp-stat gp-stat--accent"><span className="gp-stat-label"><Wallet className="h-4 w-4" /> Encours</span><span className="gp-stat-value" style={{ color: summary.balance > 0 ? "#DC2626" : "#16A34A" }}>{eur(summary.balance)}</span></div>
       </div>
 

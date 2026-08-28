@@ -7,18 +7,23 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   ClipboardCheck,
   FileText,
   Hourglass,
   Info,
+  ListChecks,
   Loader2,
   MessageSquare,
+  PackageCheck,
   RefreshCw,
   RotateCcw,
   Search,
+  Send,
   Truck,
   User,
+  Warehouse,
   X,
   XCircle,
   type LucideIcon,
@@ -28,6 +33,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
+import {
+  dispatchOrderToLivreur,
+  loadLivreurs,
+  markOrderDelivered,
+  type Livreur,
+} from "@/lib/data/livreurs";
 import {
   loadReceptionBoard,
   loadSmsStates,
@@ -105,23 +116,44 @@ export default function ReceptionCommandesPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
 
-  const [tab, setTab] = useState("apointer");
+  const [tab, setTab] = useState("arecevoir");
   const [tourFilter, setTourFilter] = useState<string | null>(null);
   /** Client / Garages / Retour en stock filter under the tournées. */
   const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
+  /** Supplier filter ("" = all, "__stock" = stock magasin lines). */
+  const [supplierFilter, setSupplierFilter] = useState("");
+  /** Lines ticked for a grouped action (Reçu / Reliquat / Non reçu). */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [smsFilter, setSmsFilter] = useState<"all" | "complet" | "partiel">("all");
+  const [livraisonFilter, setLivraisonFilter] = useState<"all" | "ready" | "transit">("all");
+
+  /* ---- livreurs + dispatch modal ---- */
+  const [livreurs, setLivreurs] = useState<Livreur[]>([]);
+  const [dispatchOrder, setDispatchOrder] = useState<{
+    orderId: string;
+    ref: string;
+    clientName: string;
+    livreurId: string | null;
+  } | null>(null);
+  const [dispatchLivreur, setDispatchLivreur] = useState("");
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [dispatchBusy, setDispatchBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
-      const [b, s] = await Promise.all([
+      const [b, s, l] = await Promise.all([
         loadReceptionBoard(supabase, orgId),
         loadSmsStates(supabase, orgId),
+        loadLivreurs(supabase, orgId, { activeOnly: true }),
       ]);
       setBoard(b);
       setSms(s);
+      setLivreurs(l);
+      setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -269,23 +301,127 @@ export default function ReceptionCommandesPage() {
     for (const l of tourRows) c[lineKind(l)] += 1;
     return c;
   }, [tourRows]);
-  const pointerRows = useMemo(
+  /** Suppliers present in the current tournée view (for the supplier filter). */
+  const supplierOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; count: number }>();
+    for (const l of tourRows) {
+      const id = l.supplierId ?? "__stock";
+      const name = l.supplierName ?? "Stock magasin";
+      const cur = map.get(id);
+      if (cur) cur.count += 1;
+      else map.set(id, { id, name, count: 1 });
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [tourRows]);
+  const pointerRows = useMemo(() => {
+    let rows = kindFilter === null ? tourRows : tourRows.filter((l) => lineKind(l) === kindFilter);
+    if (supplierFilter) {
+      rows = rows.filter((l) => (l.supplierId ?? "__stock") === supplierFilter);
+    }
+    return rows;
+  }, [tourRows, kindFilter, supplierFilter]);
+
+  /* ---- selection for grouped actions (only visible rows count) ---- */
+  const selectedRows = useMemo(
+    () => pointerRows.filter((l) => selected.has(l.id)),
+    [pointerRows, selected],
+  );
+  const allVisibleSelected =
+    pointerRows.length > 0 && pointerRows.every((l) => selected.has(l.id));
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      if (pointerRows.every((l) => prev.has(l.id))) {
+        const next = new Set(prev);
+        for (const l of pointerRows) next.delete(l.id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const l of pointerRows) next.add(l.id);
+      return next;
+    });
+  }, [pointerRows]);
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  /**
+   * "Commande à livrer" — garage orders and orders flagged "Envoyer au
+   * livreur": one row per order with its reception progress, then the
+   * dispatch to a livreur (→ en cours de livraison) and the delivery.
+   */
+  const deliveryOrders = useMemo(() => {
+    const byOrder = new Map<string, BoardLine[]>();
+    for (const l of board) {
+      if (l.isRestock) continue;
+      if (!(l.isGarage || l.envoyerAuLivreur)) continue;
+      if (l.workflow === "DELIVERED") continue;
+      const arr = byOrder.get(l.orderId);
+      if (arr) arr.push(l);
+      else byOrder.set(l.orderId, [l]);
+    }
+    return [...byOrder.entries()]
+      .map(([orderId, lines]) => {
+        const first = lines[0];
+        const awaited = lines.filter((l) => l.status === "PENDING" || l.status === "BACKORDER");
+        const received = lines.filter((l) => l.status === "RECEIVED").length;
+        const expected = lines.filter((l) => l.status !== "NOT_RECEIVED").length;
+        const inTransit = first.workflow === "IN_TRANSIT";
+        const stage: "AWAITING" | "READY" | "TRANSIT" = inTransit
+          ? "TRANSIT"
+          : awaited.length > 0
+            ? "AWAITING"
+            : "READY";
+        return {
+          orderId,
+          ref: first.orderRef,
+          date: first.orderDate,
+          clientName: first.clientName,
+          clientPhone: first.clientPhone,
+          isGarage: first.isGarage,
+          vehicle: first.vehicle,
+          plate: first.plate,
+          tourName: first.tourName,
+          dateEnvoi: first.dateEnvoi,
+          livreurId: first.livreurId,
+          livreurName: first.livreurName,
+          pieces: lines.reduce((s, l) => s + l.quantity, 0),
+          total: lines.length,
+          received,
+          expected,
+          missing: awaited.length,
+          stage,
+        };
+      })
+      .sort((a, b) => {
+        const rank = { READY: 0, AWAITING: 1, TRANSIT: 2 };
+        return rank[a.stage] - rank[b.stage] || String(b.date ?? "").localeCompare(String(a.date ?? ""));
+      });
+  }, [board]);
+  const deliveryRows = useMemo(
     () =>
-      kindFilter === null
-        ? tourRows
-        : tourRows.filter((l) => lineKind(l) === kindFilter),
-    [tourRows, kindFilter],
+      livraisonFilter === "all"
+        ? deliveryOrders
+        : deliveryOrders.filter((o) =>
+            livraisonFilter === "ready" ? o.stage === "READY" : o.stage === "TRANSIT",
+          ),
+    [deliveryOrders, livraisonFilter],
   );
 
   /**
-   * Orders ready for SMS — CLIENT lines only (depuis_magasin = false).
-   * Stock-replenishment lines never notify a client; they go to the
-   * "Retour en stock" tab. An order with no client line is excluded here.
+   * "Commande à préparer" — walk-in CLIENT orders whose parts arrived: the
+   * client is told by SMS and the order is prepared at the counter.
+   * Stock-replenishment lines never notify a client, and garage / delivery
+   * orders live in "Commande à livrer" instead.
    */
   const smsOrders = useMemo(() => {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
-      if (l.fromStock) continue; // skip stock lines entirely
+      if (l.fromStock || l.isRestock || l.isGarage || l.envoyerAuLivreur) continue;
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
       else byOrder.set(l.orderId, [l]);
@@ -430,10 +566,83 @@ export default function ReceptionCommandesPage() {
     });
 
 
+  /* ---- grouped action on the ticked lines ---- */
+  const actBulk = (status: ReceptionStatus) =>
+    withBusy("bulk", async () => {
+      if (!orgId || selectedRows.length === 0) return;
+      const failures: string[] = [];
+      for (const line of selectedRows) {
+        try {
+          if (status === "RECEIVED") {
+            await markLineReceived(supabase, orgId, {
+              id: line.id,
+              reference: line.reference,
+              designation: line.designation,
+              quantity: line.quantity,
+              receivedQuantity: line.received,
+            });
+          } else if (status === "BACKORDER" || status === "NOT_RECEIVED") {
+            if (line.status !== status) {
+              await setLineReceptionStatus(supabase, orgId, line.id, status);
+            }
+          }
+        } catch (e) {
+          failures.push(`${line.reference} (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+      const done = selectedRows.length - failures.length;
+      setNotice(
+        `${done} pièce${done > 1 ? "s" : ""} marquée${done > 1 ? "s" : ""} « ${STATUT[status].label} ».`,
+      );
+      if (failures.length > 0) setError(`Échec pour : ${failures.join(", ")}`);
+      await load();
+    });
+
+  /* ---- dispatch / delivered ---- */
+  const openDispatch = (o: (typeof deliveryOrders)[number]) => {
+    setDispatchOrder({
+      orderId: o.orderId,
+      ref: o.ref,
+      clientName: o.clientName,
+      livreurId: o.livreurId,
+    });
+    setDispatchLivreur(o.livreurId ?? livreurs[0]?.id ?? "");
+    setDispatchError(null);
+  };
+
+  const submitDispatch = async () => {
+    if (!dispatchOrder) return;
+    if (!dispatchLivreur) {
+      setDispatchError("Choisissez un livreur.");
+      return;
+    }
+    setDispatchBusy(true);
+    setDispatchError(null);
+    try {
+      await dispatchOrderToLivreur(supabase, dispatchOrder.orderId, dispatchLivreur);
+      const name = livreurs.find((l) => l.id === dispatchLivreur)?.name ?? "livreur";
+      setNotice(`${dispatchOrder.ref} envoyée à ${name} — en cours de livraison.`);
+      setDispatchOrder(null);
+      await load();
+    } catch (e) {
+      setDispatchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDispatchBusy(false);
+    }
+  };
+
+  const actDelivered = (o: (typeof deliveryOrders)[number]) =>
+    withBusy(`deliver-${o.orderId}`, async () => {
+      await markOrderDelivered(supabase, o.orderId);
+      setNotice(`${o.ref} livrée.`);
+      await load();
+    });
+
   /* ---- tabs ---- */
   const TABS: { id: string; label: string; sub: string; icon: LucideIcon; count?: number }[] = [
-    { id: "apointer", label: "À pointer", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length },
-    { id: "sms", label: "Commande SMS", sub: "Clients prêts à prévenir", icon: User, count: smsOrders.length },
+    { id: "arecevoir", label: "Pièces à recevoir", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length },
+    { id: "sms", label: "Commande à préparer", sub: "Pièces reçues, clients à prévenir", icon: PackageCheck, count: smsOrders.length },
+    { id: "alivrer", label: "Commande à livrer", sub: "Garages — envoi au livreur", icon: Truck, count: deliveryOrders.length },
     { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length },
     { id: "historique", label: "Historique", sub: "Réceptions passées", icon: FileText },
   ];
@@ -447,21 +656,35 @@ export default function ReceptionCommandesPage() {
     showActions,
     onReturn,
     showHandOver = true,
+    selectable = false,
   }: {
     rows: BoardLine[];
     showActions: boolean;
     onReturn?: (line: BoardLine) => void;
     /** "Remis client" column (hidden on the Historique tab). */
     showHandOver?: boolean;
+    /** Checkbox column for grouped actions. */
+    selectable?: boolean;
   }) {
     const colCount =
-      9 + (showHandOver ? 1 : 0) + (showActions ? 1 : 0) + (onReturn ? 1 : 0);
+      9 + (showHandOver ? 1 : 0) + (showActions ? 1 : 0) + (onReturn ? 1 : 0) + (selectable ? 1 : 0);
     return (
       <section className="od-card rc-table-card">
         <div className="rc-table-wrap">
           <table className="rc-table">
             <thead>
               <tr>
+                {selectable && (
+                  <th className="rc-th-check">
+                    <input
+                      type="checkbox"
+                      className="rc-check"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAll}
+                      aria-label="Tout sélectionner"
+                    />
+                  </th>
+                )}
                 <th>N° CMD / Date</th>
                 <th>Type</th>
                 <th>Client</th>
@@ -480,10 +703,25 @@ export default function ReceptionCommandesPage() {
               {rows.map((r) => {
                 const St = STATUT[r.status];
                 const StIcon = St.icon;
-                const type = r.fromStock ? "stock" : "client";
-                const isBusy = busy.has(r.id);
+                const type = r.fromStock ? "stock" : r.isGarage ? "garage" : "client";
+                const isBusy = busy.has(r.id) || busy.has("bulk");
+                const isSelected = selectable && selected.has(r.id);
                 return (
-                  <tr key={r.id} className={`rc-row rc-row--${type}`}>
+                  <tr
+                    key={r.id}
+                    className={`rc-row rc-row--${type}${isSelected ? " rc-row--selected" : ""}`}
+                  >
+                    {selectable && (
+                      <td className="rc-th-check">
+                        <input
+                          type="checkbox"
+                          className="rc-check"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(r.id)}
+                          aria-label={`Sélectionner ${r.reference}`}
+                        />
+                      </td>
+                    )}
                     <td>
                       <Link href={`/dashboard/commandes/${r.orderId}`} className="rc-cmd">
                         {r.orderRef}
@@ -492,7 +730,7 @@ export default function ReceptionCommandesPage() {
                     </td>
                     <td>
                       <span className={`rc-type rc-type--${type}`}>
-                        {r.fromStock ? "Stock" : "Client"}
+                        {r.fromStock ? "Stock" : r.isGarage ? "Garage" : "Client"}
                       </span>
                     </td>
                     <td>
@@ -676,6 +914,15 @@ export default function ReceptionCommandesPage() {
       </header>
 
       {error && <div className="nc-error">{error}</div>}
+      {notice && (
+        <div className="nc-ok rc-notice">
+          <CheckCircle2 className="h-4 w-4" />
+          {notice}
+          <button type="button" className="rc-notice-close" onClick={() => setNotice(null)} aria-label="Fermer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="rc-tabs">
@@ -711,8 +958,8 @@ export default function ReceptionCommandesPage() {
         </div>
       ) : (
         <>
-          {/* ---- À pointer ---- */}
-          {tab === "apointer" && (
+          {/* ---- Pièces à recevoir ---- */}
+          {tab === "arecevoir" && (
             <>
               {tours.length > 0 && (
                 <div className="rc-tournees">
@@ -765,7 +1012,100 @@ export default function ReceptionCommandesPage() {
                 })}
               </div>
 
-              <LinesTable rows={pointerRows} showActions />
+              <div className="rc-toolbar">
+                <label className="rc-toolbar-field">
+                  <Warehouse className="h-4 w-4" />
+                  <span className="od-select rc-toolbar-select">
+                    <select
+                      value={supplierFilter}
+                      onChange={(e) => setSupplierFilter(e.target.value)}
+                      aria-label="Filtrer par fournisseur"
+                    >
+                      <option value="">Tous les fournisseurs ({tourRows.length})</option>
+                      {supplierOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.count})
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="h-4 w-4" />
+                  </span>
+                </label>
+                <label className="rc-check rc-check--label">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAll}
+                    disabled={pointerRows.length === 0}
+                  />
+                  Tout sélectionner ({pointerRows.length})
+                </label>
+                {(supplierFilter || kindFilter || tourFilter) && (
+                  <button
+                    type="button"
+                    className="od-btn od-btn--ghost"
+                    onClick={() => {
+                      setSupplierFilter("");
+                      setKindFilter(null);
+                      setTourFilter(null);
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                    Effacer les filtres
+                  </button>
+                )}
+              </div>
+
+              {selectedRows.length > 0 && (
+                <div className="rc-bulk">
+                  <span className="rc-bulk-label">
+                    <ListChecks className="h-4 w-4" />
+                    {selectedRows.length} pièce{selectedRows.length > 1 ? "s" : ""} sélectionnée
+                    {selectedRows.length > 1 ? "s" : ""} — appliquer la même action :
+                  </span>
+                  <span className="rc-actions">
+                    <button
+                      type="button"
+                      className="rc-act rc-act--recu"
+                      disabled={busy.has("bulk")}
+                      onClick={() => actBulk("RECEIVED")}
+                    >
+                      {busy.has("bulk") ? (
+                        <Loader2 className="h-3.5 w-3.5 nc-spin" />
+                      ) : (
+                        <Check className="h-3.5 w-3.5" />
+                      )}
+                      Tout reçu
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-act rc-act--reliquat"
+                      disabled={busy.has("bulk")}
+                      onClick={() => actBulk("BACKORDER")}
+                    >
+                      Reliquat <Hourglass className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-act rc-act--nonrecu"
+                      disabled={busy.has("bulk")}
+                      onClick={() => actBulk("NOT_RECEIVED")}
+                    >
+                      Non reçu <X className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-act"
+                      disabled={busy.has("bulk")}
+                      onClick={() => setSelected(new Set())}
+                    >
+                      Annuler
+                    </button>
+                  </span>
+                </div>
+              )}
+
+              <LinesTable rows={pointerRows} showActions selectable />
 
               <div className="od-note rc-note">
                 <Info className="h-4 w-4" />
@@ -951,6 +1291,216 @@ export default function ReceptionCommandesPage() {
             </>
           )}
 
+          {/* ---- Commande à livrer (garages / envoi au livreur) ---- */}
+          {tab === "alivrer" && (
+            <>
+              <div className="rc-sms-filters">
+                <button
+                  type="button"
+                  onClick={() => setLivraisonFilter("all")}
+                  className={`rc-sms-all${livraisonFilter === "all" ? " rc-sms-all--active" : ""}`}
+                >
+                  Toutes les commandes à livrer
+                  <span className="rc-sms-all-count">{deliveryOrders.length}</span>
+                </button>
+                <div className="rc-sms-group">
+                  <button
+                    type="button"
+                    onClick={() => setLivraisonFilter("ready")}
+                    className="rc-sms-seg rc-sms-seg--green"
+                  >
+                    <span className="rc-sms-seg-top">
+                      <span className="rc-sms-seg-dot" />
+                      Prêtes à envoyer
+                      <span className="rc-sms-seg-count">
+                        {deliveryOrders.filter((o) => o.stage === "READY").length}
+                      </span>
+                    </span>
+                    <span className="rc-sms-seg-sub">Toutes les pièces au magasin</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLivraisonFilter("transit")}
+                    className="rc-sms-seg rc-sms-seg--blue"
+                  >
+                    <span className="rc-sms-seg-top">
+                      <span className="rc-sms-seg-dot" />
+                      En cours de livraison
+                      <span className="rc-sms-seg-count">
+                        {deliveryOrders.filter((o) => o.stage === "TRANSIT").length}
+                      </span>
+                    </span>
+                    <span className="rc-sms-seg-sub">Chez un livreur</span>
+                  </button>
+                </div>
+              </div>
+
+              <section className="od-card rc-table-card">
+                <div className="rc-table-wrap">
+                  <table className="rc-table">
+                    <thead>
+                      <tr>
+                        <th>N° CMD / Date</th>
+                        <th>Garage / Client</th>
+                        <th>Véhicule</th>
+                        <th>
+                          Pièces reçues
+                          <span className="rc-th-sub">Reçues / Attendues</span>
+                        </th>
+                        <th>État</th>
+                        <th>Tournée / Livreur</th>
+                        <th className="rc-th-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deliveryRows.map((o) => {
+                        const pct = o.expected > 0 ? Math.round((o.received / o.expected) * 100) : 0;
+                        const busyDeliver = busy.has(`deliver-${o.orderId}`);
+                        return (
+                          <tr key={o.orderId} className={`rc-row rc-row--${o.isGarage ? "garage" : "client"}`}>
+                            <td>
+                              <Link href={`/dashboard/commandes/${o.orderId}`} className="rc-cmd">
+                                {o.ref}
+                              </Link>
+                              <p className="rl-muted">{fmtDay(o.date)}</p>
+                            </td>
+                            <td>
+                              <p className="rl-client">
+                                {o.clientName}
+                                {o.isGarage && (
+                                  <span className="rc-type rc-type--garage" style={{ marginLeft: 6 }}>
+                                    Garage
+                                  </span>
+                                )}
+                              </p>
+                              <p className="rl-muted">{o.clientPhone ?? "—"}</p>
+                            </td>
+                            <td>
+                              <p className="rc-vehicle">{o.vehicle ?? "—"}</p>
+                              <p className="rl-muted">{o.plate ?? ""}</p>
+                            </td>
+                            <td>
+                              <div className="rc-prog">
+                                <span className="rc-prog-label">
+                                  {o.received} / {o.expected}
+                                </span>
+                                <span className="rc-prog-track">
+                                  <span
+                                    className={`rc-prog-fill rc-prog-fill--${o.stage === "AWAITING" ? "orange" : "green"}`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="rc-statcell">
+                                <span
+                                  className={`rt-badge rt-badge--${
+                                    o.stage === "TRANSIT" ? "violet" : o.stage === "READY" ? "green" : "amber"
+                                  }`}
+                                >
+                                  {o.stage === "TRANSIT"
+                                    ? "En cours de livraison"
+                                    : o.stage === "READY"
+                                      ? "Prête à envoyer"
+                                      : "En attente de réception"}
+                                </span>
+                                <span className="rc-statcell-sub">
+                                  {o.stage === "AWAITING"
+                                    ? `${o.missing} pièce${o.missing > 1 ? "s" : ""} pas encore reçue${o.missing > 1 ? "s" : ""}`
+                                    : o.stage === "READY"
+                                      ? "Le garagiste voit « en préparation »"
+                                      : `Départ ${fmtDayTime(o.dateEnvoi)}`}
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <p className="rc-last">{o.tourName ?? "—"}</p>
+                              <p className="rc-last-sub">
+                                {o.livreurName ? (
+                                  <span className="rc-livreur">
+                                    <Truck className="h-3.5 w-3.5" /> {o.livreurName}
+                                  </span>
+                                ) : (
+                                  "Aucun livreur"
+                                )}
+                              </p>
+                            </td>
+                            <td>
+                              <div className="rc-actions">
+                                {o.stage === "TRANSIT" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="rc-sms-act rc-sms-act--traite"
+                                      disabled={busyDeliver}
+                                      onClick={() => actDelivered(o)}
+                                    >
+                                      {busyDeliver ? (
+                                        <Loader2 className="h-4 w-4 nc-spin" />
+                                      ) : (
+                                        <Check className="h-4 w-4" />
+                                      )}
+                                      Livrée
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rc-act"
+                                      onClick={() => openDispatch(o)}
+                                      title="Changer de livreur"
+                                    >
+                                      Changer
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className={`rc-sms-act ${o.stage === "READY" ? "rc-sms-act--sms" : ""}`}
+                                    onClick={() => openDispatch(o)}
+                                    title={
+                                      o.stage === "READY"
+                                        ? "Assigner un livreur et partir en livraison"
+                                        : "Des pièces manquent encore — envoi partiel possible"
+                                    }
+                                  >
+                                    <Send className="h-4 w-4" />
+                                    Envoyer au livreur
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!loading && deliveryRows.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="rc-empty-cell">
+                            Aucune commande à livrer.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <div className="od-note rc-note">
+                <Info className="h-4 w-4" />
+                <div className="rc-note-text">
+                  <p className="rl-note-strong">
+                    Les commandes garage passent par trois étapes visibles par le garagiste :
+                    en attente de réception → en préparation → en cours de livraison.
+                  </p>
+                  <p className="rl-note-sub">
+                    «&nbsp;Envoyer au livreur&nbsp;» assigne un livreur (Livreur 1, 2, 3…) ;
+                    «&nbsp;Livrée&nbsp;» clôture la commande. Gérez vos livreurs dans{" "}
+                    <Link href="/dashboard/livreurs" className="rc-cmd">Livreurs</Link>.
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+
           {/* ---- Reliquats ---- */}
           {tab === "reliquats" && <LinesTable rows={backorders} showActions />}
 
@@ -988,6 +1538,93 @@ export default function ReceptionCommandesPage() {
           )}
 
         </>
+      )}
+
+      {dispatchOrder && (
+        <div
+          className="ga-modal-overlay"
+          onClick={() => !dispatchBusy && setDispatchOrder(null)}
+        >
+          <div
+            className="ga-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ga-modal-head">
+              <span className="ga-modal-title">
+                <Truck className="h-4 w-4" />
+                Envoyer au livreur
+              </span>
+              <button
+                type="button"
+                className="ga-modal-close"
+                onClick={() => setDispatchOrder(null)}
+                aria-label="Fermer"
+                disabled={dispatchBusy}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="ga-modal-form">
+              {dispatchError && <div className="nc-error">{dispatchError}</div>}
+              <div className="rt-picked">
+                <div>
+                  <p className="rt-order-ref">{dispatchOrder.ref}</p>
+                  <p className="rt-order-client">{dispatchOrder.clientName}</p>
+                </div>
+              </div>
+              <div className="od-field">
+                <span className="od-label">Livreur <span className="od-req">*</span></span>
+                <div className="rc-livreur-pick">
+                  {livreurs.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className={`rc-livreur-opt${dispatchLivreur === l.id ? " rc-livreur-opt--on" : ""}`}
+                      onClick={() => setDispatchLivreur(l.id)}
+                    >
+                      <Truck className="h-4 w-4" />
+                      <span>
+                        <strong>{l.name}</strong>
+                        {l.phone && <em>{l.phone}</em>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {livreurs.length === 0 && (
+                  <span className="st-cmd-hint">
+                    Aucun livreur actif. Ajoutez-en un dans{" "}
+                    <Link href="/dashboard/livreurs" className="rc-cmd">Livreurs</Link>.
+                  </span>
+                )}
+              </div>
+              <div className="ga-modal-actions">
+                <button
+                  type="button"
+                  className="od-btn od-btn--ghost"
+                  onClick={() => setDispatchOrder(null)}
+                  disabled={dispatchBusy}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className="od-btn od-btn--primary"
+                  onClick={() => void submitDispatch()}
+                  disabled={dispatchBusy || !dispatchLivreur}
+                >
+                  {dispatchBusy ? (
+                    <Loader2 className="h-4 w-4 nc-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {dispatchOrder.livreurId ? "Changer de livreur" : "Partir en livraison"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {returnLine && (

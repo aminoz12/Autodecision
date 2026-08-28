@@ -243,9 +243,15 @@ export default function OrderDetailPage() {
               <div className="od-info-card">
                 <div className="od-info-head">
                   <User className="h-4 w-4" />
-                  Client
+                  {order.isRestock ? "Réapprovisionnement" : order.isGarage ? "Garage" : "Client"}
                 </div>
                 <p className="od-info-name">{order.clientName}</p>
+                {order.isRestock && (
+                  <p className="od-info-line">
+                    <Package className="h-3.5 w-3.5" />
+                    Pièces commandées pour le stock magasin — aucun client lié.
+                  </p>
+                )}
                 {order.clientPhone && (
                   <p className="od-info-line">
                     <Phone className="h-3.5 w-3.5" />
@@ -493,6 +499,10 @@ export default function OrderDetailPage() {
               </div>
               {order.envoyerAuLivreur && (
                 <>
+                  <div className="od-kv-row">
+                    <dt>Livreur</dt>
+                    <dd>{order.livreurName ?? "Non assigné"}</dd>
+                  </div>
                   <div className="od-kv-row">
                     <dt>Statut livreur</dt>
                     <dd>{LIVREUR_LABEL[order.statutLivreur] ?? order.statutLivreur}</dd>

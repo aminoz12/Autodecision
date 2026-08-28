@@ -38,7 +38,7 @@ async function handle(request: Request) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!profile || profile.client_id) {
+  if (!profile || profile.client_id || profile.role !== "ADMIN") {
     return NextResponse.json(
       { error: "Accès refusé (compte non autorisé)." },
       { status: 403 },
@@ -79,10 +79,11 @@ async function handle(request: Request) {
     password,
     email_confirm: true,
     user_metadata: {
+      display_name: garage.name,
+    },
+    app_metadata: {
       organization_id: orgId,
       client_id: garageId,
-      role: "CAISSIER",
-      display_name: garage.name,
     },
   });
 
@@ -107,15 +108,16 @@ async function handle(request: Request) {
             password,
             email_confirm: true,
             user_metadata: {
+              display_name: garage.name,
+            },
+            app_metadata: {
               organization_id: orgId,
               client_id: garageId,
-              role: "CAISSIER",
-              display_name: garage.name,
             },
           });
           await admin
             .from("profiles")
-            .update({ organization_id: orgId, client_id: garageId })
+            .update({ organization_id: orgId, client_id: garageId, role: "CAISSIER" })
             .eq("user_id", existing.id);
           return NextResponse.json({ ok: true, email, reset: true });
         }
@@ -136,7 +138,7 @@ async function handle(request: Request) {
   if (created.user) {
     await admin
       .from("profiles")
-      .update({ organization_id: orgId, client_id: garageId })
+      .update({ organization_id: orgId, client_id: garageId, role: "CAISSIER" })
       .eq("user_id", created.user.id);
   }
 

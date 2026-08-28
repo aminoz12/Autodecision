@@ -274,6 +274,14 @@ export default function NouvelleCommandePage() {
           bl: false,
         };
         const order = await createOrderWithLines(supabase, userId, orgId, payload);
+        if (forStock) {
+          // Flag it as a stock replenishment (no client; shown as "Réappro stock").
+          await supabase
+            .from("orders")
+            .update({ is_restock: true })
+            .eq("id", order.id)
+            .eq("organization_id", orgId);
+        }
         createdRefs.push(order.ref_demande);
       }
 

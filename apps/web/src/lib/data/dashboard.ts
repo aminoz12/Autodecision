@@ -27,9 +27,9 @@ export function workflowLabel(status: string | null | undefined): {
     case "DELIVERED":
       return { label: "Livré", type: "success" };
     case "IN_TRANSIT":
-      return { label: "En transit", type: "info" };
+      return { label: "En cours de livraison", type: "info" };
     case "TO_COLLECT":
-      return { label: "À collecter", type: "info" };
+      return { label: "En préparation", type: "info" };
     case "PENDING":
     default:
       return { label: "En attente", type: "warning" };
@@ -116,7 +116,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false)
+        .eq("devis", false).eq("is_restock", false)
         .eq("date_commande", today),
     ),
     headCount(
@@ -124,7 +124,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false)
+        .eq("devis", false).eq("is_restock", false)
         .eq("date_commande", yesterday),
     ),
     headCount(
@@ -132,7 +132,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false)
+        .eq("devis", false).eq("is_restock", false)
         .eq("workflow_status", "PENDING"),
     ),
     headCount(
@@ -164,7 +164,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false),
+        .eq("devis", false).eq("is_restock", false),
     ),
     supabase
       .from("orders")
@@ -172,7 +172,7 @@ export async function loadDashboardOverview(
         "id,ref_demande,workflow_status,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
       )
       .eq("organization_id", orgId)
-      .eq("devis", false)
+      .eq("devis", false).eq("is_restock", false)
       .order("createdAt", { ascending: false })
       .limit(5),
     supabase
@@ -191,7 +191,7 @@ export async function loadDashboardOverview(
       .from("orders")
       .select("date_commande,client_id,clients(name)")
       .eq("organization_id", orgId)
-      .eq("devis", false)
+      .eq("devis", false).eq("is_restock", false)
       .gte("date_commande", since30)
       .limit(1000),
   ]);

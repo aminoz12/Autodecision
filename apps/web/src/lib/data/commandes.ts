@@ -54,6 +54,15 @@ export type BoardLine = {
   retourImpossible: boolean;
   /** A sales return was already recorded for this line. */
   alreadyReturned: boolean;
+  /** The order is a stock replenishment (no client). */
+  isRestock: boolean;
+  /** orders.workflow_status: PENDING / TO_COLLECT / IN_TRANSIT / DELIVERED. */
+  workflow: string;
+  /** The order must be delivered (garage or "Envoyer au livreur"). */
+  envoyerAuLivreur: boolean;
+  livreurId: string | null;
+  livreurName: string | null;
+  dateEnvoi: string | null;
 };
 
 export async function loadReceptionBoard(
@@ -66,7 +75,7 @@ export async function loadReceptionBoard(
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
-          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage))," +
+          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage),livreurs(name))," +
           "suppliers(name),delivery_tours(name)",
       )
       .eq("organization_id", orgId)
@@ -102,6 +111,8 @@ export async function loadReceptionBoard(
     const client = first(order?.clients as Embedded<Record<string, unknown>>);
     const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
     const tour = first(row.delivery_tours as Embedded<Record<string, unknown>>);
+    const livreur = first(order?.livreurs as Embedded<Record<string, unknown>>);
+    const isRestock = order?.is_restock === true;
     // Real tour name, else derive the tournée from the order's creation time
     // (or its scheduled delivery), so lines created before tour assignment
     // still display their tournée instead of "Hors tournée".
@@ -122,10 +133,12 @@ export async function loadReceptionBoard(
       orderRef: String(order?.ref_demande ?? row.order_id ?? ""),
       orderDate: (order?.date_commande as string | null) ?? null,
       clientId: client ? String(client.id) : null,
-      clientName: String(client?.name ?? "Client non lié"),
+      clientName: String(
+        client?.name ?? (isRestock ? "Réappro stock" : "Client comptoir"),
+      ),
       clientPhone:
         (client?.phone as string | null) ??
-        (order?.client_phone as string | null) ??
+        (isRestock ? null : (order?.client_phone as string | null)) ??
         null,
       isGarage: client?.is_garage === true,
       vehicle: (order?.vehicle_model as string | null) ?? null,
@@ -148,6 +161,12 @@ export async function loadReceptionBoard(
       unitPrice: toNumber(row.prix_vente_unitaire),
       retourImpossible: Boolean(row.retour_impossible),
       alreadyReturned: returnedLineIds.has(String(row.id)),
+      isRestock,
+      workflow: String(order?.workflow_status ?? "PENDING"),
+      envoyerAuLivreur: order?.envoyer_au_livreur === true,
+      livreurId: (order?.livreur_id as string | null) ?? null,
+      livreurName: livreur ? String(livreur.name ?? "") : null,
+      dateEnvoi: (order?.date_envoi as string | null) ?? null,
     };
   });
 
@@ -163,19 +182,14 @@ export async function loadReceptionBoard(
  */
 export async function setLineHandedOver(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   lineId: string,
   qty: number,
 ): Promise<void> {
-  const value = Math.max(0, Math.floor(qty));
-  const { error } = await supabase
-    .from("order_lines")
-    .update({
-      qte_remise: value,
-      remise_at: value > 0 ? new Date().toISOString() : null,
-    })
-    .eq("id", lineId)
-    .eq("organization_id", orgId);
+  const { error } = await supabase.rpc("set_order_line_handed_over", {
+    p_line_id: lineId,
+    p_quantity: Math.max(0, Math.floor(qty)),
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -196,15 +210,14 @@ export async function markLinePutAway(
 /** Reliquat / Non reçu / re-open. "Reçu" goes through markLineReceived (stock side-effects). */
 export async function setLineReceptionStatus(
   supabase: SupabaseClient,
-  orgId: string,
+  _orgId: string,
   lineId: string,
   status: Exclude<ReceptionStatus, "RECEIVED">,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("order_lines")
-    .update({ reception_status: status })
-    .eq("id", lineId)
-    .eq("organization_id", orgId);
+  const { error } = await supabase.rpc("set_order_line_reception_status", {
+    p_line_id: lineId,
+    p_status: status,
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -318,6 +331,10 @@ export type OrderDetail = {
   consigne: string | null;
   bl: boolean;
   dateBl: string | null;
+  /** Stock replenishment order (no client). */
+  isRestock: boolean;
+  isGarage: boolean;
+  livreurName: string | null;
   lines: OrderDetailLine[];
 };
 
@@ -337,7 +354,7 @@ export async function loadOrderDetail(
       "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
         "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
-        "clients(name,phone,email)",
+        "is_restock,livreur_id,clients(name,phone,email,is_garage),livreurs(name)",
     )
     .eq("id", orderId)
     .eq("organization_id", orgId)
@@ -399,10 +416,13 @@ export async function loadOrderDetail(
     canal: String(order.canal_vente ?? ""),
     workflow: String(order.workflow_status ?? "PENDING"),
     devis: Boolean(order.devis),
-    clientName: String(client?.name ?? "Client non lié"),
+    clientName: String(
+      client?.name ??
+        (order.is_restock === true ? "Réapprovisionnement stock" : "Client comptoir"),
+    ),
     clientPhone:
       (client?.phone as string | null) ??
-      (order.client_phone as string | null) ??
+      (order.is_restock === true ? null : (order.client_phone as string | null)) ??
       null,
     clientEmail:
       (client?.email as string | null) ??
@@ -425,6 +445,12 @@ export async function loadOrderDetail(
     consigne: (order.consigne as string | null) ?? null,
     bl: Boolean(order.bl),
     dateBl: (order.date_bl as string | null) ?? null,
+    isRestock: order.is_restock === true,
+    isGarage: client?.is_garage === true,
+    livreurName: (() => {
+      const l = first(order.livreurs as Embedded<Record<string, unknown>>);
+      return l ? String(l.name ?? "") : null;
+    })(),
     lines,
   };
 }

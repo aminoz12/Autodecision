@@ -267,7 +267,11 @@ async function decrementStockForMagasinLines(
     : null;
 }
 
-export async function createOrderWithLines(
+/*
+ * Retained only as a migration reference. The active implementation below is
+ * the RPC transaction; keeping browser-side multi-write logic executable
+ * would reintroduce partial orders and racing references.
+export async function createOrderWithLinesLegacy(
   supabase: SupabaseClient,
   userId: string,
   orgId: string,
@@ -433,6 +437,42 @@ export async function createOrderWithLines(
     tourName: tourName ?? "",
     deliveryAt: dateEnvoi,
     avoirWarning: [avoirWarning, stockWarning].filter(Boolean).join(" ") || null,
+  };
+}
+
+*/
+
+export async function createOrderWithLines(
+  supabase: SupabaseClient,
+  _userId: string,
+  _orgId: string,
+  payload: CreateOrderPayload,
+) {
+  // Tenant, financial values, reference allocation, consignes, stock, and
+  // delivery scheduling are all derived by PostgreSQL in one transaction.
+  const { data, error } = await supabase.rpc("create_order_with_lines", {
+    p_payload: payload,
+  });
+  if (error) throw new Error(error.message);
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        id?: string;
+        ref_demande?: string;
+        tour_name?: string | null;
+        delivery_at?: string | null;
+      }
+    | null;
+  if (!row?.id || !row.ref_demande) {
+    throw new Error("La commande n'a pas pu etre creee.");
+  }
+
+  return {
+    id: row.id,
+    ref_demande: row.ref_demande,
+    tourName: row.tour_name ?? "",
+    deliveryAt: row.delivery_at ?? null,
+    avoirWarning: null,
   };
 }
 
