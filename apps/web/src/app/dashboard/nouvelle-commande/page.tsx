@@ -717,7 +717,7 @@ export default function NouvelleCommandePage() {
 
   return (
     <>
-    <form className="od-page" onSubmit={handleSubmit}>
+    <form className="od-page nc-page" onSubmit={handleSubmit}>
       {/* Breadcrumb + title */}
       <nav className="od-breadcrumb">
         <Link href="/dashboard">Tableau de bord</Link>
@@ -823,7 +823,7 @@ export default function NouvelleCommandePage() {
             </div>
           </div>
           <div className="od-field nc-col-2">
-            <span className="od-label">Nom du client *</span>
+            <span className="od-label">Nom du client <span className="od-req">*</span></span>
             <input
               className="od-input"
               placeholder="GARAGE MARTIN"
@@ -1287,7 +1287,7 @@ export default function NouvelleCommandePage() {
                 </div>
 
                 <div className="od-field">
-                  <span className="od-label">Référence / Désignation *</span>
+                  <span className="od-label">Référence / Désignation <span className="od-req">*</span></span>
                   <input
                     className="od-input"
                     placeholder="GDB1322 — Plaquette de frein"
@@ -1312,7 +1312,7 @@ export default function NouvelleCommandePage() {
                   </div>
                   <div className="od-field">
                     <span className="od-label">
-                      Fournisseur{row.pourQui === "STOCK" ? " *" : ""}
+                      Fournisseur{row.pourQui === "STOCK" ? <span className="od-req"> *</span> : ""}
                     </span>
                     <div className="od-select">
                       <select
@@ -1352,7 +1352,7 @@ export default function NouvelleCommandePage() {
                   </div>
                   {row.pourQui === "GARAGE" && (
                     <div className="od-field">
-                      <span className="od-label">Garage *</span>
+                      <span className="od-label">Garage <span className="od-req">*</span></span>
                       <div className="od-select">
                         <select
                           value={row.garageId}
@@ -1390,7 +1390,7 @@ export default function NouvelleCommandePage() {
                 {row.pourQui === "COMPTOIR" && (
                   <div className="ga-modal-row">
                     <div className="od-field">
-                      <span className="od-label">Nom complet *</span>
+                      <span className="od-label">Nom complet <span className="od-req">*</span></span>
                       <input
                         className="od-input"
                         placeholder="Jean Dupont"
@@ -1401,7 +1401,7 @@ export default function NouvelleCommandePage() {
                       />
                     </div>
                     <div className="od-field">
-                      <span className="od-label">Téléphone *</span>
+                      <span className="od-label">Téléphone <span className="od-req">*</span></span>
                       <input
                         className="od-input"
                         placeholder="06 12 34 56 78"

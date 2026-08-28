@@ -180,7 +180,7 @@ export default function DashboardPage() {
         {stats.map((s) => {
           const Icon = s.icon;
           return (
-            <div key={s.label} className="stat-card">
+            <div key={s.label} className="stat-card" style={{ "--accent": s.iconColor } as React.CSSProperties}>
               <div className="stat-card-top">
                 <div className="stat-icon-wrap" style={{ backgroundColor: s.iconBg }}>
                   <Icon style={{ color: s.iconColor }} className="h-5 w-5" />

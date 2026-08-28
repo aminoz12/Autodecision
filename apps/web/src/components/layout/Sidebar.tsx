@@ -1,22 +1,24 @@
 "use client";
 
 import {
-  BarChart3,
-  Box,
-  Building2,
-  Clock,
-  Coins,
-  FileText,
-  Home,
+  Boxes,
+  ChartColumn,
+  CircleDollarSign,
+  ClipboardPlus,
+  Hourglass,
+  LayoutDashboard,
   LogOut,
   Menu,
-  PlusCircle,
-  RotateCcw,
+  PackageCheck,
+  Receipt,
   Settings,
-  ShoppingCart,
+  Store,
   Truck,
+  Undo2,
   Warehouse,
+  Wrench,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -25,20 +27,43 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-const navItems = [
-  { href: "/dashboard", label: "Tableau de bord", icon: Home },
-  { href: "/dashboard/nouvelle-commande", label: "Nouvelle Commande", icon: PlusCircle },
-  { href: "/dashboard/commandes", label: "Suivis Des Commandes", icon: ShoppingCart },
-  { href: "/dashboard/garages", label: "Garages", icon: Building2 },
-  { href: "/dashboard/stock", label: "Stock", icon: Box },
-  { href: "/dashboard/reliquats", label: "Reliquats", icon: Clock },
-  { href: "/dashboard/retours", label: "Retours", icon: RotateCcw },
-  { href: "/dashboard/avoirs", label: "Avoirs", icon: FileText },
-  { href: "/dashboard/consignes", label: "Consignes", icon: Coins },
-  { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
-  { href: "/dashboard/rapports", label: "Rapports", icon: BarChart3 },
-  { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
-  { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
+type NavItem = { href: string; label: string; icon: LucideIcon };
+type NavGroup = { label: string; items: NavItem[] };
+
+const navGroups: NavGroup[] = [
+  {
+    label: "Activité",
+    items: [
+      { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
+      { href: "/dashboard/nouvelle-commande", label: "Nouvelle commande", icon: ClipboardPlus },
+      { href: "/dashboard/commandes", label: "Suivi des commandes", icon: PackageCheck },
+    ],
+  },
+  {
+    label: "Pièces",
+    items: [
+      { href: "/dashboard/stock", label: "Stock", icon: Boxes },
+      { href: "/dashboard/reliquats", label: "Reliquats", icon: Hourglass },
+      { href: "/dashboard/retours", label: "Retours", icon: Undo2 },
+      { href: "/dashboard/avoirs", label: "Avoirs", icon: Receipt },
+      { href: "/dashboard/consignes", label: "Consignes", icon: CircleDollarSign },
+    ],
+  },
+  {
+    label: "Partenaires",
+    items: [
+      { href: "/dashboard/garages", label: "Garages", icon: Wrench },
+      { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
+      { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
+    ],
+  },
+  {
+    label: "Pilotage",
+    items: [
+      { href: "/dashboard/rapports", label: "Rapports", icon: ChartColumn },
+      { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
+    ],
+  },
 ];
 
 const ROLE_LABEL: Record<string, string> = {
@@ -90,12 +115,18 @@ export function Sidebar() {
     router.replace("/login");
   }
 
+  function isActive(href: string): boolean {
+    return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+  }
+
   return (
     <>
       {/* Mobile hamburger */}
       <div className="sidebar-mobile-header">
         <div className="sidebar-brand-mini">
-          <span className="sidebar-brand-icon">⚡</span>
+          <span className="sidebar-brand-icon-new sidebar-brand-icon-new--sm">
+            <Store className="h-4 w-4" />
+          </span>
           <span>{brand}</span>
         </div>
         <button
@@ -109,17 +140,12 @@ export function Sidebar() {
       </div>
 
       {/* Sidebar */}
-      <aside
-        className={cn(
-          "sidebar",
-          mobileOpen ? "sidebar--open" : ""
-        )}
-      >
+      <aside className={cn("sidebar", mobileOpen ? "sidebar--open" : "")}>
         {/* Brand */}
         <div className="sidebar-brand">
           <div className="sidebar-brand-content">
             <div className="sidebar-brand-icon-new">
-              <Home className="h-5 w-5 text-white" />
+              <Store className="h-5 w-5 text-white" />
             </div>
             <div>
               <h1 className="sidebar-brand-name">{brand}</h1>
@@ -138,27 +164,27 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="sidebar-nav">
-          {navItems.map((item) => {
-            const isActive =
-              item.href === "/dashboard"
-                ? pathname === "/dashboard"
-                : pathname.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className={cn(
-                  "sidebar-nav-item",
-                  isActive && "sidebar-nav-item--active"
-                )}
-              >
-                <Icon className="sidebar-nav-icon" />
-                <span className="flex-1">{item.label}</span>
-              </Link>
-            );
-          })}
+          {navGroups.map((group) => (
+            <div key={group.label} className="sidebar-group">
+              <p className="sidebar-group-label">{group.label}</p>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={cn("sidebar-nav-item", active && "sidebar-nav-item--active")}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    <Icon className="sidebar-nav-icon" />
+                    <span className="flex-1">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Signed-in user + logout */}
