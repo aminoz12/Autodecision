@@ -11,6 +11,7 @@ import {
   Plus,
   ShoppingCart,
   Trash2,
+  Send,
   Truck,
   Upload,
   User,
@@ -33,6 +34,7 @@ import {
   type GarageSummary,
   type SupplierOption,
 } from "@/lib/data/saas";
+import { matchClientByPhone } from "@/lib/data/clients";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
 /* ------------------------------------------------------------------ */
@@ -40,11 +42,11 @@ import type { CreateOrderPayload } from "@/lib/types/api";
 /* ------------------------------------------------------------------ */
 
 const CANAUX = ["MAGASIN", "TÉLÉPHONE", "INTERNET", "B2B", "AUTRE"] as const;
-const PAIEMENTS = [
-  { value: "NON_PAYÉ", label: "Non payé" },
-  { value: "PARTIEL", label: "Acompte" },
-  { value: "PAYÉ", label: "Payé" },
-] as const;
+const PAIEMENT_LABEL: Record<string, { label: string; cls: string }> = {
+  "PAYÉ": { label: "Payé", cls: "green" },
+  PARTIEL: { label: "Acompte", cls: "amber" },
+  "NON_PAYÉ": { label: "Non payé", cls: "red" },
+};
 
 const NEW_CLIENT = "__new__";
 
@@ -114,6 +116,13 @@ function todayISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** Parse a money input and cap it: the cashier can never type more than due. */
+function clampMoney(raw: string, cap: number): number {
+  const n = Number(String(raw).replace(",", "."));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.round(n * 100) / 100, Math.max(0, Math.round(cap * 100) / 100));
+}
+
 function eur(value: number): string {
   return `${value.toLocaleString("fr-FR", {
     minimumFractionDigits: 2,
@@ -144,7 +153,6 @@ export default function NouvelleCommandePage() {
   const [kilometrage, setKilometrage] = useState("");
 
   /* ---- Document ---- */
-  const [dateCommande, setDateCommande] = useState(todayISO());
   const [canalVente, setCanalVente] = useState<string>("MAGASIN");
 
   /* ---- Lines ---- */
@@ -269,7 +277,9 @@ export default function NouvelleCommandePage() {
           statut_paiement: "NON_PAYÉ",
           montant_paye: 0,
           avance_payee: 0,
-          envoyer_au_livreur: false,
+          // Client / garage rows go straight to the delivery flow; a stock
+          // replenishment has nothing to deliver.
+          envoyer_au_livreur: !forStock,
           statut_livreur: "EN_ATTENTE",
           bl: false,
         };
@@ -311,9 +321,7 @@ export default function NouvelleCommandePage() {
   ]);
 
   /* ---- Payment & delivery ---- */
-  const [statutPaiement, setStatutPaiement] = useState<string>("NON_PAYÉ");
   const [montantPaye, setMontantPaye] = useState(0);
-  const [envoyerAuLivreur, setEnvoyerAuLivreur] = useState(false);
 
   /* ---- Avoir as payment ---- */
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
@@ -347,6 +355,22 @@ export default function NouvelleCommandePage() {
         setClients(cls);
         setSuppliers(sups);
         setGarages(gars);
+        // Deep link from Avoirs / Clients: /dashboard/nouvelle-commande?client=<id>&avoir=<id>
+        const params = new URLSearchParams(window.location.search);
+        const wantedClient = params.get("client");
+        if (wantedClient) {
+          const isGarage = gars.some((g) => g.id === wantedClient);
+          const c = cls.find((x) => x.id === wantedClient);
+          if (c) {
+            setDestineA(isGarage ? "GARAGE" : "COMPTOIR");
+            setClientId(c.id);
+            setClientName(c.name);
+            setClientPhone(c.phone ?? "");
+            setClientEmail(c.email ?? "");
+            setImmatriculation(c.immatriculation ?? "");
+            setVehicleModel(c.vehicleModel ?? "");
+          }
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -365,7 +389,15 @@ export default function NouvelleCommandePage() {
     let cancelled = false;
     loadClientCredits(supabase, profile.organization_id, clientId)
       .then((credits) => {
-        if (!cancelled) setClientCredits(credits);
+        if (cancelled) return;
+        setClientCredits(credits);
+        // Deep link: preselect the avoir the cashier clicked on the Avoirs page.
+        const wanted = new URLSearchParams(window.location.search).get("avoir");
+        const credit = wanted ? credits.find((c) => c.id === wanted) : null;
+        if (credit) {
+          setAvoirId(credit.id);
+          setAvoirAmount(credit.remaining);
+        }
       })
       .catch(() => {});
     return () => {
@@ -418,6 +450,44 @@ export default function NouvelleCommandePage() {
     [clients],
   );
 
+  /* ---- Particulier recognised by phone → the order joins their file ---- */
+  const knownClient = useMemo(() => {
+    if (destineA !== "COMPTOIR") return null;
+    return matchClientByPhone(
+      clients.filter((c) => !garageIds.has(c.id)),
+      clientPhone,
+    );
+  }, [destineA, clients, garageIds, clientPhone]);
+  /** The particulier this order will be linked to (phone match or picked). */
+  const linkedParticulier = useMemo(() => {
+    if (destineA !== "COMPTOIR") return null;
+    if (knownClient) return knownClient;
+    if (clientId === NEW_CLIENT) return null;
+    return clients.find((c) => c.id === clientId && !garageIds.has(c.id)) ?? null;
+  }, [destineA, knownClient, clientId, clients, garageIds]);
+
+  // Id set by the phone match (a manual pick from the list is never undone).
+  const phoneMatchedId = useRef<string | null>(null);
+  useEffect(() => {
+    if (destineA !== "COMPTOIR") return;
+    if (!knownClient) {
+      if (phoneMatchedId.current && clientId === phoneMatchedId.current) {
+        setClientId(NEW_CLIENT);
+      }
+      phoneMatchedId.current = null;
+      return;
+    }
+    phoneMatchedId.current = knownClient.id;
+    setClientId(knownClient.id);
+    // Prefill only what the cashier has not typed yet.
+    if (!clientName.trim()) setClientName(knownClient.name);
+    if (!clientEmail.trim() && knownClient.email) setClientEmail(knownClient.email);
+    if (!immatriculation.trim() && knownClient.immatriculation) {
+      setImmatriculation(knownClient.immatriculation);
+    }
+    if (!vehicleModel.trim() && knownClient.vehicleModel) setVehicleModel(knownClient.vehicleModel);
+  }, [destineA, knownClient, clientId, clientName, clientEmail, immatriculation, vehicleModel]);
+
   /* ---- Line helpers ---- */
   const setLine = useCallback(
     (idx: number, field: keyof LineForm, value: string | number | boolean) => {
@@ -431,10 +501,45 @@ export default function NouvelleCommandePage() {
     () => setLines((prev) => [...prev, { ...emptyLine }]),
     [],
   );
-  const removeLine = useCallback(
-    (idx: number) => setLines((prev) => prev.filter((_, i) => i !== idx)),
-    [],
+  const removeLine = useCallback((idx: number) => {
+    setLines((prev) => prev.filter((_, i) => i !== idx));
+    setSelectedLines(new Set());
+  }, []);
+
+  /* ---- Multi-selection: apply one action to several lines at once ---- */
+  const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set());
+  const [bulkSupplier, setBulkSupplier] = useState("");
+  const allLinesSelected = lines.length > 0 && lines.every((_, i) => selectedLines.has(i));
+  const toggleLine = useCallback((idx: number) => {
+    setSelectedLines((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
+  const toggleAllLines = useCallback(() => {
+    setSelectedLines((prev) =>
+      lines.every((_, i) => prev.has(i)) ? new Set() : new Set(lines.map((_, i) => i)),
+    );
+  }, [lines]);
+  /** Patch every selected line with the same fields. */
+  const applyToSelected = useCallback(
+    (patch: Partial<LineForm>) => {
+      setLines((prev) => prev.map((l, i) => (selectedLines.has(i) ? { ...l, ...patch } : l)));
+    },
+    [selectedLines],
   );
+  const removeSelected = useCallback(() => {
+    setLines((prev) => {
+      const kept = prev.filter((_, i) => !selectedLines.has(i));
+      return kept.length > 0 ? kept : [{ ...emptyLine }];
+    });
+    setSelectedLines(new Set());
+  }, [selectedLines]);
+  const selectedCount = selectedLines.size;
+  const selectedAll = (field: keyof LineForm) =>
+    selectedCount > 0 && lines.every((l, i) => !selectedLines.has(i) || Boolean(l[field]));
 
   /* ---- Money ---- */
   const consigneTotal = useMemo(
@@ -454,24 +559,45 @@ export default function NouvelleCommandePage() {
     () => clientCredits.find((c) => c.id === avoirId) ?? null,
     [clientCredits, avoirId],
   );
-  // The paid amount follows the payment status: nothing when "Non payé",
-  // the full total when "Payé", and whatever was entered for an "Acompte".
-  const paidEffective =
-    statutPaiement === "PAYÉ" ? total : statutPaiement === "NON_PAYÉ" ? 0 : montantPaye;
-  const dueBeforeAvoir = Math.max(0, total - paidEffective);
-  // Never deduct more than the avoir balance or what is actually due.
+  /* ---- Payment maths — one chain, every field derives from it:
+   *   total − avoir déduit = reste après avoir
+   *   reste après avoir − montant payé = reste à payer
+   *   statut = Payé (rien à payer) / Acompte (une partie réglée) / Non payé
+   * The avoir is applied first and the cash is capped to what is left, so
+   * the amounts can never contradict each other. ---- */
   const avoirApplied = selectedCredit
-    ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, dueBeforeAvoir)
+    ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, total)
     : 0;
-  const remaining = Math.max(0, dueBeforeAvoir - avoirApplied);
+  const dueAfterAvoir = Math.max(0, total - avoirApplied);
+  const paidEffective = Math.min(Math.max(0, montantPaye), dueAfterAvoir);
+  const remaining = Math.max(0, dueAfterAvoir - paidEffective);
+  const effectiveStatut =
+    total > 0 && remaining <= 0
+      ? "PAYÉ"
+      : paidEffective + avoirApplied > 0
+        ? "PARTIEL"
+        : "NON_PAYÉ";
+  const paiement = PAIEMENT_LABEL[effectiveStatut];
+  /** Most the avoir can cover on this order. */
+  const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
+
+  // Typing is clamped in the inputs, but caps can also shrink afterwards
+  // (a line removed, a smaller avoir picked): keep the stored values legal.
+  useEffect(() => {
+    if (avoirAmount > avoirCap) setAvoirAmount(avoirCap);
+  }, [avoirAmount, avoirCap]);
+  useEffect(() => {
+    if (montantPaye > dueAfterAvoir) setMontantPaye(dueAfterAvoir);
+  }, [montantPaye, dueAfterAvoir]);
 
   const pickAvoir = useCallback(
     (id: string) => {
       setAvoirId(id);
       const credit = clientCredits.find((c) => c.id === id);
-      setAvoirAmount(credit ? Math.min(credit.remaining, dueBeforeAvoir) : 0);
+      // Default: use as much of the avoir as the order allows.
+      setAvoirAmount(credit ? Math.min(credit.remaining, total) : 0);
     },
-    [clientCredits, dueBeforeAvoir],
+    [clientCredits, total],
   );
 
   /* ---- PDF auto-fill: parse an uploaded bon de commande ---- */
@@ -567,6 +693,12 @@ export default function NouvelleCommandePage() {
     const validLines = lines.filter(
       (l) => l.nom_produit.trim() && l.reference.trim(),
     );
+    if (destineA === "COMPTOIR" && !clientPhone.trim()) {
+      setError(
+        "Indiquez le téléphone du client : c'est ce qui le reconnaît dans le fichier Clients particuliers.",
+      );
+      return;
+    }
     if (validLines.length === 0) {
       setError(
         "Ajoutez au moins une pièce avec une désignation et une référence.",
@@ -594,7 +726,8 @@ export default function NouvelleCommandePage() {
       }
 
       const payload: CreateOrderPayload = {
-        date_commande: dateCommande || todayISO(),
+        // Stamped at the moment the order is sent (time comes from createdAt).
+        date_commande: todayISO(),
         canal_vente: canalVente,
         client_id: resolvedClientId,
         client_phone: clientPhone.trim() || "-",
@@ -617,12 +750,13 @@ export default function NouvelleCommandePage() {
           prix_vente_unitaire: l.prix_vente || 0,
         })),
         devis: false,
-        statut_paiement: statutPaiement,
+        statut_paiement: effectiveStatut,
         montant_paye: paidEffective || 0,
         avance_payee: 0,
         avoir_id: avoirApplied > 0 ? avoirId : undefined,
         avoir_applique: avoirApplied > 0 ? avoirApplied : undefined,
-        envoyer_au_livreur: envoyerAuLivreur,
+        // Every order goes straight to the delivery flow (Commande à livrer).
+        envoyer_au_livreur: true,
         statut_livreur: "EN_ATTENTE",
         bl: false,
       };
@@ -658,14 +792,11 @@ export default function NouvelleCommandePage() {
     setImmatriculation("");
     setVehicleModel("");
     setKilometrage("");
-    setDateCommande(todayISO());
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
-    setStatutPaiement("NON_PAYÉ");
     setMontantPaye(0);
     setAvoirId("");
     setAvoirAmount(0);
-    setEnvoyerAuLivreur(false);
     setError(null);
     setCreatedRef(null);
     setCreatedTour(null);
@@ -685,7 +816,7 @@ export default function NouvelleCommandePage() {
           </span>
           <h2 className="nc-success-title">Commande créée</h2>
           <p className="nc-success-sub">
-            La commande <strong>{createdRef}</strong> a bien été enregistrée.
+            La commande <strong>{createdRef}</strong> a bien été envoyée en livraison.
           </p>
           {createdTour?.deliveryAt && (
             <p className="nc-success-tour">
@@ -737,14 +868,14 @@ export default function NouvelleCommandePage() {
 
       <div className="od-title-row">
         <div>
-          <h1 className="od-title">
-            <ShoppingCart className="h-6 w-6" style={{ color: "#22C55E" }} />
-            Nouvelle commande client
+          <h1 className="od-title nc-title">
+            <span className="nc-title-icon"><ShoppingCart className="h-5 w-5" /></span>
+            Nouvelle <span className="nc-title-accent">commande</span>
           </h1>
           <div className="od-meta">
             <span className="od-meta-item">
               <Calendar className="h-4 w-4" />
-              {new Date(dateCommande || todayISO()).toLocaleDateString("fr-FR")}
+              {new Date().toLocaleString("fr-FR", { weekday: "long", day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
         </div>
@@ -767,18 +898,18 @@ export default function NouvelleCommandePage() {
             ) : (
               <Upload className="h-4 w-4" />
             )}
-            {pdfBusy ? "Lecture du PDF…" : "Nouvelle Commande"}
+            {pdfBusy ? "Lecture du PDF…" : "Importer un bon (PDF)"}
           </button>
           <Link href="/dashboard" className="od-btn od-btn--ghost">
             Annuler
           </Link>
           <button
             type="button"
-            className="od-btn od-btn--primary"
+            className="od-btn od-btn--accent"
             onClick={openQuick}
           >
             <Zap className="h-4 w-4" />
-            Rajout Rapide
+            Rajout rapide
           </button>
         </div>
       </div>
@@ -806,6 +937,19 @@ export default function NouvelleCommandePage() {
               <ChevronDown className="h-4 w-4" />
             </div>
           </div>
+          <div className="od-field">
+            <span className="od-label">Canal de vente</span>
+            <div className="od-select">
+              <select value={canalVente} onChange={(e) => setCanalVente(e.target.value)}>
+                {CANAUX.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="h-4 w-4" />
+            </div>
+          </div>
           <div className="od-field nc-col-2">
             <span className="od-label">
               {destineA === "GARAGE" ? "Garage existant" : "Client existant"}
@@ -816,9 +960,7 @@ export default function NouvelleCommandePage() {
                 onChange={(e) => pickClient(e.target.value)}
               >
                 <option value={NEW_CLIENT}>
-                  {destineA === "GARAGE"
-                    ? "— Nouveau garage —"
-                    : "— Nouveau client —"}
+                  {destineA === "GARAGE" ? "— Nouveau garage —" : "— Nouveau client —"}
                 </option>
                 {destRecords.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -834,19 +976,26 @@ export default function NouvelleCommandePage() {
             <span className="od-label">Nom du client <span className="od-req">*</span></span>
             <input
               className="od-input"
-              placeholder="GARAGE MARTIN"
+              placeholder={destineA === "GARAGE" ? "GARAGE MARTIN" : "Jean Dupont"}
               value={clientName}
               onChange={(e) => {
                 setClientName(e.target.value);
-                if (clientId !== NEW_CLIENT) setClientId(NEW_CLIENT);
+                // A particulier is recognised by phone; typing a new name
+                // while a garage was picked starts a new record.
+                if (clientId !== NEW_CLIENT && clientId !== phoneMatchedId.current) {
+                  setClientId(NEW_CLIENT);
+                }
               }}
             />
           </div>
           <div className="od-field">
-            <span className="od-label">Téléphone</span>
+            <span className="od-label">
+              Téléphone
+              {destineA === "COMPTOIR" && <span className="od-req"> *</span>}
+            </span>
             <input
               className="od-input"
-              placeholder="01 23 45 67 89"
+              placeholder="06 12 34 56 78"
               value={clientPhone}
               onChange={(e) => setClientPhone(e.target.value)}
             />
@@ -893,47 +1042,28 @@ export default function NouvelleCommandePage() {
             />
           </div>
         </div>
-        {clientId === NEW_CLIENT && clientName.trim() && (
-          <p className="nc-hint">
-            <Info className="h-3.5 w-3.5" />
-            Ce client sera enregistré dans votre fichier clients.
-          </p>
+        {linkedParticulier ? (
+          <div className="nc-known">
+            <Check className="h-4 w-4" />
+            Client reconnu : <strong>{linkedParticulier.name}</strong>
+            {linkedParticulier.vehicleModel ? ` · ${linkedParticulier.vehicleModel}` : ""}
+            {linkedParticulier.immatriculation ? ` · ${linkedParticulier.immatriculation}` : ""}
+            {" "}— la commande rejoint son historique et ses points fidélité.
+            <Link href={`/dashboard/clients/${linkedParticulier.id}`} className="rc-cmd" target="_blank">
+              Voir le profil
+            </Link>
+          </div>
+        ) : (
+          clientId === NEW_CLIENT &&
+          clientName.trim() && (
+            <p className="nc-hint">
+              <Info className="h-3.5 w-3.5" />
+              {destineA === "COMPTOIR"
+                ? "Nouveau client : il sera créé dans Clients particuliers (le téléphone sert à le reconnaître la prochaine fois)."
+                : "Ce garage sera enregistré dans votre fichier."}
+            </p>
+          )
         )}
-      </section>
-
-      {/* ---- Document ---- */}
-      <section className="od-card">
-        <div className="od-card-title">
-          <Calendar className="h-4 w-4" />
-          Informations
-        </div>
-        <div className="nc-grid">
-          <div className="od-field">
-            <span className="od-label">Date de commande</span>
-            <input
-              className="od-input"
-              type="date"
-              value={dateCommande}
-              onChange={(e) => setDateCommande(e.target.value)}
-            />
-          </div>
-          <div className="od-field">
-            <span className="od-label">Canal de vente</span>
-            <div className="od-select">
-              <select
-                value={canalVente}
-                onChange={(e) => setCanalVente(e.target.value)}
-              >
-                {CANAUX.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-4 w-4" />
-            </div>
-          </div>
-        </div>
       </section>
 
       {/* ---- Lines ---- */}
@@ -946,6 +1076,16 @@ export default function NouvelleCommandePage() {
           <table className="od-table nc-lines">
             <thead>
               <tr>
+                <th className="rc-th-check">
+                  <input
+                    type="checkbox"
+                    className="rc-check"
+                    checked={allLinesSelected}
+                    onChange={toggleAllLines}
+                    aria-label="Sélectionner toutes les pièces"
+                    title="Sélectionner toutes les pièces"
+                  />
+                </th>
                 <th>Désignation</th>
                 <th>Référence</th>
                 <th>Fournisseur</th>
@@ -960,7 +1100,16 @@ export default function NouvelleCommandePage() {
             </thead>
             <tbody>
               {lines.map((l, idx) => (
-                <tr key={idx}>
+                <tr key={idx} className={selectedLines.has(idx) ? "rc-row--selected" : undefined}>
+                  <td className="rc-th-check">
+                    <input
+                      type="checkbox"
+                      className="rc-check"
+                      checked={selectedLines.has(idx)}
+                      onChange={() => toggleLine(idx)}
+                      aria-label={`Sélectionner la pièce ${idx + 1}`}
+                    />
+                  </td>
                   <td>
                     <input
                       className="od-input nc-cell-input"
@@ -1099,6 +1248,70 @@ export default function NouvelleCommandePage() {
           </table>
         </div>
 
+        {selectedCount > 0 && (
+          <div className="rc-bulk nc-bulk">
+            <span className="rc-bulk-label">
+              <Check className="h-4 w-4" />
+              {selectedCount} pièce{selectedCount > 1 ? "s" : ""} sélectionnée{selectedCount > 1 ? "s" : ""} — appliquer à toutes :
+            </span>
+            <span className="nc-bulk-actions">
+              <span className="od-select nc-bulk-select">
+                <select
+                  value={bulkSupplier}
+                  onChange={(e) => {
+                    setBulkSupplier(e.target.value);
+                    applyToSelected({ fournisseur_id: e.target.value });
+                  }}
+                  aria-label="Fournisseur pour la sélection"
+                >
+                  <option value="">Fournisseur → Stock magasin</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      Fournisseur → {s.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="h-4 w-4" />
+              </span>
+              <button
+                type="button"
+                className={`rc-act${selectedAll("retours_impossible") ? " rc-act--nonrecu" : ""}`}
+                onClick={() => applyToSelected({ retours_impossible: !selectedAll("retours_impossible") })}
+                title="Marquer / démarquer « retour impossible »"
+              >
+                Retour impossible {selectedAll("retours_impossible") ? "✓" : ""}
+              </button>
+              <button
+                type="button"
+                className={`rc-act${selectedAll("consigne") ? " rc-act--reliquat" : ""}`}
+                onClick={() => applyToSelected({ consigne: !selectedAll("consigne") })}
+                title="Marquer / démarquer « consigne »"
+              >
+                Consigne {selectedAll("consigne") ? "✓" : ""}
+              </button>
+              <button
+                type="button"
+                className={`rc-act${selectedAll("client_a_pris") ? " rc-act--recu" : ""}`}
+                onClick={() => applyToSelected({ client_a_pris: !selectedAll("client_a_pris") })}
+                title="Le client a pris ces pièces du stock"
+              >
+                Remis client {selectedAll("client_a_pris") ? "✓" : ""}
+              </button>
+              <button
+                type="button"
+                className="rc-act rc-act--nonrecu"
+                onClick={removeSelected}
+                title="Supprimer les pièces sélectionnées"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Supprimer
+              </button>
+              <button type="button" className="rc-act" onClick={() => setSelectedLines(new Set())}>
+                Annuler
+              </button>
+            </span>
+          </div>
+        )}
+
         <button type="button" className="nc-add-line" onClick={addLine}>
           <Plus className="h-4 w-4" />
           Ajouter une pièce
@@ -1114,66 +1327,18 @@ export default function NouvelleCommandePage() {
         )}
       </section>
 
-      {/* ---- Payment & delivery ---- */}
+      {/* ---- Payment ---- */}
       <section className="od-card">
-        <div className="od-card-title">Paiement &amp; livraison</div>
+        <div className="od-card-title">Paiement</div>
+
         <div className="nc-grid">
           <div className="od-field">
-            <span className="od-label">Statut du paiement</span>
-            <div className="od-select">
-              <select
-                value={statutPaiement}
-                onChange={(e) => setStatutPaiement(e.target.value)}
-              >
-                {PAIEMENTS.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-4 w-4" />
-            </div>
+            <span className="od-label">Total commande</span>
+            <input className="od-input nc-readonly" readOnly value={eur(total)} />
           </div>
-          <div className="od-field">
-            <span className={`od-label${statutPaiement === "NON_PAYÉ" ? " nc-barre-label" : ""}`}>
-              Montant payé
-            </span>
-            {statutPaiement === "PARTIEL" ? (
-              <input
-                className="od-input"
-                type="number"
-                min={0}
-                max={total}
-                step="0.01"
-                value={montantPaye || ""}
-                onChange={(e) => setMontantPaye(Number(e.target.value))}
-              />
-            ) : (
-              <input
-                className={`od-input nc-readonly${statutPaiement === "NON_PAYÉ" ? " nc-barre" : ""}`}
-                readOnly
-                disabled={statutPaiement === "NON_PAYÉ"}
-                value={statutPaiement === "PAYÉ" ? eur(total) : eur(0)}
-              />
-            )}
-          </div>
-          <div className="od-field">
-            <span className={`od-label${statutPaiement === "PAYÉ" ? " nc-barre-label" : ""}`}>
-              Reste à payer
-            </span>
-            <input
-              className={`od-input nc-readonly${statutPaiement === "PAYÉ" ? " nc-barre" : ""}`}
-              readOnly
-              disabled={statutPaiement === "PAYÉ"}
-              value={eur(remaining)}
-            />
-          </div>
-        </div>
-
-        {clientCredits.length > 0 && (
-          <div className="nc-grid" style={{ marginTop: 12 }}>
-            <div className="od-field nc-col-2">
-              <span className="od-label">Avoir du client</span>
+          <div className="od-field nc-col-2">
+            <span className="od-label">Avoir du client</span>
+            {clientCredits.length > 0 ? (
               <div className="od-select">
                 <select value={avoirId} onChange={(e) => pickAvoir(e.target.value)}>
                   <option value="">Ne pas utiliser d&apos;avoir</option>
@@ -1188,47 +1353,85 @@ export default function NouvelleCommandePage() {
                 </select>
                 <ChevronDown className="h-4 w-4" />
               </div>
-            </div>
-            {selectedCredit && (
-              <div className="od-field">
-                <span className="od-label">Montant déduit de l&apos;avoir</span>
-                <input
-                  className="od-input"
-                  type="number"
-                  min={0}
-                  max={Math.min(selectedCredit.remaining, dueBeforeAvoir)}
-                  step="0.01"
-                  value={avoirAmount || ""}
-                  onChange={(e) => setAvoirAmount(Number(e.target.value))}
-                />
-              </div>
-            )}
-            {selectedCredit && avoirApplied > 0 && (
-              <div className="od-field">
-                <span className="od-label">Après déduction</span>
-                <input
-                  className="od-input nc-readonly"
-                  readOnly
-                  value={`${eur(avoirApplied)} déduits — reste avoir ${eur(selectedCredit.remaining - avoirApplied)}`}
-                />
-              </div>
+            ) : (
+              <input
+                className="od-input nc-readonly"
+                readOnly
+                value={
+                  destineA === "COMPTOIR" && clientId === NEW_CLIENT
+                    ? "Sélectionnez un client existant pour utiliser un avoir"
+                    : "Aucun avoir disponible pour ce client"
+                }
+              />
             )}
           </div>
-        )}
+          {selectedCredit && (
+            <div className="od-field">
+              <span className="od-label">Montant déduit de l&apos;avoir</span>
+              <input
+                className="od-input"
+                type="number"
+                min={0}
+                max={avoirCap}
+                step="0.01"
+                value={avoirAmount || ""}
+                onChange={(e) => setAvoirAmount(clampMoney(e.target.value, avoirCap))}
+              />
+              <span className="st-cmd-hint">
+                {eur(avoirApplied)} déduits · reste sur l&apos;avoir{" "}
+                {eur(selectedCredit.remaining - avoirApplied)}
+              </span>
+            </div>
+          )}
+        </div>
 
-        <button
-          type="button"
-          className={`od-toggle nc-toggle${
-            envoyerAuLivreur ? " od-toggle--on" : ""
-          }`}
-          onClick={() => setEnvoyerAuLivreur((v) => !v)}
-        >
-          <Truck className="h-5 w-5" />
-          <span>
-            <strong>Envoyer au livreur</strong>
-            <em>Crée une tâche de livraison à préparer</em>
-          </span>
-        </button>
+        <div className="nc-pay">
+          <div className="nc-pay-form">
+            <div className="od-field">
+              <span className="od-label">Montant payé maintenant</span>
+              <div className="nc-pay-input">
+                <input
+                  className="od-input nc-pay-amount"
+                  type="number"
+                  min={0}
+                  max={dueAfterAvoir}
+                  step="0.01"
+                  value={montantPaye || ""}
+                  placeholder="0,00"
+                  disabled={dueAfterAvoir <= 0}
+                  onChange={(e) => setMontantPaye(clampMoney(e.target.value, dueAfterAvoir))}
+                />
+                <span className="nc-pay-unit">€</span>
+              </div>
+              <div className="nc-pay-quick">
+                <button type="button" className={`nc-chip${paidEffective <= 0 ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(0)} disabled={dueAfterAvoir <= 0}>
+                  Rien maintenant
+                </button>
+                <button type="button" className={`nc-chip${dueAfterAvoir > 0 && paidEffective >= dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(dueAfterAvoir)} disabled={dueAfterAvoir <= 0}>
+                  Tout · {eur(dueAfterAvoir)}
+                </button>
+                {dueAfterAvoir > 0 && (
+                  <button type="button" className={`nc-chip${paidEffective > 0 && paidEffective < dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(Math.round((dueAfterAvoir / 2) * 100) / 100)}>
+                    Moitié · {eur(Math.round((dueAfterAvoir / 2) * 100) / 100)}
+                  </button>
+                )}
+              </div>
+              <span className="st-cmd-hint">
+                {dueAfterAvoir <= 0
+                  ? "Rien à encaisser : le total est couvert."
+                  : "Ce que le client règle aujourd'hui. Le reste sera à payer à la remise des pièces."}
+              </span>
+            </div>
+          </div>
+
+          <aside className="nc-recap nc-recap--simple" aria-label="Reste à payer">
+            <div className={`nc-recap-total${remaining > 0 ? " is-due" : total > 0 ? " is-ok" : ""}`}>
+              <span>Reste à payer</span>
+              <strong>{eur(remaining)}</strong>
+            </div>
+            <span className={`rt-badge rt-badge--${paiement.cls}`}>{paiement.label}</span>
+          </aside>
+        </div>
       </section>
 
       {/* ---- Footer actions ---- */}
@@ -1238,15 +1441,15 @@ export default function NouvelleCommandePage() {
         </button>
         <button
           type="submit"
-          className="od-btn od-btn--primary"
+          className="od-btn od-btn--primary nc-submit"
           disabled={saving}
         >
           {saving ? (
             <Loader2 className="h-4 w-4 nc-spin" />
           ) : (
-            <Check className="h-4 w-4" />
+            <Send className="h-4 w-4" />
           )}
-          {saving ? "Enregistrement…" : "Enregistrer la commande"}
+          {saving ? "Envoi…" : "Envoyer la commande"}
         </button>
       </div>
     </form>

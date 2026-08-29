@@ -3,14 +3,18 @@
 import {
   AlarmClock,
   Check,
+  ClipboardList,
   FileText,
+  Gift,
   Loader2,
   Package,
   RefreshCw,
   Search,
   Undo2,
+  User,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -37,8 +41,8 @@ const STATUS_CLASS: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   EN_COURS: "En cours",
   PARTIEL: "Partiel",
-  UTILISE: "Utilise",
-  EXPIRE: "Expire",
+  UTILISE: "Utilisé",
+  EXPIRE: "Expiré",
   ACTIF: "Active",
   RENDUE: "Rendue",
 };
@@ -53,8 +57,8 @@ const STATUS_CHIPS = [
   { id: "TOUS", label: "Tous statuts" },
   { id: "EN_COURS", label: "En cours" },
   { id: "PARTIEL", label: "Partiels" },
-  { id: "UTILISE", label: "Utilises" },
-  { id: "EXPIRE", label: "Expires" },
+  { id: "UTILISE", label: "Utilisés" },
+  { id: "EXPIRE", label: "Expirés" },
   { id: "ACTIF", label: "Actives" },
   { id: "RENDUE", label: "Rendues" },
 ];
@@ -168,12 +172,12 @@ export default function AvoirsPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title">Suivi des avoirs et consignes</h1>
+          <h1 className="rl-title rl-title--upper">Avoirs &amp; <span className="nc-title-accent">consignes</span></h1>
           <p className="rl-subtitle">Bons d&apos;achat émis, montants consommés et consignes de pièces.</p>
         </div>
         <div className="rl-header-actions">
-          <button type="button" className="rl-refresh" onClick={() => void load()}>
-            <RefreshCw className="h-4 w-4" />
+          <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualiser
           </button>
         </div>
@@ -262,17 +266,17 @@ export default function AvoirsPage() {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>N Avoir / Consigne</th>
+                <th>N° Avoir / Consigne</th>
                 <th>Type</th>
                 <th>Client</th>
-                <th>Reference</th>
-                <th>Motif / Designation</th>
+                <th>Commande</th>
+                <th>Motif / Désignation</th>
                 <th className="av-th-right">Montant</th>
-                <th className="av-th-right">Utilise</th>
+                <th className="av-th-right">Utilisé</th>
                 <th className="av-th-right">Reste</th>
                 <th>Statut</th>
-                <th>Echeance</th>
-                <th>Actions</th>
+                <th>Échéance</th>
+                <th className="rc-th-center">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -284,8 +288,20 @@ export default function AvoirsPage() {
                     <td className="rl-muted-strong">{fmtDate(row.createdAt)}</td>
                     <td><span className={`av-num av-num--${row.kind}`}>{row.num}</span></td>
                     <td><span className={`av-type av-type--${row.kind}`}>{row.kind === "avoir" ? "Avoir" : "Consigne"}</span></td>
-                    <td><p className="rl-client">{row.client}</p></td>
-                    <td className="rl-reffour">{row.reference}</td>
+                    <td>
+                      {row.clientId && !row.isGarage ? (
+                        <Link href={`/dashboard/clients/${row.clientId}`} className="rl-client av-client-link">{row.client}</Link>
+                      ) : (
+                        <p className="rl-client">{row.client}{row.isGarage && <span className="rc-type rc-type--garage rc-type--inline">Garage</span>}</p>
+                      )}
+                    </td>
+                    <td>
+                      {row.orderId ? (
+                        <Link href={`/dashboard/commandes/${row.orderId}`} className="rc-cmd">{row.reference}</Link>
+                      ) : (
+                        <span className="rl-reffour">{row.reference}</span>
+                      )}
+                    </td>
                     <td><p className="av-motif">{row.motif}</p><p className="rl-muted">{row.designation}</p></td>
                     <td className={`av-th-right av-montant av-montant--${row.kind}`}>{fmtMoney(row.amount)}</td>
                     <td className="av-th-right rl-muted-strong">{row.kind === "avoir" ? fmtMoney(row.usedAmount) : "—"}</td>
@@ -293,8 +309,30 @@ export default function AvoirsPage() {
                     <td><span className={`av-statut av-statut--${STATUS_CLASS[row.status] ?? "encours"}`}>{STATUS_LABEL[row.status] ?? row.status}</span></td>
                     <td className={`rl-muted-strong${tone ? ` av-due--${tone}` : ""}`}>{fmtDate(row.dueAt)}</td>
                     <td>
-                      {row.kind !== "consigne" ? (
-                        <span className="rt-dash">—</span>
+                      {row.kind === "avoir" ? (
+                        <div className="av-actions">
+                          {row.remaining > 0 && row.status !== "EXPIRE" && row.clientId ? (
+                            <Link
+                              href={`/dashboard/nouvelle-commande?client=${row.clientId}&avoir=${row.id}`}
+                              className="rc-act rc-act--retour"
+                              title="Ouvrir une nouvelle commande avec cet avoir déjà déduit"
+                            >
+                              <Gift className="h-3.5 w-3.5" /> Utiliser
+                            </Link>
+                          ) : (
+                            <span className="rt-dash">—</span>
+                          )}
+                          {row.orderId && (
+                            <Link href={`/dashboard/commandes/${row.orderId}`} className="rc-act rc-act--quiet" title="Commande d'origine">
+                              <ClipboardList className="h-3.5 w-3.5" />
+                            </Link>
+                          )}
+                          {row.clientId && !row.isGarage && (
+                            <Link href={`/dashboard/clients/${row.clientId}`} className="rc-act rc-act--quiet" title="Fiche client">
+                              <User className="h-3.5 w-3.5" />
+                            </Link>
+                          )}
+                        </div>
                       ) : busy ? (
                         <Loader2 className="h-4 w-4 nc-spin" />
                       ) : row.status === "ACTIF" ? (

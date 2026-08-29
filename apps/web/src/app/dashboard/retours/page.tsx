@@ -3,7 +3,6 @@
 import {
   Ban,
   Banknote,
-  Building2,
   Check,
   Clock,
   FileText,
@@ -12,12 +11,13 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Send,
-  Truck,
+  Wallet,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
   createWalkInReturn,
@@ -25,6 +25,7 @@ import {
   fmtMoney,
   loadRefundableOrders,
   loadReturns,
+  settleClientReturn,
   updateReturnTreatment,
   type RefundableOrder,
   type ReturnRow,
@@ -32,23 +33,23 @@ import {
 } from "@/lib/data/saas";
 
 const TREATMENT_LABEL: Record<string, string> = {
-  A_TRAITER: "A traiter",
-  DEMANDE_ENVOYEE: "Demande envoyee",
-  A_RECUPERER: "A recuperer",
-  ACCEPTE: "Accepte",
-  REFUSE: "Refuse",
-  REMBOURSE: "Rembourse",
-  AVOIR: "Avoir emis",
+  A_TRAITER: "À traiter",
+  DEMANDE_ENVOYEE: "Demande envoyée",
+  A_RECUPERER: "À récupérer",
+  ACCEPTE: "Accepté",
+  REFUSE: "Refusé",
+  REMBOURSE: "Remboursé",
+  AVOIR: "Avoir émis",
 };
 
 const FILTER_CHIPS: { id: string; label: string }[] = [
   { id: "TOUS", label: "Tous" },
-  { id: "A_TRAITER", label: "A traiter" },
-  { id: "DEMANDE_ENVOYEE", label: "Demande envoyee" },
-  { id: "A_RECUPERER", label: "A recuperer" },
-  { id: "ACCEPTE", label: "Acceptes" },
-  { id: "REFUSE", label: "Refuses" },
-  { id: "REMBOURSE", label: "Rembourses" },
+  { id: "A_TRAITER", label: "À traiter" },
+  { id: "DEMANDE_ENVOYEE", label: "Demande envoyée" },
+  { id: "A_RECUPERER", label: "À récupérer" },
+  { id: "ACCEPTE", label: "Acceptés" },
+  { id: "REFUSE", label: "Refusés" },
+  { id: "REMBOURSE", label: "Remboursés" },
   { id: "AVOIR", label: "Avoirs" },
 ];
 
@@ -58,12 +59,12 @@ const NEXT_STEPS: Record<
   { to: ReturnTreatment; label: string; cls: string }[]
 > = {
   A_TRAITER: [{ to: "DEMANDE_ENVOYEE", label: "Envoyer la demande", cls: "send" }],
-  DEMANDE_ENVOYEE: [{ to: "A_RECUPERER", label: "A recuperer", cls: "pickup" }],
+  DEMANDE_ENVOYEE: [{ to: "A_RECUPERER", label: "À récupérer", cls: "pickup" }],
   A_RECUPERER: [
-    { to: "ACCEPTE", label: "Accepte", cls: "accept" },
-    { to: "REFUSE", label: "Refuse", cls: "refuse" },
+    { to: "ACCEPTE", label: "Accepté", cls: "accept" },
+    { to: "REFUSE", label: "Refusé", cls: "refuse" },
   ],
-  ACCEPTE: [{ to: "REMBOURSE", label: "Rembourse", cls: "accept" }],
+  ACCEPTE: [{ to: "REMBOURSE", label: "Remboursé", cls: "accept" }],
 };
 
 function treatmentTone(status: string) {
@@ -97,6 +98,20 @@ export default function RetoursPage() {
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  /* ---- Settle a client return: refund or avoir ---- */
+  const [settle, setSettle] = useState<{ row: ReturnRow; mode: "REMBOURSEMENT" | "AVOIR" } | null>(null);
+  const [settleAmount, setSettleAmount] = useState("");
+  const [settleReason, setSettleReason] = useState("");
+  const [settleBusy, setSettleBusy] = useState(false);
+  const [settleError, setSettleError] = useState<string | null>(null);
+
+  const openSettle = useCallback((row: ReturnRow, mode: "REMBOURSEMENT" | "AVOIR") => {
+    setSettle({ row, mode });
+    setSettleAmount(String(row.amount > 0 ? row.amount : row.lineValue > 0 ? row.lineValue : ""));
+    setSettleReason("");
+    setSettleError(null);
+  }, []);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
@@ -135,6 +150,36 @@ export default function RetoursPage() {
     },
     [profile?.organization_id],
   );
+
+  const submitSettle = useCallback(async () => {
+    if (!settle) return;
+    const amount = Number(String(settleAmount).replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setSettleError("Indiquez le montant remboursé au client.");
+      return;
+    }
+    setSettleBusy(true);
+    setSettleError(null);
+    try {
+      const sb = createClient();
+      const avoirNum = await settleClientReturn(sb, settle.row.id, {
+        mode: settle.mode,
+        amount,
+        reason: settleReason,
+      });
+      setNotice(
+        settle.mode === "AVOIR"
+          ? `Avoir ${avoirNum ?? ""} de ${fmtMoney(amount)} émis pour ${settle.row.client} (valable 1 an).`
+          : `${fmtMoney(amount)} remboursés à ${settle.row.client}.`,
+      );
+      setSettle(null);
+      await load();
+    } catch (e) {
+      setSettleError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettleBusy(false);
+    }
+  }, [settle, settleAmount, settleReason, load]);
 
   const visibleRows = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
@@ -251,24 +296,14 @@ export default function RetoursPage() {
 
   const stats = useMemo(() => {
     const byStatus = (status: string) => rows.filter((row) => row.treatment === status).length;
+    const sum = (status: string) => rows.filter((r) => r.treatment === status).reduce((s, r) => s + r.amount, 0);
+    const open = rows.filter((r) => !["REMBOURSE", "AVOIR", "REFUSE"].includes(r.treatment)).length;
     return [
-      { label: "A traiter", value: byStatus("A_TRAITER"), icon: Clock, color: "#D97706", bg: "#FEF3C7" },
-      { label: "Demande envoyee", value: byStatus("DEMANDE_ENVOYEE"), icon: Send, color: "#2563EB", bg: "#DBEAFE" },
-      { label: "A recuperer", value: byStatus("A_RECUPERER"), icon: Truck, color: "#7C3AED", bg: "#F3E8FF" },
-      { label: "Total retours", value: rows.length, icon: RotateCcw, color: "#059669", bg: "#DCFCE7" },
+      { label: "À traiter", value: String(open), icon: Clock, color: "#983705", bg: "#FCEDB9" },
+      { label: `Remboursés (${byStatus("REMBOURSE")})`, value: fmtMoney(sum("REMBOURSE")), icon: Banknote, color: "#0E6245", bg: "#D7F7C2" },
+      { label: `Avoirs émis (${byStatus("AVOIR")})`, value: fmtMoney(sum("AVOIR")), icon: FileText, color: "#4B2FD8", bg: "#EEEDFF" },
+      { label: "Total retours", value: String(rows.length), icon: RotateCcw, color: "#0055BC", bg: "#D6ECFF" },
     ];
-  }, [rows]);
-
-  const topSuppliers = useMemo(() => {
-    const map = new Map<string, { retours: number; amount: number }>();
-    for (const row of rows) {
-      const current = map.get(row.supplier) ?? { retours: 0, amount: 0 };
-      map.set(row.supplier, { retours: current.retours + 1, amount: current.amount + row.amount });
-    }
-    return [...map.entries()]
-      .map(([name, data]) => ({ name, ...data }))
-      .sort((a, b) => b.retours - a.retours)
-      .slice(0, 5);
   }, [rows]);
 
   return (
@@ -279,8 +314,8 @@ export default function RetoursPage() {
           <div className="rt-title-wrap">
             <span className="rt-title-icon"><RotateCcw className="h-6 w-6" /></span>
             <div>
-              <h1 className="rt-title">Retours</h1>
-              <p className="rt-subtitle">Retours clients et fournisseur depuis Supabase</p>
+              <h1 className="rt-title rl-title--upper">Retours &amp; <span className="nc-title-accent">remboursements</span></h1>
+              <p className="rt-subtitle">Pièces rendues par les clients et garages, suivi des retours fournisseur et des remboursements.</p>
             </div>
           </div>
           <div className="rt-header-actions">
@@ -296,7 +331,7 @@ export default function RetoursPage() {
         </header>
 
         {error && <p className="stat-change" style={{ color: "var(--clr-danger)" }}>{error}</p>}
-        {notice && <p className="stat-change" style={{ color: "#059669" }}>{notice}</p>}
+        <Toast message={notice} onClose={() => setNotice(null)} duration={8000} />
 
         <div className="rt-stats">
           {stats.map((stat) => {
@@ -345,15 +380,14 @@ export default function RetoursPage() {
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Reference</th>
-                  <th>Fournisseur</th>
+                  <th>Commande</th>
                   <th>Client / Garage</th>
+                  <th>Pièce</th>
                   <th>Motif</th>
-                  <th>Statut retour</th>
+                  <th>Type</th>
                   <th>Traitement</th>
-                  <th>Decote</th>
-                  <th>Montant</th>
-                  <th>Actions</th>
+                  <th className="rl-th-center">Montant</th>
+                  <th className="rl-th-center">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -363,16 +397,34 @@ export default function RetoursPage() {
                   return (
                     <tr key={row.id}>
                       <td className="rt-cell-date">{fmtDate(row.createdAt)}</td>
-                      <td className="rt-cell-ref">{row.ref}</td>
-                      <td>{row.supplier}</td>
-                      <td>{row.client}</td>
-                      <td className="rt-cell-motif" title={row.reason}>{row.reason}</td>
-                      <td><span className="rt-badge rt-badge--green">{row.type}</span></td>
-                      <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{TREATMENT_LABEL[row.treatment] ?? row.treatment}</span></td>
-                      <td className="rt-decote">{row.decotePct}%</td>
-                      <td className="rt-decote">{fmtMoney(row.amount)}</td>
+                      <td className="rt-cell-ref">
+                        {row.orderId ? <Link href={`/dashboard/commandes/${row.orderId}`} className="rc-cmd">{row.ref}</Link> : row.ref}
+                      </td>
                       <td>
-                        {steps.length === 0 ? (
+                        {row.clientId && !row.isGarage ? (
+                          <Link href={`/dashboard/clients/${row.clientId}`} className="av-client-link">{row.client}</Link>
+                        ) : (
+                          <span className="rl-client">{row.client}</span>
+                        )}
+                        {row.isGarage && <span className="rc-type rc-type--garage rc-type--inline">Garage</span>}
+                        {row.hasSupplier && <p className="rl-muted">Retour fournisseur · {row.supplier}</p>}
+                      </td>
+                      <td className="rt-cell-motif" title={row.reference}>{row.reference}</td>
+                      <td className="rt-cell-motif" title={row.reason}>{row.reason}</td>
+                      <td><span className={`rt-badge rt-badge--${row.type === "RETOURNABLE" ? "green" : "red"}`}>{row.type === "RETOURNABLE" ? "Retournable" : row.type === "NON_RETOURNABLE" ? "Non retournable" : row.type}</span></td>
+                      <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{TREATMENT_LABEL[row.treatment] ?? row.treatment}</span></td>
+                      <td className="rt-decote">{row.amount > 0 ? fmtMoney(row.amount) : <span className="rl-muted">—</span>}</td>
+                      <td>
+                        {!row.hasSupplier && !["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment) ? (
+                          <div className="rt-acts">
+                            <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
+                              <Banknote className="h-3.5 w-3.5" /> Rembourser
+                            </button>
+                            <button type="button" className="rc-act rc-act--retour" onClick={() => openSettle(row, "AVOIR")}>
+                              <FileText className="h-3.5 w-3.5" /> Avoir
+                            </button>
+                          </div>
+                        ) : steps.length === 0 || !row.hasSupplier ? (
                           <span className="rt-dash">—</span>
                         ) : busy ? (
                           <Loader2 className="h-4 w-4 nc-spin" />
@@ -397,7 +449,7 @@ export default function RetoursPage() {
                 })}
                 {!loading && visibleRows.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="text-muted">
+                    <td colSpan={9} className="rc-empty-cell">
                       {rows.length === 0 ? "Aucun retour." : "Aucun retour ne correspond au filtre."}
                     </td>
                   </tr>
@@ -410,23 +462,64 @@ export default function RetoursPage() {
           </div>
         </section>
 
-        <section className="od-card">
-          <h3 className="rt-bcard-title">Top fournisseurs</h3>
-          <div className="rt-suppliers">
-            {topSuppliers.map((supplier) => (
-              <div key={supplier.name} className="rt-supplier-row">
-                <span className="rt-supplier-icon"><Building2 className="h-4 w-4" /></span>
-                <div className="rt-supplier-info">
-                  <p className="rt-supplier-name">{supplier.name}</p>
-                  <p className="rt-supplier-sub">{supplier.retours} retours</p>
-                </div>
-                <span className="rt-supplier-amount">{fmtMoney(supplier.amount)}</span>
-              </div>
-            ))}
-          </div>
-        </section>
       </div>
     </div>
+
+    {settle && (
+      <div className="ga-modal-overlay" onClick={() => !settleBusy && setSettle(null)}>
+        <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="ga-modal-head">
+            <span className="ga-modal-title">
+              {settle.mode === "AVOIR" ? <FileText className="h-4 w-4" /> : <Banknote className="h-4 w-4" />}
+              {settle.mode === "AVOIR" ? "Émettre un avoir" : "Rembourser le client"}
+            </span>
+            <button type="button" className="ga-modal-close" onClick={() => setSettle(null)} aria-label="Fermer" disabled={settleBusy}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="ga-modal-form">
+            {settleError && <div className="nc-error">{settleError}</div>}
+            <div className="rt-picked">
+              <div>
+                <p className="rt-order-ref">{settle.row.ref} · {settle.row.client}</p>
+                <p className="rt-order-client">{settle.row.reference} — {settle.row.reason}</p>
+              </div>
+            </div>
+            <div className="ga-modal-row">
+              <div className="od-field">
+                <span className="od-label">{settle.mode === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"} <span className="od-req">*</span></span>
+                <div className="nc-pay-input">
+                  <input className="od-input nc-pay-amount" type="number" min={0} step="0.01" value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} autoFocus />
+                  <span className="nc-pay-unit">€</span>
+                </div>
+                {settle.row.lineValue > 0 && (
+                  <span className="st-cmd-hint">Valeur de la pièce sur la commande : {fmtMoney(settle.row.lineValue)}.</span>
+                )}
+              </div>
+              <div className="od-field">
+                <span className="od-label">Motif</span>
+                <input className="od-input" value={settleReason} onChange={(e) => setSettleReason(e.target.value)} placeholder={settle.row.reason} />
+              </div>
+            </div>
+            <div className="od-note">
+              <Wallet className="h-4 w-4" />
+              <p>
+                {settle.mode === "AVOIR"
+                  ? "Un avoir valable 1 an est créé pour ce client ; il pourra le déduire sur une prochaine commande."
+                  : "Le client est remboursé en caisse : le retour passe en « Remboursé »."}
+              </p>
+            </div>
+            <div className="ga-modal-actions">
+              <button type="button" className="od-btn od-btn--ghost" onClick={() => setSettle(null)} disabled={settleBusy}>Annuler</button>
+              <button type="button" className="od-btn od-btn--primary" onClick={() => void submitSettle()} disabled={settleBusy}>
+                {settleBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
+                {settle.mode === "AVOIR" ? "Émettre l'avoir" : "Valider le remboursement"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
 
     {modalOpen && (
       <div className="ga-modal-overlay" onClick={() => !submitting && setModalOpen(false)}>

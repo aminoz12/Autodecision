@@ -43,10 +43,26 @@ export type SupplierSummary = {
   id: string;
   name: string;
   code: string | null;
+  /** The supplier delivers with its own driver (no magasin tournée). */
+  ownDelivery: boolean;
+  /** Expected delay in days: 0 = J (same day), 1 = J+1 … */
+  leadDays: number;
   pendingLines: number;
   pendingPieces: number;
   createdAt: string;
 };
+
+export type SupplierInput = {
+  name: string;
+  code?: string | null;
+  ownDelivery?: boolean;
+  leadDays?: number;
+};
+
+/** "J", "J+1", "J+2" … */
+export function leadLabel(days: number): string {
+  return days <= 0 ? "J" : `J+${days}`;
+}
 
 export async function loadSuppliers(
   supabase: SupabaseClient,
@@ -55,7 +71,7 @@ export async function loadSuppliers(
   const [suppliersRes, linesRes] = await Promise.all([
     supabase
       .from("suppliers")
-      .select("id,name,code,created_at")
+      .select("id,name,code,own_delivery,lead_days,created_at")
       .eq("organization_id", orgId)
       .order("name"),
     supabase
@@ -89,6 +105,8 @@ export async function loadSuppliers(
       id: String(row.id),
       name: String(row.name ?? ""),
       code: (row.code as string | null) ?? null,
+      ownDelivery: row.own_delivery === true,
+      leadDays: Math.max(0, toNumber(row.lead_days)),
       pendingLines: p.lines,
       pendingPieces: p.pieces,
       createdAt: String(row.created_at ?? ""),
@@ -96,17 +114,46 @@ export async function loadSuppliers(
   });
 }
 
+function supplierRow(input: Partial<SupplierInput>): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  if (input.name !== undefined) row.name = input.name.trim();
+  if (input.code !== undefined) row.code = input.code?.trim() || null;
+  if (input.ownDelivery !== undefined) row.own_delivery = input.ownDelivery;
+  if (input.leadDays !== undefined) row.lead_days = Math.min(30, Math.max(0, Math.floor(input.leadDays)));
+  return row;
+}
+
 export async function createSupplier(
   supabase: SupabaseClient,
   orgId: string,
-  input: { name: string; code?: string },
+  input: SupplierInput,
 ): Promise<void> {
+  if (!input.name.trim()) throw new Error("Le nom du fournisseur est obligatoire.");
   const { error } = await supabase.from("suppliers").insert({
     organization_id: orgId,
-    name: input.name.trim(),
-    code: input.code?.trim() || null,
+    ...supplierRow({ ownDelivery: false, leadDays: 0, ...input }),
   });
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.code === "23505") throw new Error(`Le fournisseur « ${input.name.trim()} » existe déjà.`);
+    throw new Error(error.message);
+  }
+}
+
+export async function updateSupplier(
+  supabase: SupabaseClient,
+  orgId: string,
+  id: string,
+  patch: Partial<SupplierInput>,
+): Promise<void> {
+  const { error } = await supabase
+    .from("suppliers")
+    .update({ ...supplierRow(patch), updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("organization_id", orgId);
+  if (error) {
+    if (error.code === "23505") throw new Error("Un fournisseur porte déjà ce nom.");
+    throw new Error(error.message);
+  }
 }
 
 export type ClientOption = {
@@ -682,13 +729,20 @@ export type ReturnRow = {
   ref: string;
   createdAt: string;
   supplier: string;
+  /** Stock part going back to a supplier (supplier pipeline) vs. client return. */
+  hasSupplier: boolean;
   client: string;
+  clientId: string | null;
+  isGarage: boolean;
+  orderId: string | null;
   reference: string;
   reason: string;
   type: string;
   treatment: string;
   decotePct: number;
   amount: number;
+  /** Value of the returned line (qty × unit price) to prefill a refund. */
+  lineValue: number;
 };
 
 export async function loadReturns(
@@ -698,7 +752,8 @@ export async function loadReturns(
   const { data, error } = await supabase
     .from("sales_returns")
     .select(
-      "id,ref,created_at,order_id,reason,motif,designation,type_retour,statut_traitement,decote_pct,montant,clients(name),suppliers(name),orders(ref_demande,clients(name))",
+      "id,ref,created_at,order_id,client_id,supplier_id,reason,motif,designation,type_retour,statut_traitement,decote_pct,montant,clients(name,is_garage),suppliers(name)," +
+        "orders(ref_demande,clients(name,is_garage)),order_lines(depuis_magasin,quantity,prix_vente_unitaire,nom_produit,reference,suppliers(name))",
     )
     .eq("organization_id", orgId)
     .order("created_at", { ascending: false })
@@ -707,18 +762,31 @@ export async function loadReturns(
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((raw) => {
-    const row = raw as Record<string, unknown>;
+    const row = raw as unknown as Record<string, unknown>;
     const client = first(row.clients as Embedded<Record<string, unknown>>);
     const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
     const order = first(row.orders as Embedded<Record<string, unknown>>);
     const orderClient = first(order?.clients as Embedded<Record<string, unknown>>);
+    // The return's own supplier (supplier-return pipeline) wins; otherwise
+    // show where the returned part came from: its line's supplier or the shelf.
+    const line = first(row.order_lines as Embedded<Record<string, unknown>>);
+    const lineSupplier = first(line?.suppliers as Embedded<Record<string, unknown>>);
+    const supplierName =
+      (supplier?.name as string | undefined) ??
+      (lineSupplier?.name as string | undefined) ??
+      (line?.depuis_magasin === true ? "Stock magasin" : null);
     return {
       id: String(row.id),
       ref: String(row.ref ?? order?.ref_demande ?? row.order_id ?? "-"),
       createdAt: String(row.created_at ?? ""),
-      supplier: String(supplier?.name ?? "Sans fournisseur"),
-      client: String(client?.name ?? orderClient?.name ?? "Client non lie"),
-      reference: String(row.designation ?? row.ref ?? "-"),
+      supplier: supplierName ?? "—",
+      hasSupplier: Boolean(row.supplier_id),
+      client: String(client?.name ?? orderClient?.name ?? "Client comptoir"),
+      clientId: (row.client_id as string | null) ?? null,
+      isGarage: client?.is_garage === true || orderClient?.is_garage === true,
+      orderId: (row.order_id as string | null) ?? null,
+      lineValue: toNumber(line?.quantity) * toNumber(line?.prix_vente_unitaire),
+      reference: String(row.designation ?? line?.nom_produit ?? line?.reference ?? "—"),
       reason: String(row.motif ?? row.reason ?? "-"),
       type: String(row.type_retour ?? "RETOURNABLE"),
       treatment: String(row.statut_traitement ?? "A_TRAITER"),
@@ -741,6 +809,26 @@ export type ReturnTreatment =
  * Advance a return through its treatment pipeline
  * (A_TRAITER → DEMANDE_ENVOYEE → A_RECUPERER → ACCEPTE/REFUSE → REMBOURSE).
  */
+/**
+ * Settle a CLIENT return with the magasin: cash refund (REMBOURSEMENT) or an
+ * avoir (AVOIR, credit note valid 1 year). Returns the avoir number if one
+ * was created. Supplier returns keep the pipeline (updateReturnTreatment).
+ */
+export async function settleClientReturn(
+  supabase: SupabaseClient,
+  returnId: string,
+  input: { mode: "REMBOURSEMENT" | "AVOIR"; amount: number; reason?: string },
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc("settle_client_return", {
+    p_return_id: returnId,
+    p_mode: input.mode,
+    p_amount: Math.round(Math.max(0, input.amount) * 100) / 100,
+    p_reason: input.reason?.trim() || null,
+  });
+  if (error) throw new Error(error.message);
+  return typeof data === "string" ? data : null;
+}
+
 export async function updateReturnTreatment(
   supabase: SupabaseClient,
   _orgId: string,
@@ -1039,6 +1127,11 @@ export type CreditConsignRow = {
   remaining: number;
   status: string;
   dueAt: string | null;
+  clientId: string | null;
+  /** The client is a garage (no particulier profile page). */
+  isGarage: boolean;
+  /** Origin order (avoir: the returned order; consigne: the sale). */
+  orderId: string | null;
 };
 
 /** Effective avoir status: an unexhausted avoir past its échéance is EXPIRE. */
@@ -1055,13 +1148,13 @@ export async function loadCreditsAndConsignments(
   const [creditsRes, consignRes] = await Promise.all([
     supabase
       .from("credit_notes")
-      .select("id,num,created_at,amount,used_amount,statut,echeance,motif,designation,clients(name),orders!credit_notes_order_id_fkey(ref_demande)")
+      .select("id,num,created_at,amount,used_amount,statut,echeance,motif,designation,client_id,order_id,clients(name,is_garage),orders!credit_notes_order_id_fkey(ref_demande)")
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(100),
     supabase
       .from("consignment_entries")
-      .select("id,num,created_at,montant,status,echeance,motif,description,clients(name)")
+      .select("id,num,created_at,montant,status,echeance,motif,description,client_id,order_id,clients(name,is_garage)")
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -1083,7 +1176,7 @@ export async function loadCreditsAndConsignments(
       kind: "avoir",
       createdAt: String(row.created_at ?? ""),
       num: String(row.num ?? `AV-${String(row.id).slice(0, 8)}`),
-      client: String(client?.name ?? "Client non lie"),
+      client: String(client?.name ?? "Client comptoir"),
       reference: String(order?.ref_demande ?? "-"),
       motif: String(row.motif ?? "Avoir client"),
       designation: String(row.designation ?? "-"),
@@ -1092,6 +1185,9 @@ export async function loadCreditsAndConsignments(
       remaining: Math.max(0, amount - usedAmount),
       status: effectiveCreditStatus(String(row.statut ?? "EN_COURS"), dueAt),
       dueAt,
+      clientId: (row.client_id as string | null) ?? null,
+      isGarage: client?.is_garage === true,
+      orderId: (row.order_id as string | null) ?? null,
     });
   }
   for (const raw of consignRes.data ?? []) {
@@ -1102,7 +1198,7 @@ export async function loadCreditsAndConsignments(
       kind: "consigne",
       createdAt: String(row.created_at ?? ""),
       num: String(row.num ?? `CO-${String(row.id).slice(0, 8)}`),
-      client: String(client?.name ?? "Client non lie"),
+      client: String(client?.name ?? "Client comptoir"),
       reference: String(row.num ?? "-"),
       motif: String(row.motif ?? "Consigne pieces"),
       designation: String(row.description ?? "-"),
@@ -1111,6 +1207,9 @@ export async function loadCreditsAndConsignments(
       remaining: toNumber(row.montant),
       status: String(row.status ?? "ACTIF"),
       dueAt: (row.echeance as string | null) ?? null,
+      clientId: (row.client_id as string | null) ?? null,
+      isGarage: client?.is_garage === true,
+      orderId: (row.order_id as string | null) ?? null,
     });
   }
 

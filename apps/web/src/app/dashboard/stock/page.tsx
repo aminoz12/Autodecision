@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
   reorderStockLines,
@@ -396,7 +397,7 @@ export default function StockPage() {
         </div>
       </section>
 
-      {notice && <div className="nc-ok">{notice}</div>}
+      <Toast message={notice} onClose={() => setNotice(null)} duration={8000} />
 
       {/* ---- Commander modal ---- */}
       {targets.length > 0 && (

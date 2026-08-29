@@ -15,6 +15,7 @@ import {
   Store,
   Truck,
   Undo2,
+  Users,
   Warehouse,
   Wrench,
   X,
@@ -52,6 +53,7 @@ const navGroups: NavGroup[] = [
   {
     label: "Partenaires",
     items: [
+      { href: "/dashboard/clients", label: "Clients particuliers", icon: Users },
       { href: "/dashboard/garages", label: "Garages", icon: Wrench },
       { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
       { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
@@ -167,22 +169,24 @@ export function Sidebar() {
           {navGroups.map((group) => (
             <div key={group.label} className="sidebar-group">
               <p className="sidebar-group-label">{group.label}</p>
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const active = isActive(item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn("sidebar-nav-item", active && "sidebar-nav-item--active")}
-                    aria-current={active ? "page" : undefined}
-                  >
-                    <Icon className="sidebar-nav-icon" />
-                    <span className="flex-1">{item.label}</span>
-                  </Link>
-                );
-              })}
+              <div className="sidebar-group-items">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={cn("sidebar-nav-item", active && "sidebar-nav-item--active")}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      <Icon className="sidebar-nav-icon" />
+                      <span className="flex-1">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </nav>

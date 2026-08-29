@@ -2,24 +2,24 @@
 
 import {
   ArrowRight,
-  Bell,
   Calendar,
   ChevronDown,
+  CirclePlus,
+  ClipboardCheck,
   Clock,
   Package,
-  Plus,
   RotateCcw,
-  Search,
   ShoppingCart,
   Star,
   Trophy,
   TrendingDown,
-  BarChart3,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { GlobalSearch } from "@/components/ui/GlobalSearch";
 import { createClient } from "@/lib/supabase/client";
 import {
   loadDashboardOverview,
@@ -31,12 +31,19 @@ import {
 /*  Static (non-data) navigation cards                                */
 /* ------------------------------------------------------------------ */
 
-const quickActions = [
-  { icon: Search, title: "Recherche pièce", desc: "Rechercher une pièce par plaque, véhicule ou référence.", color: "#EF4444", bg: "#FEE2E2", href: "/dashboard/recherche-piece" },
-  { icon: Plus, title: "Nouvelle commande", desc: "Créer une commande fournisseur ou client.", color: "#22C55E", bg: "#DCFCE7", href: "/dashboard/nouvelle-commande" },
-  { icon: Package, title: "Suivis des commandes", desc: "Pointer les pièces reçues des fournisseurs.", color: "#3B82F6", bg: "#DBEAFE", href: "/dashboard/commandes" },
-  { icon: RotateCcw, title: "Retour pièce", desc: "Créer ou traiter une demande de retour.", color: "#F59E0B", bg: "#FEF3C7", href: "/dashboard/retours" },
-  { icon: BarChart3, title: "Rapports", desc: "Consulter vos indicateurs et performances.", color: "#8B5CF6", bg: "#F3E8FF", href: "/dashboard/rapports" },
+const secondaryActions = [
+  {
+    icon: ClipboardCheck,
+    title: "Réceptions",
+    description: "Pointer les pièces attendues",
+    href: "/dashboard/commandes",
+  },
+  {
+    icon: RotateCcw,
+    title: "Retour pièce",
+    description: "Créer ou suivre un retour",
+    href: "/dashboard/retours",
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -153,51 +160,80 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="dashboard-header-right">
-          <div className="dashboard-search">
-            <Search className="dashboard-search-icon" />
-            <input type="text" placeholder="Rechercher (commande, pièce, client...)" className="dashboard-search-input" />
-          </div>
-          <button type="button" className="header-icon-btn" aria-label="Notifications">
-            <Bell className="h-5 w-5" />
-          </button>
-          <button type="button" className="header-icon-btn" aria-label="Historique">
-            <Clock className="h-5 w-5" />
-          </button>
+          <GlobalSearch />
         </div>
       </header>
 
-      {/* Date picker */}
-      <div className="dashboard-date-row">
-        <button type="button" className="date-picker-btn">
-          <Calendar className="h-4 w-4" />
-          <span style={{ textTransform: "capitalize" }}>{todayLabel}</span>
-          <ChevronDown className="h-4 w-4 opacity-50" />
-        </button>
-      </div>
+      {/* Counter workbench: one unmistakable primary action, then two shortcuts. */}
+      <section className="dashboard-workbench" aria-label="Actions du comptoir">
+        <Link href="/dashboard/nouvelle-commande" className="dashboard-primary-action">
+          <span className="dashboard-primary-action-icon"><CirclePlus className="h-6 w-6" /></span>
+          <span className="dashboard-primary-action-copy">
+            <span className="dashboard-eyebrow"><Wrench className="h-3.5 w-3.5" /> Comptoir</span>
+            <strong>Nouvelle commande</strong>
+            <span>Créer une commande client ou fournisseur</span>
+          </span>
+          <span className="dashboard-primary-action-cta">Commencer <ArrowRight className="h-4 w-4" /></span>
+        </Link>
+
+        <div className="dashboard-secondary-actions">
+          {secondaryActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <Link key={action.title} href={action.href} className="dashboard-secondary-action">
+                <span className="dashboard-secondary-action-icon"><Icon className="h-4 w-4" /></span>
+                <span>
+                  <strong>{action.title}</strong>
+                  <small>{action.description}</small>
+                </span>
+                <ArrowRight className="dashboard-secondary-action-arrow h-4 w-4" />
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="dashboard-date-row">
+          <span className="dashboard-date-label">Vue du jour</span>
+          <button type="button" className="date-picker-btn" aria-label="Choisir la date affichée">
+            <Calendar className="h-4 w-4" />
+            <span style={{ textTransform: "capitalize" }}>{todayLabel}</span>
+            <ChevronDown className="h-4 w-4 opacity-50" />
+          </button>
+        </div>
+      </section>
 
       {/* Stat cards */}
-      <div className="stats-grid">
-        {stats.map((s) => {
-          const Icon = s.icon;
-          return (
-            <div key={s.label} className="stat-card" style={{ "--accent": s.iconColor } as React.CSSProperties}>
-              <div className="stat-card-top">
-                <div className="stat-icon-wrap" style={{ backgroundColor: s.iconBg }}>
-                  <Icon style={{ color: s.iconColor }} className="h-5 w-5" />
+      <section aria-labelledby="dashboard-kpis-title">
+        <div className="dashboard-section-heading">
+          <div>
+            <p className="dashboard-eyebrow">À surveiller</p>
+            <h2 id="dashboard-kpis-title">L’activité du comptoir</h2>
+          </div>
+          <p>Les priorités opérationnelles de la journée.</p>
+        </div>
+        <div className="stats-grid">
+          {stats.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div key={s.label} className="stat-card" style={{ "--accent": s.iconColor } as React.CSSProperties}>
+                <div className="stat-card-top">
+                  <div className="stat-icon-wrap" style={{ backgroundColor: s.iconBg }}>
+                    <Icon style={{ color: s.iconColor }} className="h-5 w-5" />
+                  </div>
+                  <span className="stat-label">{s.label}</span>
                 </div>
-                <span className="stat-label">{s.label}</span>
-              </div>
-              <div className="stat-card-bottom">
-                <div>
-                  <p className="stat-value">{s.value}</p>
-                  <p className="stat-change" style={{ color: s.changeColor }}>{s.change}</p>
+                <div className="stat-card-bottom">
+                  <div>
+                    <p className="stat-value">{s.value}</p>
+                    <p className="stat-change" style={{ color: s.changeColor }}>{s.change}</p>
+                  </div>
+                  <Sparkline data={spark} color={s.changeColor} />
                 </div>
-                <Sparkline data={spark} color={s.changeColor} />
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Tables row */}
       <div className="tables-grid">
@@ -222,7 +258,14 @@ export default function DashboardPage() {
                   </tr>
                 ))}
                 {!loading && (data?.pendingReceptions.length ?? 0) === 0 && (
-                  <tr><td colSpan={3} className="text-muted">Aucune réception en attente.</td></tr>
+                  <tr>
+                    <td colSpan={3}>
+                      <div className="dashboard-empty-state">
+                        <Package className="h-5 w-5" />
+                        <div><strong>Rien à réceptionner</strong><span>Les prochaines pièces attendues apparaîtront ici.</span></div>
+                      </div>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -267,31 +310,19 @@ export default function DashboardPage() {
                   );
                 })}
                 {!loading && (data?.recentOrders.length ?? 0) === 0 && (
-                  <tr><td colSpan={4} className="text-muted">Aucune commande.</td></tr>
+                  <tr>
+                    <td colSpan={4}>
+                      <div className="dashboard-empty-state">
+                        <ShoppingCart className="h-5 w-5" />
+                        <div><strong>Le comptoir est prêt</strong><span>La première commande de la journée apparaîtra ici.</span></div>
+                      </div>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
-      </div>
-
-      {/* Quick actions */}
-      <div className="quick-actions-grid">
-        {quickActions.map((a) => {
-          const Icon = a.icon;
-          return (
-            <Link key={a.title} href={a.href} className="quick-action-card">
-              <div className="quick-action-icon" style={{ backgroundColor: a.bg }}>
-                <Icon style={{ color: a.color }} className="h-6 w-6" />
-              </div>
-              <div className="quick-action-text">
-                <h3>{a.title}</h3>
-                <p>{a.desc}</p>
-              </div>
-              <ArrowRight className="quick-action-arrow" />
-            </Link>
-          );
-        })}
       </div>
 
       {/* Bottom stats row */}

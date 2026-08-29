@@ -37,6 +37,10 @@ export type BoardLine = {
   designation: string;
   supplierName: string | null;
   supplierId: string | null;
+  /** The supplier delivers with its own driver: no magasin tournée. */
+  supplierOwnDelivery: boolean;
+  /** Supplier lead time in days (0 = J). */
+  supplierLeadDays: number;
   fromStock: boolean;
   quantity: number;
   received: number;
@@ -76,7 +80,7 @@ export async function loadReceptionBoard(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
           "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage),livreurs(name))," +
-          "suppliers(name),delivery_tours(name)",
+          "suppliers(name,own_delivery,lead_days),delivery_tours(name)",
       )
       .eq("organization_id", orgId)
       .limit(500),
@@ -116,8 +120,12 @@ export async function loadReceptionBoard(
     // Real tour name, else derive the tournée from the order's creation time
     // (or its scheduled delivery), so lines created before tour assignment
     // still display their tournée instead of "Hors tournée".
+    const supplierOwnDelivery = supplier?.own_delivery === true;
     let tourName = tour ? String(tour.name ?? "") : null;
-    if (!tourName) {
+    if (supplierOwnDelivery) {
+      // Delivered by the supplier's own driver: never on a magasin tournée.
+      tourName = "Livraison fournisseur";
+    } else if (!tourName) {
       const stamp =
         (order?.createdAt as string | null) ??
         (order?.date_envoi as string | null) ??
@@ -148,6 +156,8 @@ export async function loadReceptionBoard(
       designation: String(row.nom_produit ?? ""),
       supplierName: supplier ? String(supplier.name ?? "") : null,
       supplierId: (row.supplier_id as string | null) ?? null,
+      supplierOwnDelivery,
+      supplierLeadDays: Math.max(0, toNumber(supplier?.lead_days)),
       fromStock: Boolean(row.depuis_magasin),
       quantity: toNumber(row.quantity),
       received: toNumber(row.qte_recue),
@@ -335,6 +345,8 @@ export type OrderDetail = {
   isRestock: boolean;
   isGarage: boolean;
   livreurName: string | null;
+  /** Credit note amount consumed as payment on this order. */
+  avoirApplique: number;
   lines: OrderDetailLine[];
 };
 
@@ -354,7 +366,7 @@ export async function loadOrderDetail(
       "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
         "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
-        "is_restock,livreur_id,clients(name,phone,email,is_garage),livreurs(name)",
+        "is_restock,livreur_id,avoir_applique,clients(name,phone,email,is_garage),livreurs(name)",
     )
     .eq("id", orderId)
     .eq("organization_id", orgId)
@@ -447,6 +459,7 @@ export async function loadOrderDetail(
     dateBl: (order.date_bl as string | null) ?? null,
     isRestock: order.is_restock === true,
     isGarage: client?.is_garage === true,
+    avoirApplique: toNumber(order.avoir_applique),
     livreurName: (() => {
       const l = first(order.livreurs as Embedded<Record<string, unknown>>);
       return l ? String(l.name ?? "") : null;

@@ -7,7 +7,6 @@ import {
   Building2,
   Check,
   CheckCircle2,
-  ChevronDown,
   Clock,
   ClipboardCheck,
   FileText,
@@ -23,7 +22,6 @@ import {
   Send,
   Truck,
   User,
-  Warehouse,
   X,
   XCircle,
   type LucideIcon,
@@ -31,6 +29,8 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { TableSkeleton } from "@/components/ui/TableSkeleton";
+import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
 import {
@@ -120,8 +120,6 @@ export default function ReceptionCommandesPage() {
   const [tourFilter, setTourFilter] = useState<string | null>(null);
   /** Client / Garages / Retour en stock filter under the tournées. */
   const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
-  /** Supplier filter ("" = all, "__stock" = stock magasin lines). */
-  const [supplierFilter, setSupplierFilter] = useState("");
   /** Lines ticked for a grouped action (Reçu / Reliquat / Non reçu). */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [smsFilter, setSmsFilter] = useState<"all" | "complet" | "partiel">("all");
@@ -301,25 +299,11 @@ export default function ReceptionCommandesPage() {
     for (const l of tourRows) c[lineKind(l)] += 1;
     return c;
   }, [tourRows]);
-  /** Suppliers present in the current tournée view (for the supplier filter). */
-  const supplierOptions = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; count: number }>();
-    for (const l of tourRows) {
-      const id = l.supplierId ?? "__stock";
-      const name = l.supplierName ?? "Stock magasin";
-      const cur = map.get(id);
-      if (cur) cur.count += 1;
-      else map.set(id, { id, name, count: 1 });
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [tourRows]);
-  const pointerRows = useMemo(() => {
-    let rows = kindFilter === null ? tourRows : tourRows.filter((l) => lineKind(l) === kindFilter);
-    if (supplierFilter) {
-      rows = rows.filter((l) => (l.supplierId ?? "__stock") === supplierFilter);
-    }
-    return rows;
-  }, [tourRows, kindFilter, supplierFilter]);
+  const pointerRows = useMemo(
+    () =>
+      kindFilter === null ? tourRows : tourRows.filter((l) => lineKind(l) === kindFilter),
+    [tourRows, kindFilter],
+  );
 
   /* ---- selection for grouped actions (only visible rows count) ---- */
   const selectedRows = useMemo(
@@ -358,7 +342,7 @@ export default function ReceptionCommandesPage() {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
       if (l.isRestock) continue;
-      if (!(l.isGarage || l.envoyerAuLivreur)) continue;
+      if (!l.isGarage) continue; // garages only — clients are prepared in "Commande à préparer"
       if (l.workflow === "DELIVERED") continue;
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
@@ -421,7 +405,7 @@ export default function ReceptionCommandesPage() {
   const smsOrders = useMemo(() => {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
-      if (l.fromStock || l.isRestock || l.isGarage || l.envoyerAuLivreur) continue;
+      if (l.fromStock || l.isRestock || l.isGarage) continue;
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
       else byOrder.set(l.orderId, [l]);
@@ -639,11 +623,23 @@ export default function ReceptionCommandesPage() {
     });
 
   /* ---- tabs ---- */
-  const TABS: { id: string; label: string; sub: string; icon: LucideIcon; count?: number }[] = [
-    { id: "arecevoir", label: "Pièces à recevoir", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length },
-    { id: "sms", label: "Commande à préparer", sub: "Pièces reçues, clients à prévenir", icon: PackageCheck, count: smsOrders.length },
-    { id: "alivrer", label: "Commande à livrer", sub: "Garages — envoi au livreur", icon: Truck, count: deliveryOrders.length },
-    { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length },
+  const notReceived = board.filter((l) => l.status === "NOT_RECEIVED").length;
+  const readyToShip = deliveryOrders.filter((o) => o.stage === "READY").length;
+  const TABS: {
+    id: string;
+    label: string;
+    sub: string;
+    icon: LucideIcon;
+    count?: number;
+    /** Decision color of the counter when > 0. */
+    tone?: "amber" | "green" | "violet" | "orange" | "red";
+    /** Small red alert next to the label. */
+    alert?: string;
+  }[] = [
+    { id: "arecevoir", label: "Pièces à recevoir", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length, tone: "amber", alert: notReceived > 0 ? `${notReceived} non reçu${notReceived > 1 ? "s" : ""}` : undefined },
+    { id: "sms", label: "Commande à préparer", sub: "Pièces reçues, clients à prévenir", icon: PackageCheck, count: smsOrders.length, tone: "green" },
+    { id: "alivrer", label: "Commande à livrer", sub: "Garages — envoi au livreur", icon: Truck, count: deliveryOrders.length, tone: "violet", alert: readyToShip > 0 ? `${readyToShip} prête${readyToShip > 1 ? "s" : ""}` : undefined },
+    { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length, tone: "orange" },
     { id: "historique", label: "Historique", sub: "Réceptions passées", icon: FileText },
   ];
 
@@ -666,12 +662,13 @@ export default function ReceptionCommandesPage() {
     /** Checkbox column for grouped actions. */
     selectable?: boolean;
   }) {
+    const showReceivedAt = !showActions;
     const colCount =
-      9 + (showHandOver ? 1 : 0) + (showActions ? 1 : 0) + (onReturn ? 1 : 0) + (selectable ? 1 : 0);
+      6 + (showHandOver ? 1 : 0) + (showReceivedAt ? 1 : 0) + (showActions ? 1 : 0) + (onReturn ? 1 : 0) + (selectable ? 1 : 0);
     return (
       <section className="od-card rc-table-card">
         <div className="rc-table-wrap">
-          <table className="rc-table">
+          <table className={`rc-table${showActions || onReturn ? " rc-table--sticky-actions" : ""}`}>
             <thead>
               <tr>
                 {selectable && (
@@ -685,16 +682,14 @@ export default function ReceptionCommandesPage() {
                     />
                   </th>
                 )}
-                <th>N° CMD / Date</th>
-                <th>Type</th>
+                <th>Commande</th>
                 <th>Client</th>
                 <th>Référence / Désignation</th>
                 <th>Fournisseur</th>
-                <th className="rc-th-center">Qté cmd.</th>
-                <th className="rc-th-center">Qté reçue</th>
+                <th className="rc-th-center">Reçu / Cmd</th>
                 {showHandOver && <th>Remis client</th>}
                 <th>Statut</th>
-                <th>Reçu le</th>
+                {showReceivedAt && <th>Reçu le</th>}
                 {showActions && <th className="rc-th-center">Actions</th>}
                 {onReturn && <th className="rc-th-center">Retour</th>}
               </tr>
@@ -729,12 +724,12 @@ export default function ReceptionCommandesPage() {
                       <p className="rl-muted">{fmtDay(r.orderDate)}</p>
                     </td>
                     <td>
-                      <span className={`rc-type rc-type--${type}`}>
-                        {r.fromStock ? "Stock" : r.isGarage ? "Garage" : "Client"}
-                      </span>
-                    </td>
-                    <td>
-                      <p className="rl-client">{r.clientName}</p>
+                      <p className="rl-client">
+                        {r.clientName}
+                        <span className={`rc-type rc-type--${type} rc-type--inline`}>
+                          {r.fromStock ? "Stock" : r.isGarage ? "Garage" : "Client"}
+                        </span>
+                      </p>
                       {r.clientPhone && <p className="rl-muted">{r.clientPhone}</p>}
                       {(() => {
                         const h = handedByOrder.get(r.orderId);
@@ -762,12 +757,24 @@ export default function ReceptionCommandesPage() {
                       >
                         {r.supplierName ?? "Stock magasin"}
                       </span>
+                      {r.supplierName && (r.supplierOwnDelivery || r.supplierLeadDays > 0) && (
+                        <p className="rc-supplier-mode">
+                          {r.supplierOwnDelivery ? <Truck className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+                          {r.supplierOwnDelivery ? "Livreur du fournisseur" : "Tournée"}
+                          {r.supplierLeadDays > 0 ? ` · J+${r.supplierLeadDays}` : ""}
+                        </p>
+                      )}
                       {r.expectedAt && r.status !== "RECEIVED" && (
                         <p className="rl-muted">Prévu {fmtDayTime(r.expectedAt)}</p>
                       )}
                     </td>
-                    <td className="rc-th-center rl-qte">{r.quantity}</td>
-                    <td className="rc-th-center rl-qte">{r.received}</td>
+                    <td className="rc-th-center">
+                      <span className={`rc-qty${r.received >= r.quantity ? " rc-qty--full" : r.received > 0 ? " rc-qty--part" : ""}`}>
+                        <strong>{r.received}</strong>
+                        <em>/ {r.quantity}</em>
+                        <i style={{ width: `${Math.min(100, Math.round((r.received / Math.max(1, r.quantity)) * 100))}%` }} />
+                      </span>
+                    </td>
                     {showHandOver && (
                     <td>
                       {(() => {
@@ -812,7 +819,9 @@ export default function ReceptionCommandesPage() {
                         {St.label}
                       </span>
                     </td>
-                    <td className="rl-muted-strong">{fmtDayTime(r.receivedAt)}</td>
+                    {showReceivedAt && (
+                      <td className="rl-muted-strong">{fmtDayTime(r.receivedAt)}</td>
+                    )}
                     {showActions && (
                       <td>
                         <div className="rc-actions">
@@ -831,7 +840,7 @@ export default function ReceptionCommandesPage() {
                           </button>
                           <button
                             type="button"
-                            className="rc-act rc-act--reliquat"
+                            className="rc-act rc-act--reliquat rc-act--quiet"
                             disabled={isBusy || r.status === "BACKORDER"}
                             onClick={() => actStatus(r, "BACKORDER")}
                           >
@@ -839,7 +848,7 @@ export default function ReceptionCommandesPage() {
                           </button>
                           <button
                             type="button"
-                            className="rc-act rc-act--nonrecu"
+                            className="rc-act rc-act--nonrecu rc-act--quiet"
                             disabled={isBusy || r.status === "NOT_RECEIVED"}
                             onClick={() => actStatus(r, "NOT_RECEIVED")}
                           >
@@ -895,11 +904,14 @@ export default function ReceptionCommandesPage() {
     <div className="rc-page">
       {/* Header */}
       <header className="rc-header">
-        <h1 className="rc-title">Réception des commandes</h1>
+        <div>
+          <h1 className="rc-title">Suivi des <span className="nc-title-accent">commandes</span></h1>
+          <p className="rl-subtitle">Réception des pièces, préparation des commandes clients et livraisons garages.</p>
+        </div>
         <div className="rc-header-actions">
           <button
             type="button"
-            className="od-btn od-btn--primary"
+            className="od-btn od-btn--ghost"
             onClick={() => void load()}
             disabled={loading}
           >
@@ -914,15 +926,7 @@ export default function ReceptionCommandesPage() {
       </header>
 
       {error && <div className="nc-error">{error}</div>}
-      {notice && (
-        <div className="nc-ok rc-notice">
-          <CheckCircle2 className="h-4 w-4" />
-          {notice}
-          <button type="button" className="rc-notice-close" onClick={() => setNotice(null)} aria-label="Fermer">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
+      <Toast message={notice} onClose={() => setNotice(null)} />
 
       {/* Tabs */}
       <div className="rc-tabs">
@@ -942,8 +946,11 @@ export default function ReceptionCommandesPage() {
                 <span className="rc-tab-label">
                   {t.label}
                   {t.count !== undefined && (
-                    <span className="rc-tab-count">{t.count}</span>
+                    <span className={`rc-tab-count${t.tone && t.count > 0 ? ` rc-tab-count--${t.tone}` : ""}`}>
+                      {t.count}
+                    </span>
                   )}
+                  {t.alert && <span className="rc-tab-alert">{t.alert}</span>}
                 </span>
                 <span className="rc-tab-sub">{t.sub}</span>
               </span>
@@ -953,9 +960,7 @@ export default function ReceptionCommandesPage() {
       </div>
 
       {loading && board.length === 0 ? (
-        <div className="od-card rc-empty">
-          <p>Chargement des commandes…</p>
-        </div>
+        <TableSkeleton rows={7} cols={9} />
       ) : (
         <>
           {/* ---- Pièces à recevoir ---- */}
@@ -1010,50 +1015,6 @@ export default function ReceptionCommandesPage() {
                     </button>
                   );
                 })}
-              </div>
-
-              <div className="rc-toolbar">
-                <label className="rc-toolbar-field">
-                  <Warehouse className="h-4 w-4" />
-                  <span className="od-select rc-toolbar-select">
-                    <select
-                      value={supplierFilter}
-                      onChange={(e) => setSupplierFilter(e.target.value)}
-                      aria-label="Filtrer par fournisseur"
-                    >
-                      <option value="">Tous les fournisseurs ({tourRows.length})</option>
-                      {supplierOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} ({s.count})
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="h-4 w-4" />
-                  </span>
-                </label>
-                <label className="rc-check rc-check--label">
-                  <input
-                    type="checkbox"
-                    checked={allVisibleSelected}
-                    onChange={toggleSelectAll}
-                    disabled={pointerRows.length === 0}
-                  />
-                  Tout sélectionner ({pointerRows.length})
-                </label>
-                {(supplierFilter || kindFilter || tourFilter) && (
-                  <button
-                    type="button"
-                    className="od-btn od-btn--ghost"
-                    onClick={() => {
-                      setSupplierFilter("");
-                      setKindFilter(null);
-                      setTourFilter(null);
-                    }}
-                  >
-                    <X className="h-4 w-4" />
-                    Effacer les filtres
-                  </button>
-                )}
               </div>
 
               {selectedRows.length > 0 && (
@@ -1507,7 +1468,7 @@ export default function ReceptionCommandesPage() {
           {/* ---- Historique ---- */}
           {tab === "historique" && (
             <>
-              {returnNotice && <div className="nc-ok">{returnNotice}</div>}
+              <Toast message={returnNotice} onClose={() => setReturnNotice(null)} />
               <div className="rc-hist-toolbar">
                 <div className="rt-search">
                   <Search className="h-4 w-4" />

@@ -471,6 +471,14 @@ export default function OrderDetailPage() {
                 <dt>Avance</dt>
                 <dd>{eur(order.avance)}</dd>
               </div>
+              {order.avoirApplique > 0 && (
+                <div className="od-kv-row">
+                  <dt>Avoir utilisé</dt>
+                  <dd style={{ color: "var(--clr-success-text)", fontWeight: 700 }}>
+                    − {eur(order.avoirApplique)}
+                  </dd>
+                </div>
+              )}
               <div className="od-kv-row">
                 <dt>Reste à payer</dt>
                 <dd className="od-kv-strong">{eur(order.solde)}</dd>
