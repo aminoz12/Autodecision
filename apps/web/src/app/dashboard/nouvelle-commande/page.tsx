@@ -9,6 +9,7 @@ import {
   Loader2,
   Package,
   Plus,
+  Printer,
   ShoppingCart,
   Trash2,
   Send,
@@ -28,12 +29,15 @@ import {
   loadClientCredits,
   loadClients,
   loadGarages,
+  loadOrganizationSettings,
   loadSupplierOptions,
   type ClientCredit,
   type ClientOption,
   type GarageSummary,
+  type OrganizationSettings,
   type SupplierOption,
 } from "@/lib/data/saas";
+import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
@@ -334,6 +338,16 @@ export default function NouvelleCommandePage() {
   const [createdRef, setCreatedRef] = useState<string | null>(null);
   const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
   const [avoirWarning, setAvoirWarning] = useState<string | null>(null);
+  /** Snapshot printed as a receipt-style ticket right after creation. */
+  const [ticket, setTicket] = useState<TicketData | null>(null);
+  const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
+
+  useEffect(() => {
+    if (!profile?.organization_id) return;
+    loadOrganizationSettings(supabase, profile.organization_id)
+      .then(setOrgSettings)
+      .catch(() => {});
+  }, [supabase, profile?.organization_id]);
 
   /* ---- PDF auto-fill ---- */
   const fileRef = useRef<HTMLInputElement>(null);
@@ -770,6 +784,30 @@ export default function NouvelleCommandePage() {
       setCreatedRef(order.ref_demande);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
       setAvoirWarning(order.avoirWarning ?? null);
+      setTicket({
+        ref: order.ref_demande,
+        createdAt: new Date().toISOString(),
+        vendeur: profile.display_name || null,
+        tourName: order.tourName || null,
+        deliveryAt: order.deliveryAt,
+        clientName: clientName.trim(),
+        clientPhone: clientPhone.trim() || null,
+        plate: immatriculation.trim() || null,
+        vehicleModel: vehicleModel.trim() || null,
+        kilometrage: kilometrage.trim() ? Number(kilometrage.replace(/\D/g, "")) : null,
+        lines: validLines.map((l) => ({
+          reference: l.reference.trim(),
+          designation: l.nom_produit.trim(),
+          quantity: l.quantity || 1,
+          prixVente: l.prix_vente || 0,
+          retourPossible: !l.retours_impossible,
+        })),
+        total,
+        avoirApplique: avoirApplied,
+        paye: paidEffective,
+        reste: remaining,
+        statutPaiement: effectiveStatut,
+      });
       // Refresh client list in case a new one was created.
       void loadClients(supabase, orgId).then(setClients).catch(() => {});
     } catch (err: unknown) {
@@ -801,6 +839,7 @@ export default function NouvelleCommandePage() {
     setCreatedRef(null);
     setCreatedTour(null);
     setAvoirWarning(null);
+    setTicket(null);
   }
 
   /* ---------------------------------------------------------------- */
@@ -833,9 +872,19 @@ export default function NouvelleCommandePage() {
           )}
           {avoirWarning && <div className="nc-error">{avoirWarning}</div>}
           <div className="nc-success-actions">
+            {ticket && (
+              <button
+                type="button"
+                className="od-btn od-btn--primary"
+                onClick={() => window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Imprimer le ticket
+              </button>
+            )}
             <button
               type="button"
-              className="od-btn od-btn--primary"
+              className="od-btn od-btn--ghost"
               onClick={resetForm}
             >
               <Plus className="h-4 w-4" />
@@ -846,6 +895,11 @@ export default function NouvelleCommandePage() {
             </Link>
           </div>
         </div>
+        {ticket && (
+          <div className="tk-preview">
+            <OrderTicket org={orgSettings} data={ticket} />
+          </div>
+        )}
       </div>
     );
   }

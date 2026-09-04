@@ -6280,3 +6280,59 @@ svg.lucide { stroke-width: 2; }
 .print-sign > div { flex: 1; }
 .print-sign-box { height: 90px; border: 1.5px solid #bbb; border-radius: 6px; margin-top: 6px; }
 .print-footer { margin-top: 28px; text-align: center; font-size: 11.5px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; }
+
+/* ================= Ticket de commande (tk-) — receipt style ================= */
+.tk-preview { display: flex; justify-content: center; margin-top: 24px; }
+.tk-doc {
+  width: 380px;
+  max-width: 100%;
+  background: #fff;
+  color: #111;
+  font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 22px 18px;
+  border: 1px solid var(--border-light, #e3e8ee);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+}
+.tk-header { text-align: center; }
+.tk-shop { font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.tk-shop-sub { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.28em; margin-top: 2px; }
+.tk-dash { border-top: 2px dashed #111; margin: 12px 0; }
+.tk-dash--tight { margin: 6px 0; }
+.tk-doctitle { text-align: center; font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin: 2px 0 8px; }
+.tk-refband { text-align: center; background: #111; color: #fff; font-weight: 700; letter-spacing: 0.06em; padding: 5px 8px; font-size: 13px; }
+.tk-kv { display: flex; flex-direction: column; gap: 3px; }
+.tk-kv > div { display: flex; gap: 6px; }
+.tk-kv dt { font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+.tk-kv dt::after { content: " :"; }
+.tk-kv dd { margin: 0; text-transform: uppercase; overflow-wrap: anywhere; }
+.tk-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.tk-table th { background: #111; color: #fff; text-transform: uppercase; padding: 4px; text-align: left; font-size: 9.5px; letter-spacing: 0.02em; }
+.tk-table td { padding: 5px 4px; border-bottom: 1px solid #d9d9d9; text-transform: uppercase; vertical-align: top; overflow-wrap: anywhere; }
+.tk-table td:first-child { white-space: nowrap; }
+.tk-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tk-totals { margin-top: 10px; margin-left: auto; width: 230px; max-width: 100%; display: flex; flex-direction: column; gap: 3px; }
+.tk-totals > div { display: flex; justify-content: space-between; font-weight: 700; }
+.tk-totals-ttc { font-size: 14px; }
+.tk-reglement { margin-top: 10px; font-weight: 700; }
+.tk-note { text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.tk-barcode { display: block; width: 82%; height: 48px; margin: 12px auto 4px; }
+.tk-barcode-label { text-align: center; font-size: 13px; letter-spacing: 0.12em; }
+.tk-footer { text-align: center; font-weight: 700; text-transform: uppercase; margin-top: 10px; font-size: 12px; }
+@media print {
+  body * { visibility: hidden; }
+  /* visibility alone leaves the sidebar's active highlight painted */
+  .sidebar, .sidebar-mobile-header { display: none !important; }
+  .tk-doc, .tk-doc * { visibility: visible; }
+  .tk-doc {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+  }
+}
