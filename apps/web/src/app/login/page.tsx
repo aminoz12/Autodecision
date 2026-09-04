@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { isBuiltinSuperAdmin } from "@/lib/superadmin";
 
 export default function LoginPage() {
   const { login, logout, ready, user, profile } = useAuth();
@@ -40,6 +41,11 @@ export default function LoginPage() {
     }
     if (profile?.role === "LIVREUR") {
       router.replace("/livreur");
+      return;
+    }
+    // The SaaS owner has no magasin profile — their space is /superadmin.
+    if (!profile && isBuiltinSuperAdmin(user.email)) {
+      router.replace("/superadmin");
       return;
     }
     if (profile) router.replace("/dashboard");

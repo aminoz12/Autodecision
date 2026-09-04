@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { isBuiltinSuperAdmin } from "@/lib/superadmin";
 
 export function DashboardGate({ children }: { children: React.ReactNode }) {
   const { user, profile, profileLoadError, ready } = useAuth();
@@ -14,6 +15,11 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
     }
     if (!user) {
       router.replace("/login");
+      return;
+    }
+    // The SaaS owner has no magasin profile — their space is /superadmin.
+    if (!profile && isBuiltinSuperAdmin(user.email)) {
+      router.replace("/superadmin");
       return;
     }
     // A garagiste session in the magasin store is an anomaly (wrong login) —

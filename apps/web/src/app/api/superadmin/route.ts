@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { BUILTIN_SUPER_ADMINS } from "@/lib/superadmin";
 
 /**
  * SaaS-owner console (server-only, service role).
@@ -9,8 +10,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
  *   GET  → all organizations with admins, volumes and billing status
  *   POST → { action: suspend | activate | extend_trial | reset_admin_password | create_org, ... }
  */
-
-const BUILTIN_SUPER_ADMINS = ["contact@ematricule.fr"];
 
 function superAdminEmails(): Set<string> {
   const extra = (process.env.SUPERADMIN_EMAILS ?? "")
