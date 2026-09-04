@@ -530,11 +530,32 @@ export default function ReceptionCommandesPage() {
   const actSms = (o: (typeof smsOrders)[number]) =>
     withBusy(`sms-${o.orderId}`, async () => {
       if (!orgId) return;
+      if (!o.clientPhone) {
+        setError("Ce client n'a pas de numéro de téléphone.");
+        return;
+      }
+      // Real send through the server (Twilio env) — simulated when no
+      // provider is configured, so the workflow still moves forward.
+      const res = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: o.clientPhone,
+          message: `Bonjour, vos pièces (${o.received}/${o.total}) sont disponibles en magasin. À bientôt !`,
+        }),
+      });
+      const sent = (await res.json().catch(() => ({}))) as { ok?: boolean; simulated?: boolean; error?: string };
+      if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
       await recordSmsSent(supabase, orgId, {
         orderId: o.orderId,
         clientId: o.clientId,
         phone: o.clientPhone,
       });
+      setNotice(
+        sent.simulated
+          ? `SMS enregistré pour ${o.clientName} (mode simulation — configurez un fournisseur SMS dans les variables TWILIO_* pour l'envoi réel).`
+          : `SMS envoyé à ${o.clientName} (${o.clientPhone}).`,
+      );
       setSms((prev) => {
         const next = new Map(prev);
         const cur = next.get(o.orderId) ?? { sent: false, treated: false };

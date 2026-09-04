@@ -12,6 +12,8 @@ import {
   Mail,
   Package,
   Phone,
+  Printer,
+  ScrollText,
   Truck,
   User,
   XCircle,
@@ -30,6 +32,7 @@ import {
   type OrderDetailLine,
   type ReceptionStatus,
 } from "@/lib/data/commandes";
+import { loadOrganizationSettings, type OrganizationSettings } from "@/lib/data/saas";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -95,6 +98,28 @@ export default function OrderDetailPage() {
   const supabase = useMemo(() => createClient(), []);
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
+  const [org, setOrg] = useState<OrganizationSettings | null>(null);
+  /** Which document the next window.print() renders. */
+  const [printMode, setPrintMode] = useState<"facture" | "bl" | null>(null);
+
+  useEffect(() => {
+    if (!profile?.organization_id) return;
+    loadOrganizationSettings(supabase, profile.organization_id)
+      .then(setOrg)
+      .catch(() => {});
+  }, [supabase, profile?.organization_id]);
+
+  const printDoc = useCallback((mode: "facture" | "bl") => {
+    setPrintMode(mode);
+    // Let React paint the .print-doc block before opening the dialog.
+    window.setTimeout(() => window.print(), 60);
+  }, []);
+
+  useEffect(() => {
+    const reset = () => setPrintMode(null);
+    window.addEventListener("afterprint", reset);
+    return () => window.removeEventListener("afterprint", reset);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -228,8 +253,16 @@ export default function OrderDetailPage() {
           </div>
         </div>
         <div className="od-title-actions">
+          <button type="button" className="od-btn od-btn--ghost" onClick={() => printDoc("bl")}>
+            <ScrollText className="h-4 w-4" />
+            Bon de livraison
+          </button>
+          <button type="button" className="od-btn od-btn--primary" onClick={() => printDoc("facture")}>
+            <Printer className="h-4 w-4" />
+            Imprimer la facture
+          </button>
           <Link href="/dashboard/commandes" className="od-btn od-btn--ghost">
-            Retour aux commandes
+            Retour
           </Link>
         </div>
       </div>
@@ -529,6 +562,89 @@ export default function OrderDetailPage() {
           </section>
         </div>
       </div>
+
+      {/* ---- Printable document (Facture / Bon de livraison) ---- */}
+      {printMode && (
+        <div className="print-doc">
+          <div className="print-head">
+            <div>
+              <p className="print-org">{org?.name ?? "Magasin"}</p>
+              {org?.address && <p className="print-org-line">{org.address}</p>}
+              {(org?.city || org?.phone) && (
+                <p className="print-org-line">
+                  {[org?.city, org?.phone ? `Tél. ${org.phone}` : null].filter(Boolean).join(" · ")}
+                </p>
+              )}
+            </div>
+            <div className="print-doctype">
+              <p className="print-doctype-name">{printMode === "facture" ? "FACTURE" : "BON DE LIVRAISON"}</p>
+              <p className="print-org-line">{order.ref}</p>
+              <p className="print-org-line">{fmtDate(order.date)}</p>
+            </div>
+          </div>
+
+          <div className="print-client">
+            <p className="print-section-title">{order.isGarage ? "Garage" : "Client"}</p>
+            <p className="print-client-name">{order.clientName}</p>
+            {order.clientPhone && <p className="print-org-line">{order.clientPhone}</p>}
+            {(order.vehicle || order.plate) && (
+              <p className="print-org-line">
+                {[order.vehicle, order.plate].filter(Boolean).join(" · ")}
+                {order.kilometrage != null ? ` · ${order.kilometrage.toLocaleString("fr-FR")} km` : ""}
+              </p>
+            )}
+          </div>
+
+          <table className="print-table">
+            <thead>
+              <tr>
+                <th>Référence</th>
+                <th>Désignation</th>
+                <th className="print-num">Qté</th>
+                {printMode === "facture" && <th className="print-num">PU HT/TTC</th>}
+                {printMode === "facture" && <th className="print-num">Total</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {order.lines.map((l) => (
+                <tr key={l.id}>
+                  <td>{l.reference}</td>
+                  <td>{l.designation}</td>
+                  <td className="print-num">{l.quantity}</td>
+                  {printMode === "facture" && <td className="print-num">{eur(l.prixVente)}</td>}
+                  {printMode === "facture" && <td className="print-num">{eur(l.total)}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {printMode === "facture" ? (
+            <div className="print-totals">
+              <div><span>Total commande</span><strong>{eur(order.total)}</strong></div>
+              {order.avoirApplique > 0 && <div><span>Avoir déduit</span><strong>− {eur(order.avoirApplique)}</strong></div>}
+              <div><span>Payé</span><strong>{eur(order.paye + order.avance)}</strong></div>
+              <div className="print-totals-due"><span>Reste à payer</span><strong>{eur(order.solde)}</strong></div>
+            </div>
+          ) : (
+            <div className="print-sign">
+              <div>
+                <p className="print-section-title">Livré par</p>
+                <p className="print-org-line">{order.livreurName ?? "________________"}</p>
+              </div>
+              <div>
+                <p className="print-section-title">Signature du client</p>
+                <div className="print-sign-box" />
+              </div>
+            </div>
+          )}
+
+          <p className="print-footer">
+            {printMode === "facture"
+              ? "Merci de votre confiance — TVA 20 % incluse dans les prix affichés."
+              : "Marchandise vérifiée et reçue conforme."}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
