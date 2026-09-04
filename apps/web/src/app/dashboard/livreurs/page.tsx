@@ -169,7 +169,7 @@ export default function LivreursPage() {
             Actualiser
           </button>
           {isAdmin && (
-            <Link href="/dashboard/admin" className="od-btn od-btn--primary">
+            <Link href="/admin" className="od-btn od-btn--primary">
               <Plus className="h-4 w-4" />
               Gérer les livreurs
             </Link>

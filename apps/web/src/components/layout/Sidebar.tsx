@@ -70,7 +70,7 @@ const navGroups: NavGroup[] = [
 const adminGroup: NavGroup = {
   label: "Administration",
   items: [
-    { href: "/dashboard/admin", label: "Équipe & accès", icon: ShieldCheck },
+    { href: "/admin", label: "Équipe & accès", icon: ShieldCheck },
     { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
   ],
 };
