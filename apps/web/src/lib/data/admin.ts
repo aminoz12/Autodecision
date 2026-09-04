@@ -21,7 +21,19 @@ export type GarageAccount = {
   lastSignIn: string | null;
 };
 
-export type TeamPayload = { staff: StaffMember[]; garageAccounts: GarageAccount[] };
+export type LivreurAccount = {
+  userId: string;
+  livreurId: string;
+  livreur: string;
+  email: string | null;
+  lastSignIn: string | null;
+};
+
+export type TeamPayload = {
+  staff: StaffMember[];
+  garageAccounts: GarageAccount[];
+  livreurAccounts: LivreurAccount[];
+};
 
 async function call<T>(method: string, body?: unknown): Promise<T> {
   const res = await fetch("/api/team", {
@@ -62,6 +74,27 @@ export async function createGarageAccess(input: {
   password: string;
 }): Promise<{ ok: true; email: string; reset?: boolean }> {
   const res = await fetch("/api/garage-access", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: true;
+    email?: string;
+    reset?: boolean;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(json.error ?? "Erreur serveur.");
+  return json as { ok: true; email: string; reset?: boolean };
+}
+
+/** Create (or reset) a livreur login — server-only route. */
+export async function createLivreurAccess(input: {
+  livreurId: string;
+  email: string;
+  password: string;
+}): Promise<{ ok: true; email: string; reset?: boolean }> {
+  const res = await fetch("/api/livreur-access", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),

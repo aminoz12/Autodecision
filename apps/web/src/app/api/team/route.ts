@@ -63,7 +63,7 @@ export async function GET() {
 
     const { data: profiles, error } = await admin
       .from("profiles")
-      .select("user_id, display_name, role, client_id, created_at")
+      .select("user_id, display_name, role, client_id, livreur_id, created_at")
       .eq("organization_id", orgId);
     if (error) throw new Error(error.message);
 
@@ -74,7 +74,7 @@ export async function GET() {
     );
 
     const staff = rows
-      .filter((p) => !p.client_id)
+      .filter((p) => !p.client_id && !p.livreur_id)
       .map((p) => ({
         userId: String(p.user_id),
         name: String(p.display_name ?? ""),
@@ -102,7 +102,23 @@ export async function GET() {
       lastSignIn: emails.get(String(p.user_id))?.lastSignIn ?? null,
     }));
 
-    return NextResponse.json({ staff, garageAccounts });
+    // Livreur logins (profiles.livreur_id), joined to the livreur name.
+    const { data: livreurs } = await admin
+      .from("livreurs")
+      .select("id, name")
+      .eq("organization_id", orgId);
+    const livreurName = new Map((livreurs ?? []).map((l) => [String(l.id), String(l.name)]));
+    const livreurAccounts = rows
+      .filter((p) => p.livreur_id)
+      .map((p) => ({
+        userId: String(p.user_id),
+        livreurId: String(p.livreur_id),
+        livreur: livreurName.get(String(p.livreur_id)) ?? "Livreur supprimé",
+        email: emails.get(String(p.user_id))?.email ?? null,
+        lastSignIn: emails.get(String(p.user_id))?.lastSignIn ?? null,
+      }));
+
+    return NextResponse.json({ staff, garageAccounts, livreurAccounts });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur serveur.";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -194,10 +210,10 @@ export async function PATCH(request: Request) {
 
     const { data: target } = await admin
       .from("profiles")
-      .select("user_id, organization_id, role, client_id")
+      .select("user_id, organization_id, role, client_id, livreur_id")
       .eq("user_id", userId)
       .maybeSingle();
-    if (!target || target.organization_id !== orgId || target.client_id) {
+    if (!target || target.organization_id !== orgId || target.client_id || target.livreur_id) {
       return NextResponse.json({ error: "Membre introuvable." }, { status: 404 });
     }
     if (userId === callerId && role !== "ADMIN") {

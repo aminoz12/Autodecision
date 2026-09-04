@@ -102,7 +102,7 @@ async function loadProfile(
 ): Promise<{ profile: UserProfile | null; errorMessage: string | null }> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("user_id, organization_id, display_name, role, client_id")
+    .select("user_id, organization_id, display_name, role, client_id, livreur_id")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -120,6 +120,7 @@ async function loadProfile(
       display_name: data.display_name,
       role: data.role as UserRole,
       client_id: (data.client_id as string | null) ?? null,
+      livreur_id: (data.livreur_id as string | null) ?? null,
     },
     errorMessage: null,
   };

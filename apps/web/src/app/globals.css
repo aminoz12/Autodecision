@@ -6157,3 +6157,39 @@ svg.lucide { stroke-width: 2; }
 .admin-locked h1 { font-size: 19px; font-weight: 700; }
 .admin-locked p { font-size: 14px; color: var(--text-secondary); }
 @media (max-width: 900px) { .admin-stats { grid-template-columns: 1fr; } .admin-inline-form { grid-template-columns: 1fr; } }
+
+/* ==================================================================== */
+/*  LIVREUR — mobile tournée page                                        */
+/* ==================================================================== */
+.lp-page { min-height: 100vh; background: var(--bg-main); max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; }
+.lp-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: #fff; border-bottom: 1px solid var(--border-card); position: sticky; top: 0; z-index: 10; }
+.lp-brand { width: 40px; height: 40px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #7A73FF, #635BFF); color: #fff; flex-shrink: 0; }
+.lp-header-text { flex: 1; min-width: 0; }
+.lp-title { font-size: 16px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.lp-sub { font-size: 12.5px; color: var(--text-muted); }
+.lp-iconbtn { width: 42px; height: 42px; border-radius: 10px; border: none; background: #fff; box-shadow: var(--shadow-btn); color: var(--text-secondary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.lp-main { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.lp-section { font-size: 13px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-primary); display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.lp-section--done { margin-top: 18px; color: var(--text-muted); }
+.lp-count { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--clr-violet-bg); color: var(--clr-violet-text); font-size: 13px; }
+.lp-count--done { background: var(--clr-success-bg); color: var(--clr-success-text); }
+.lp-card { background: #fff; border: 1px solid var(--border-card); border-radius: 12px; box-shadow: 0 1px 2px rgba(60, 66, 87, 0.05); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.lp-client { font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.lp-tag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; background: var(--clr-violet-bg); color: var(--clr-violet-text); }
+.lp-meta { font-size: 12.5px; color: var(--text-muted); font-weight: 500; }
+.lp-contact { display: flex; gap: 10px; flex-wrap: wrap; }
+.lp-call { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 10px; background: var(--clr-info-bg); color: var(--clr-info-text); font-weight: 700; font-size: 14px; text-decoration: none; }
+.lp-city { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; color: var(--text-secondary); font-size: 13.5px; font-weight: 600; }
+.lp-pieces { background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 10px; padding: 10px 12px; }
+.lp-pieces-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+.lp-piece { font-size: 14px; color: var(--text-primary); font-weight: 500; padding: 2px 0; }
+.lp-piece span { color: var(--text-muted); font-size: 12.5px; }
+.lp-deliver { height: 52px; border: none; border-radius: 10px; background: var(--clr-success); color: #fff; font-size: 16px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; box-shadow: 0 0 0 1px #178A5E, 0 2px 6px rgba(30, 166, 114, 0.35); }
+.lp-deliver:disabled { opacity: 0.6; }
+.lp-card--done { flex-direction: row; align-items: center; gap: 12px; opacity: 0.85; }
+.lp-card--done svg { color: var(--clr-success); flex-shrink: 0; }
+.lp-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 16px; color: var(--clr-success-text); background: #fff; border: 1px solid var(--border-card); border-radius: 12px; font-weight: 600; }
+.lp-loading { padding: 24px; text-align: center; color: var(--text-muted); }
+.lp-error { margin: 0 16px; }
+
+

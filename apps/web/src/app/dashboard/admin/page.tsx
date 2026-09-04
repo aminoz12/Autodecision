@@ -32,11 +32,13 @@ import { createClient } from "@/lib/supabase/client";
 import {
   changeStaffRole,
   createGarageAccess,
+  createLivreurAccess,
   createStaffMember,
   deleteAccess,
   generatePassword,
   loadTeam,
   type GarageAccount,
+  type LivreurAccount,
   type StaffMember,
 } from "@/lib/data/admin";
 import { fmtDateTime, loadGarages, type GarageSummary } from "@/lib/data/saas";
@@ -77,6 +79,7 @@ function AdminContent() {
   const [tab, setTab] = useState<Tab>("equipe");
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [garageAccounts, setGarageAccounts] = useState<GarageAccount[]>([]);
+  const [livreurAccounts, setLivreurAccounts] = useState<LivreurAccount[]>([]);
   const [garages, setGarages] = useState<GarageSummary[]>([]);
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,6 +99,7 @@ function AdminContent() {
       ]);
       setStaff(team.staff);
       setGarageAccounts(team.garageAccounts);
+      setLivreurAccounts(team.livreurAccounts ?? []);
       setGarages(gars);
       setLivreurs(livs);
     } catch (e) {
@@ -182,6 +186,44 @@ function AdminContent() {
       setGError(err instanceof Error ? err.message : String(err));
     } finally {
       setGSaving(false);
+    }
+  }
+
+  /* ---- Livreur access modal ---- */
+  const accountByLivreur = useMemo(
+    () => new Map(livreurAccounts.map((a) => [a.livreurId, a])),
+    [livreurAccounts],
+  );
+  const [lvAccess, setLvAccess] = useState<Livreur | null>(null);
+  const [lvEmail, setLvEmail] = useState("");
+  const [lvPwd, setLvPwd] = useState("");
+  const [lvAccSaving, setLvAccSaving] = useState(false);
+  const [lvAccError, setLvAccError] = useState<string | null>(null);
+
+  function openLivreurAccess(l: Livreur) {
+    const existing = accountByLivreur.get(l.id);
+    setLvAccess(l);
+    setLvEmail(existing?.email ?? "");
+    setLvPwd(generatePassword());
+    setLvAccError(null);
+  }
+
+  async function submitLivreurAccess(e: React.FormEvent) {
+    e.preventDefault();
+    if (!lvAccess) return;
+    setLvAccSaving(true);
+    setLvAccError(null);
+    try {
+      const res = await createLivreurAccess({ livreurId: lvAccess.id, email: lvEmail, password: lvPwd });
+      setNotice(
+        `${res.reset ? "Accès réinitialisé" : "Accès créé"} pour ${lvAccess.name} — identifiants : ${lvEmail} / ${lvPwd}. Le livreur se connecte sur la page de connexion habituelle.`,
+      );
+      setLvAccess(null);
+      await load();
+    } catch (err) {
+      setLvAccError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLvAccSaving(false);
     }
   }
 
@@ -515,7 +557,17 @@ function AdminContent() {
                         </td>
                         <td><span className={`rt-badge rt-badge--${l.active ? "green" : "red"}`}>{l.active ? "Actif" : "Inactif"}</span></td>
                         <td>
-                          <span className="rt-badge rt-badge--blue" title="L'accès livreur (application de tournée) arrive bientôt">Bientôt disponible</span>
+                          {(() => {
+                            const account = accountByLivreur.get(l.id);
+                            return account ? (
+                              <>
+                                <span className="rt-badge rt-badge--green">Actif</span>
+                                <p className="rl-muted">{account.email}</p>
+                              </>
+                            ) : (
+                              <span className="rt-badge rt-badge--amber">Aucun accès</span>
+                            );
+                          })()}
                         </td>
                         <td className="rl-th-center">
                           <div className="rc-actions" style={{ justifyContent: "center" }}>
@@ -545,6 +597,31 @@ function AdminContent() {
                                 <button type="button" className="rc-act rc-act--quiet" onClick={() => setLvEditing({ id: l.id, name: l.name, phone: l.phone ?? "" })}>
                                   <Pencil className="h-3.5 w-3.5" /> Modifier
                                 </button>
+                                <button
+                                  type="button"
+                                  className={`rc-act ${accountByLivreur.get(l.id) ? "rc-act--quiet" : "rc-act--retour"}`}
+                                  onClick={() => openLivreurAccess(l)}
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  {accountByLivreur.get(l.id) ? "Réinitialiser l'accès" : "Créer l'accès"}
+                                </button>
+                                {(() => {
+                                  const account = accountByLivreur.get(l.id);
+                                  return account ? (
+                                    <button
+                                      type="button"
+                                      className="rc-act rc-act--nonrecu"
+                                      disabled={busy !== null}
+                                      onClick={() => {
+                                        if (window.confirm(`Supprimer l'accès de ${l.name} ?`)) {
+                                          void run(`lvdel-${account.userId}`, () => deleteAccess(account.userId).then(() => undefined), "Accès livreur supprimé.");
+                                        }
+                                      }}
+                                    >
+                                      {busy === `lvdel-${account.userId}` ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                    </button>
+                                  ) : null;
+                                })()}
                                 <button
                                   type="button"
                                   className={`rc-act rc-act--quiet${l.active ? " rc-act--nonrecu" : " rc-act--recu"}`}
@@ -638,6 +715,60 @@ function AdminContent() {
                 <button type="submit" className="od-btn od-btn--primary" disabled={sSaving || !sForm.name.trim() || !sForm.email.trim() || sForm.password.length < 6}>
                   {sSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
                   Créer le compte
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= Livreur access modal ================= */}
+      {lvAccess && (
+        <div className="ga-modal-overlay" onClick={() => !lvAccSaving && setLvAccess(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><KeyRound className="h-4 w-4" />Accès livreur — {lvAccess.name}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setLvAccess(null)} aria-label="Fermer" disabled={lvAccSaving}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitLivreurAccess}>
+              {lvAccError && <div className="nc-error">{lvAccError}</div>}
+              <div className="ga-modal-row">
+                <div className="od-field">
+                  <span className="od-label">Email de connexion <span className="od-req">*</span></span>
+                  <input className="od-input" type="email" value={lvEmail} onChange={(e) => setLvEmail(e.target.value)} placeholder="livreur1@monmagasin.fr" autoFocus />
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Mot de passe <span className="od-req">*</span></span>
+                  <div className="admin-pwd">
+                    <input className="od-input" value={lvPwd} onChange={(e) => setLvPwd(e.target.value)} />
+                    <button type="button" className="rc-act rc-act--quiet" title="Générer" onClick={() => setLvPwd(generatePassword())}>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-act rc-act--quiet"
+                      title="Copier"
+                      onClick={() => { void navigator.clipboard?.writeText(lvPwd); setNotice("Mot de passe copié."); }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="od-note">
+                <Truck className="h-4 w-4" />
+                <p>
+                  Le livreur se connecte avec ces identifiants sur la page de connexion habituelle et arrive
+                  directement sur <strong>sa tournée mobile</strong> : uniquement ses livraisons, bouton « Livrée » — rien d&apos;autre.
+                </p>
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setLvAccess(null)} disabled={lvAccSaving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={lvAccSaving || !lvEmail.trim() || lvPwd.length < 6}>
+                  {lvAccSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
+                  {accountByLivreur.get(lvAccess.id) ? "Réinitialiser l'accès" : "Créer l'accès"}
                 </button>
               </div>
             </form>

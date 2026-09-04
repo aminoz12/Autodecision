@@ -38,6 +38,10 @@ export default function LoginPage() {
       );
       return;
     }
+    if (profile?.role === "LIVREUR") {
+      router.replace("/livreur");
+      return;
+    }
     if (profile) router.replace("/dashboard");
   }, [ready, user, profile, router, logout]);
 

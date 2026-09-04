@@ -20,6 +20,11 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
     // send to /login, which signs it out cleanly.
     if (profile?.client_id) {
       router.replace("/login");
+      return;
+    }
+    // A livreur works in their own mobile space.
+    if (profile?.role === "LIVREUR") {
+      router.replace("/livreur");
     }
   }, [ready, user, profile, router]);
 
