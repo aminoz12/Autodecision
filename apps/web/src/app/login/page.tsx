@@ -48,6 +48,11 @@ export default function LoginPage() {
       router.replace("/superadmin");
       return;
     }
+    // The magasin admin lands in the admin space; caissiers at the counter.
+    if (profile?.role === "ADMIN") {
+      router.replace("/dashboard/admin");
+      return;
+    }
     if (profile) router.replace("/dashboard");
   }, [ready, user, profile, router, logout]);
 
