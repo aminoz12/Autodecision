@@ -109,14 +109,23 @@ export default function OrderDetailPage() {
       .catch(() => {});
   }, [supabase, profile?.organization_id]);
 
-  const printDoc = useCallback((mode: "facture" | "bl") => {
-    setPrintMode(mode);
-    // Let React paint the .print-doc block before opening the dialog.
-    window.setTimeout(() => window.print(), 60);
-  }, []);
+  const printDoc = useCallback(
+    (mode: "facture" | "bl") => {
+      setPrintMode(mode);
+      // Tab title becomes the suggested PDF file name (REQ-…-facture.pdf).
+      if (order?.ref) document.title = `${order.ref}-${mode === "facture" ? "facture" : "bon-livraison"}`;
+      // Let React paint the .print-doc block before opening the dialog.
+      window.setTimeout(() => window.print(), 60);
+    },
+    [order?.ref],
+  );
 
   useEffect(() => {
-    const reset = () => setPrintMode(null);
+    const initialTitle = document.title;
+    const reset = () => {
+      setPrintMode(null);
+      document.title = initialTitle;
+    };
     window.addEventListener("afterprint", reset);
     return () => window.removeEventListener("afterprint", reset);
   }, []);

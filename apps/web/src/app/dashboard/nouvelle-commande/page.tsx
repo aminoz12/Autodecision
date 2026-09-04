@@ -822,6 +822,19 @@ export default function NouvelleCommandePage() {
     }
   }
 
+  /** Print the ticket; the tab title becomes the suggested PDF name (REQ-….pdf). */
+  function printTicket() {
+    if (!ticket) return;
+    const previousTitle = document.title;
+    document.title = ticket.ref;
+    const restore = () => {
+      document.title = previousTitle;
+      window.removeEventListener("afterprint", restore);
+    };
+    window.addEventListener("afterprint", restore);
+    window.print();
+  }
+
   function resetForm() {
     setDestineA("COMPTOIR");
     setClientId(NEW_CLIENT);
@@ -877,7 +890,7 @@ export default function NouvelleCommandePage() {
               <button
                 type="button"
                 className="od-btn od-btn--primary"
-                onClick={() => window.print()}
+                onClick={printTicket}
               >
                 <Printer className="h-4 w-4" />
                 Imprimer le ticket
