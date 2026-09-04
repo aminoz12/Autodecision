@@ -45,6 +45,7 @@ function initials(name: string): string {
 export default function LivreursPage() {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
+  const isAdmin = profile?.role === "ADMIN" && !profile.client_id;
   const supabase = useMemo(() => createClient(), []);
 
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
@@ -167,10 +168,12 @@ export default function LivreursPage() {
             {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualiser
           </button>
-          <button type="button" className="od-btn od-btn--primary" onClick={() => setAdding((v) => !v)}>
-            <Plus className="h-4 w-4" />
-            Ajouter un livreur
-          </button>
+          {isAdmin && (
+            <Link href="/dashboard/admin" className="od-btn od-btn--primary">
+              <Plus className="h-4 w-4" />
+              Gérer les livreurs
+            </Link>
+          )}
         </div>
       </header>
 
@@ -251,7 +254,7 @@ export default function LivreursPage() {
                     </span>
                   </span>
                 )}
-                {!isEditing && (
+                {!isEditing && isAdmin && (
                   <span className="lv-card-actions">
                     <button type="button" className="rc-act rc-act--quiet" title="Renommer / téléphone" onClick={() => setEditing({ id: l.id, name: l.name, phone: l.phone ?? "" })}>
                       <Pencil className="h-3.5 w-3.5" />

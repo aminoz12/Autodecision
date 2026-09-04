@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AdminGate } from "@/components/auth/AdminGate";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
@@ -32,6 +33,14 @@ type Form = { name: string; code: string; ownDelivery: boolean; leadDays: number
 const emptyForm: Form = { name: "", code: "", ownDelivery: false, leadDays: 0 };
 
 export default function FournisseursPage() {
+  return (
+    <AdminGate>
+      <FournisseursContent />
+    </AdminGate>
+  );
+}
+
+function FournisseursContent() {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
   const supabase = useMemo(() => createClient(), []);

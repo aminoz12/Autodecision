@@ -12,6 +12,7 @@ import {
   PackageCheck,
   Receipt,
   Settings,
+  ShieldCheck,
   Store,
   Truck,
   Undo2,
@@ -55,7 +56,6 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/dashboard/clients", label: "Clients particuliers", icon: Users },
       { href: "/dashboard/garages", label: "Garages", icon: Wrench },
-      { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
       { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
     ],
   },
@@ -67,6 +67,15 @@ const navGroups: NavGroup[] = [
     ],
   },
 ];
+
+/** Visible only to the magasin ADMIN — team, accesses, suppliers. */
+const adminGroup: NavGroup = {
+  label: "Administration",
+  items: [
+    { href: "/dashboard/admin", label: "Équipe & accès", icon: ShieldCheck },
+    { href: "/dashboard/fournisseurs", label: "Fournisseurs", icon: Warehouse },
+  ],
+};
 
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Administrateur",
@@ -166,7 +175,10 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="sidebar-nav">
-          {navGroups.map((group) => (
+          {(profile?.role === "ADMIN" && !profile.client_id
+            ? [...navGroups, adminGroup]
+            : navGroups
+          ).map((group) => (
             <div key={group.label} className="sidebar-group">
               <p className="sidebar-group-label">{group.label}</p>
               <div className="sidebar-group-items">
