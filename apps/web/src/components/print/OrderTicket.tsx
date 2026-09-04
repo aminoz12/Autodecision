@@ -13,6 +13,8 @@ export type TicketLine = {
   quantity: number;
   prixVente: number;
   retourPossible: boolean;
+  /** The client walked out with this part (stock line handed over). */
+  taken: boolean;
 };
 
 export type TicketData = {
@@ -160,30 +162,42 @@ export function OrderTicket({
 
       <div className="tk-dash" />
 
-      <table className="tk-table">
-        <thead>
-          <tr>
-            <th>Référence</th>
-            <th>Désignation</th>
-            <th className="tk-num">Qté</th>
-            <th className="tk-num">PU TTC</th>
-            <th className="tk-num">Total</th>
-            <th className="tk-num">Retour</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.lines.map((l, i) => (
-            <tr key={i}>
-              <td>{l.reference}</td>
-              <td>{l.designation}</td>
-              <td className="tk-num">{l.quantity}</td>
-              <td className="tk-num">{eur(l.prixVente)}</td>
-              <td className="tk-num">{eur(l.quantity * l.prixVente)}</td>
-              <td className="tk-num">{l.retourPossible ? "OUI" : "NON"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {[
+        { title: "Pièces remises au client", rows: data.lines.filter((l) => l.taken) },
+        { title: "Pièces à livrer", rows: data.lines.filter((l) => !l.taken) },
+      ]
+        .filter((s) => s.rows.length > 0)
+        .map((s) => (
+          <div key={s.title} className="tk-parts">
+            <p className="tk-refband tk-refband--sub">
+              {s.title} ({s.rows.reduce((n, l) => n + l.quantity, 0)})
+            </p>
+            <table className="tk-table">
+              <thead>
+                <tr>
+                  <th>Référence</th>
+                  <th>Désignation</th>
+                  <th className="tk-num">Qté</th>
+                  <th className="tk-num">PU TTC</th>
+                  <th className="tk-num">Total</th>
+                  <th className="tk-num">Retour</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.rows.map((l, i) => (
+                  <tr key={i}>
+                    <td>{l.reference}</td>
+                    <td>{l.designation}</td>
+                    <td className="tk-num">{l.quantity}</td>
+                    <td className="tk-num">{eur(l.prixVente)}</td>
+                    <td className="tk-num">{eur(l.quantity * l.prixVente)}</td>
+                    <td className="tk-num">{l.retourPossible ? "OUI" : "NON"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
 
       <div className="tk-totals">
         <div><span>TOTAL HT :</span><span>{eur(totalHT)}</span></div>

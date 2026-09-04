@@ -6303,6 +6303,8 @@ svg.lucide { stroke-width: 2; }
 .tk-dash--tight { margin: 6px 0; }
 .tk-doctitle { text-align: center; font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin: 2px 0 8px; }
 .tk-refband { text-align: center; background: #111; color: #fff; font-weight: 700; letter-spacing: 0.06em; padding: 5px 8px; font-size: 13px; }
+.tk-refband--sub { font-size: 11px; text-transform: uppercase; text-align: left; padding: 4px 6px; }
+.tk-parts + .tk-parts { margin-top: 12px; }
 .tk-kv { display: flex; flex-direction: column; gap: 3px; }
 .tk-kv > div { display: flex; gap: 6px; }
 .tk-kv dt { font-weight: 700; text-transform: uppercase; white-space: nowrap; }

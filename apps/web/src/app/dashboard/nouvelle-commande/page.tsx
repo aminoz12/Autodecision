@@ -801,6 +801,7 @@ export default function NouvelleCommandePage() {
           quantity: l.quantity || 1,
           prixVente: l.prix_vente || 0,
           retourPossible: !l.retours_impossible,
+          taken: !l.fournisseur_id && Boolean(l.client_a_pris),
         })),
         total,
         avoirApplique: avoirApplied,
