@@ -116,7 +116,13 @@ export default function ReceptionCommandesPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
 
-  const [tab, setTab] = useState("arecevoir");
+  const [tab, setTab] = useState(() => {
+    if (typeof window === "undefined") return "arecevoir";
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    return wanted && ["arecevoir", "sms", "alivrer", "reliquats", "historique"].includes(wanted)
+      ? wanted
+      : "arecevoir";
+  });
   const [tourFilter, setTourFilter] = useState<string | null>(null);
   /** Client / Garages / Retour en stock filter under the tournées. */
   const [kindFilter, setKindFilter] = useState<LineKind | null>(null);

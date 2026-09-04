@@ -165,7 +165,7 @@ export default function GaragesPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title">Garages</h1>
+          <h1 className="rl-title rl-title--upper">Mes <span className="nc-title-accent">garages</span></h1>
           <p className="rl-subtitle">Garages partenaires et activité calculée depuis les commandes.</p>
         </div>
         <div className="rl-header-actions">

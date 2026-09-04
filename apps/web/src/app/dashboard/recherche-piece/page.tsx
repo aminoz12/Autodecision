@@ -45,9 +45,9 @@ export default function RecherchePiecePage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title">Recherche piece</h1>
+          <h1 className="rl-title rl-title--upper">Recherche <span className="nc-title-accent">pièce</span></h1>
           <p className="rl-subtitle">
-            Recherche dans le stock et les lignes de commandes Supabase.
+            Retrouvez une pièce dans le stock magasin et dans toutes les commandes.
           </p>
         </div>
       </header>
@@ -58,7 +58,7 @@ export default function RecherchePiecePage() {
           className="rt-search-input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Reference, designation, SKU..."
+          placeholder="Référence, désignation, SKU…"
         />
       </div>
 
@@ -70,9 +70,9 @@ export default function RecherchePiecePage() {
             <thead>
               <tr>
                 <th>Type</th>
-                <th>Reference</th>
-                <th>Designation</th>
-                <th className="rl-th-center">Quantite</th>
+                <th>Référence</th>
+                <th>Désignation</th>
+                <th className="rl-th-center">Quantité</th>
                 <th>Source</th>
               </tr>
             </thead>
@@ -102,7 +102,7 @@ export default function RecherchePiecePage() {
               )}
               {query.trim().length < 2 && (
                 <tr>
-                  <td colSpan={5} className="text-muted">Tapez au moins 2 caracteres.</td>
+                  <td colSpan={5} className="text-muted">Tapez au moins 2 caractères.</td>
                 </tr>
               )}
             </tbody>

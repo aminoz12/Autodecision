@@ -58,12 +58,11 @@ export default function ParametresPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title">
-            Parametres magasin
-            <span className="rl-title-icon"><Settings className="h-5 w-5" /></span>
+          <h1 className="rl-title rl-title--upper">
+            Paramètres du <span className="nc-title-accent">magasin</span>
           </h1>
           <p className="rl-subtitle">
-            Donnees organisation Supabase protegees par RLS admin.
+            Identité du magasin (imprimée sur vos documents) et état de l&apos;abonnement.
           </p>
         </div>
       </header>
@@ -73,7 +72,7 @@ export default function ParametresPage() {
 
       <section className="od-card st-rajout">
         <header className="st-rajout-head">
-          <h2 className="st-rajout-title">Identite du magasin</h2>
+          <h2 className="st-rajout-title">Identité du magasin</h2>
         </header>
         <form onSubmit={submit} className="st-rajout-grid">
           <div className="od-field st-f-desig">
@@ -88,7 +87,7 @@ export default function ParametresPage() {
             />
           </div>
           <div className="od-field st-f-ref">
-            <label className="od-label" htmlFor="org-phone">Telephone</label>
+            <label className="od-label" htmlFor="org-phone">Téléphone</label>
             <input
               id="org-phone"
               className="od-input"
@@ -132,7 +131,7 @@ export default function ParametresPage() {
             <Settings className="h-5 w-5" />
           </span>
           <div>
-            <p className="ga-stat-value">{settings?.plan ?? "-"}</p>
+            <p className="ga-stat-value">{settings?.plan === "TRIAL" ? "Essai" : settings?.plan ?? "—"}</p>
             <p className="ga-stat-label">Plan</p>
           </div>
         </div>
@@ -141,7 +140,13 @@ export default function ParametresPage() {
             <Settings className="h-5 w-5" />
           </span>
           <div>
-            <p className="ga-stat-value">{settings?.subscriptionStatus ?? "-"}</p>
+            <p className="ga-stat-value">
+              {(settings?.subscriptionStatus ?? "").toLowerCase() === "active"
+                ? "Actif"
+                : (settings?.subscriptionStatus ?? "").toLowerCase().startsWith("trial")
+                  ? "Essai en cours"
+                  : settings?.subscriptionStatus ?? "—"}
+            </p>
             <p className="ga-stat-label">Abonnement</p>
           </div>
         </div>
@@ -150,8 +155,8 @@ export default function ParametresPage() {
             <Settings className="h-5 w-5" />
           </span>
           <div>
-            <p className="ga-stat-value">{settings?.seatLimit ?? "-"}</p>
-            <p className="ga-stat-label">Limite utilisateurs</p>
+            <p className="ga-stat-value">{settings?.seatLimit ?? "—"}</p>
+            <p className="ga-stat-label">Utilisateurs max</p>
           </div>
         </div>
       </div>

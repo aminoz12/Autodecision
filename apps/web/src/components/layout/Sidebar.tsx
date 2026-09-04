@@ -5,7 +5,6 @@ import {
   ChartColumn,
   CircleDollarSign,
   ClipboardPlus,
-  Hourglass,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -45,7 +44,6 @@ const navGroups: NavGroup[] = [
     label: "Pièces",
     items: [
       { href: "/dashboard/stock", label: "Stock", icon: Boxes },
-      { href: "/dashboard/reliquats", label: "Reliquats", icon: Hourglass },
       { href: "/dashboard/retours", label: "Retours", icon: Undo2 },
       { href: "/dashboard/avoirs", label: "Avoirs", icon: Receipt },
       { href: "/dashboard/consignes", label: "Consignes", icon: CircleDollarSign },

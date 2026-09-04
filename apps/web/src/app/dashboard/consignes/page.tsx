@@ -78,14 +78,14 @@ export default function ConsignesPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title">Consignes</h1>
+          <h1 className="rl-title rl-title--upper">Mes <span className="nc-title-accent">consignes</span></h1>
           <p className="rl-subtitle">
             Suivi des cautions sur pièces échange / réparation : montant retenu
             jusqu&apos;au retour de la vieille pièce (cœur).
           </p>
         </div>
         <div className="rl-header-actions">
-          <button type="button" className="rl-refresh" onClick={() => void load()}>
+          <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()}>
             <RefreshCw className="h-4 w-4" />
             Actualiser
           </button>
