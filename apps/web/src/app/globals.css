@@ -6338,3 +6338,39 @@ svg.lucide { stroke-width: 2; }
     border-radius: 0;
   }
 }
+
+/* ================= Space logins (per-space auth themes) ================= */
+.auth-space-tag {
+  margin-left: 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.16);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* Admin keeps the default violet identity. */
+/* Caissier — counter blue */
+.auth--caissier { --clr-primary: #0055BC; --clr-primary-hover: #00459C; }
+.auth--caissier .auth-brand {
+  background:
+    radial-gradient(1200px 600px at -10% -10%, rgba(255,255,255,0.18), transparent 55%),
+    linear-gradient(150deg, #0A6CFF 0%, #0055BC 45%, #003A80 100%);
+}
+/* Livreur — road green */
+.auth--livreur { --clr-primary: #0E8345; --clr-primary-hover: #0A6B38; }
+.auth--livreur .auth-brand {
+  background:
+    radial-gradient(1200px 600px at -10% -10%, rgba(255,255,255,0.18), transparent 55%),
+    linear-gradient(150deg, #16A34A 0%, #0E8345 45%, #07542B 100%);
+}
+/* Superadmin — near-black console, violet accents */
+.auth--superadmin .auth-brand {
+  background:
+    radial-gradient(1200px 600px at -10% -10%, rgba(122,115,255,0.25), transparent 55%),
+    linear-gradient(150deg, #1C1633 0%, #120F22 55%, #090714 100%);
+}
+.auth--superadmin .auth-brand-logo-mark { background: #635BFF; }
+.auth--superadmin .auth-feature-dot { background: rgba(99, 91, 255, 0.35); }

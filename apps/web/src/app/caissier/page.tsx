@@ -14,7 +14,11 @@ export default function CaissierRedirect() {
   const router = useRouter();
   useEffect(() => {
     if (!ready) return;
-    router.replace(homeSpace(profile, user?.email));
-  }, [ready, profile, user?.email, router]);
+    if (!user) {
+      router.replace("/caissier/login");
+      return;
+    }
+    router.replace(homeSpace(profile, user.email));
+  }, [ready, user, profile, router]);
   return null;
 }

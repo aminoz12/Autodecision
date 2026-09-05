@@ -65,11 +65,16 @@ export default function LivreurPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // Only livreur sessions belong here — others go to their own space.
+  // Only livreur sessions belong here — anonymous visitors get this
+  // space's login page, other accounts go to their own space.
   useEffect(() => {
     if (!ready) return;
-    if (profile?.role !== "LIVREUR") router.replace(homeSpace(profile, user?.email));
-  }, [ready, profile, user?.email, router]);
+    if (!user) {
+      router.replace("/livreur/login");
+      return;
+    }
+    if (profile?.role !== "LIVREUR") router.replace(homeSpace(profile, user.email));
+  }, [ready, user, profile, router]);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || profile.role !== "LIVREUR") return;

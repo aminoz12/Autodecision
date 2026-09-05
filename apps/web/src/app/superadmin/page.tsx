@@ -107,7 +107,7 @@ export default function SuperAdminPage() {
   useEffect(() => {
     if (!ready) return;
     if (!user) {
-      router.replace("/login");
+      router.replace("/superadmin/login");
       return;
     }
     // A magasin account (has a profile) doesn't belong here — go home.

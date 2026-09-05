@@ -9,7 +9,7 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   return (
-    <DashboardGate>
+    <DashboardGate loginHref="/admin/login">
       <div className="dashboard-shell">
         <Sidebar />
         <main className="dashboard-main">

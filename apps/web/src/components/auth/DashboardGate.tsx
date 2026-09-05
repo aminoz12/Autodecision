@@ -5,7 +5,14 @@ import { useEffect } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { isBuiltinSuperAdmin } from "@/lib/superadmin";
 
-export function DashboardGate({ children }: { children: React.ReactNode }) {
+export function DashboardGate({
+  children,
+  loginHref = "/login",
+}: {
+  children: React.ReactNode;
+  /** Each space bounces anonymous visitors to its own login page. */
+  loginHref?: string;
+}) {
   const { user, profile, profileLoadError, ready } = useAuth();
   const router = useRouter();
 
@@ -14,7 +21,7 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
       return;
     }
     if (!user) {
-      router.replace("/login");
+      router.replace(loginHref);
       return;
     }
     // The SaaS owner has no magasin profile — their space is /superadmin.
@@ -32,7 +39,7 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
     if (profile?.role === "LIVREUR") {
       router.replace("/livreur");
     }
-  }, [ready, user, profile, router]);
+  }, [ready, user, profile, router, loginHref]);
 
   if (!ready || !user) {
     return (
