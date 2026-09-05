@@ -18,6 +18,7 @@ import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { markOrderDelivered } from "@/lib/data/livreurs";
 import { toNumber } from "@/lib/data/saas";
+import { homeSpace } from "@/lib/spaces";
 
 type Embedded<T> = T | T[] | null | undefined;
 function first<T>(v: Embedded<T>): T | null {
@@ -54,7 +55,7 @@ function fmtTime(v: string | null): string {
  * enforces it server-side), one button per delivery. Nothing else.
  */
 export default function LivreurPage() {
-  const { profile, ready, logout } = useAuth();
+  const { user, profile, ready, logout } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
 
@@ -64,15 +65,11 @@ export default function LivreurPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // Only livreur sessions belong here.
+  // Only livreur sessions belong here — others go to their own space.
   useEffect(() => {
     if (!ready) return;
-    if (!profile) {
-      router.replace("/login");
-      return;
-    }
-    if (profile.role !== "LIVREUR") router.replace("/dashboard");
-  }, [ready, profile, router]);
+    if (profile?.role !== "LIVREUR") router.replace(homeSpace(profile, user?.email));
+  }, [ready, profile, user?.email, router]);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || profile.role !== "LIVREUR") return;

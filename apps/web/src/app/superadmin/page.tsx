@@ -25,6 +25,7 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
 import { generatePassword } from "@/lib/data/admin";
+import { homeSpace } from "@/lib/spaces";
 
 type OrgAdmin = { userId: string; name: string; email: string | null; lastSignIn: string | null };
 type Org = {
@@ -74,7 +75,7 @@ async function api<T>(body?: unknown): Promise<T> {
 }
 
 export default function SuperAdminPage() {
-  const { user, ready, logout } = useAuth();
+  const { user, profile, ready, logout } = useAuth();
   const router = useRouter();
 
   const [orgs, setOrgs] = useState<Org[]>([]);
@@ -109,8 +110,15 @@ export default function SuperAdminPage() {
       router.replace("/login");
       return;
     }
+    // A magasin account (has a profile) doesn't belong here — go home.
+    // Owner accounts have no profile; env-var superadmins are validated
+    // by the API call below (denied card as fallback).
+    if (profile) {
+      router.replace(homeSpace(profile, user.email));
+      return;
+    }
     void load();
-  }, [ready, user, router, load]);
+  }, [ready, user, profile, router, load]);
 
   async function run(key: string, body: Record<string, unknown>, ok: string) {
     setBusy(key);

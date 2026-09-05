@@ -2,16 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { homeSpace } from "@/lib/spaces";
 
 /**
- * /caissier — the counter space's address. The caissier's tools live in the
- * operational dashboard, so this simply lands there (auth is enforced by the
- * dashboard's own gate).
+ * /caissier — the counter space's address. A caissier lands on the
+ * operational dashboard; any other account is sent to its own space.
  */
 export default function CaissierRedirect() {
+  const { user, profile, ready } = useAuth();
   const router = useRouter();
   useEffect(() => {
-    router.replace("/dashboard");
-  }, [router]);
+    if (!ready) return;
+    router.replace(homeSpace(profile, user?.email));
+  }, [ready, profile, user?.email, router]);
   return null;
 }
