@@ -683,10 +683,16 @@ export default function NouvelleCommandePage() {
     return d;
   }, [onAccount, selectedGarage]);
 
-  // "En compte" only exists for garages: fall back to cash for anyone else.
+  // A garage order is always carried by its account; a walk-in client pays
+  // on the spot (cash, card, transfer, cheque). The mode follows the destination.
   useEffect(() => {
-    if (modePaiement === "EN_COMPTE" && destineA !== "GARAGE") setModePaiement("ESPECES");
+    if (destineA === "GARAGE" && modePaiement !== "EN_COMPTE") setModePaiement("EN_COMPTE");
+    if (destineA !== "GARAGE" && modePaiement === "EN_COMPTE") setModePaiement("ESPECES");
   }, [modePaiement, destineA]);
+  /** Modes offered for the current destination. */
+  const availableModes = MODE_PAIEMENT.filter((m) =>
+    destineA === "GARAGE" ? m === "EN_COMPTE" : m !== "EN_COMPTE",
+  );
   /** Most the avoir can cover on this order. */
   const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
 
@@ -1684,24 +1690,18 @@ export default function NouvelleCommandePage() {
         <div className="od-field nc-pay-mode">
           <span className="od-label">Mode de paiement</span>
           <div className="nc-pay-quick" role="radiogroup" aria-label="Mode de paiement">
-            {MODE_PAIEMENT.map((m) => {
-              const garageOnly = m === "EN_COMPTE";
-              const disabled = garageOnly && destineA !== "GARAGE";
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  role="radio"
-                  aria-checked={modePaiement === m}
-                  className={`nc-chip${modePaiement === m ? " nc-chip--on" : ""}${garageOnly ? " nc-chip--account" : ""}`}
-                  disabled={disabled}
-                  title={disabled ? "Réservé aux commandes garage" : undefined}
-                  onClick={() => setModePaiement(m)}
-                >
-                  {MODE_PAIEMENT_LABEL[m]}
-                </button>
-              );
-            })}
+            {availableModes.map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={modePaiement === m}
+                className={`nc-chip${modePaiement === m ? " nc-chip--on" : ""}${m === "EN_COMPTE" ? " nc-chip--account" : ""}`}
+                onClick={() => setModePaiement(m)}
+              >
+                {MODE_PAIEMENT_LABEL[m]}
+              </button>
+            ))}
           </div>
           {onAccount ? (
             <span className="st-cmd-hint nc-account-hint">
@@ -1712,10 +1712,6 @@ export default function NouvelleCommandePage() {
                   })`
                 : ""}
               .
-            </span>
-          ) : destineA === "GARAGE" ? (
-            <span className="st-cmd-hint">
-              Choisissez « En compte » pour ajouter cette commande au compte du garage.
             </span>
           ) : null}
         </div>
