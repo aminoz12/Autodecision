@@ -27,13 +27,25 @@ async function requireSuperAdmin() {
   if (!user) {
     return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
   }
-  if (!user.email || !superAdminEmails().has(user.email.toLowerCase())) {
-    return NextResponse.json(
-      { error: "Accès réservé au propriétaire du SaaS." },
-      { status: 403 },
-    );
+  const admin = createAdminClient();
+  // Authority = a row in platform_owners (bound to the user id). The email
+  // allowlist only bootstraps: an allowlisted email that signs in is enrolled.
+  const { data: owner } = await admin
+    .from("platform_owners")
+    .select("user_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!owner) {
+    const allowlisted = !!user.email && superAdminEmails().has(user.email.toLowerCase());
+    if (!allowlisted) {
+      return NextResponse.json(
+        { error: "Accès réservé au propriétaire du SaaS." },
+        { status: 403 },
+      );
+    }
+    await admin.from("platform_owners").upsert({ user_id: user.id, email: user.email });
   }
-  return { admin: createAdminClient(), email: user.email };
+  return { admin, email: user.email ?? "" };
 }
 
 export async function GET() {
@@ -45,7 +57,7 @@ export async function GET() {
     const [orgsRes, profilesRes] = await Promise.all([
       admin
         .from("organizations")
-        .select("id, name, slug, plan, subscription_status, trial_ends_at, created_at, phone, city")
+        .select("id, name, slug, plan, subscription_status, trial_ends_at, current_period_end, created_at, phone, city, stripe_customer_id, stripe_subscription_id")
         .order("created_at", { ascending: true }),
       admin
         .from("profiles")
@@ -67,10 +79,11 @@ export async function GET() {
       }),
     );
 
+    const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const orgs = await Promise.all(
       (orgsRes.data ?? []).map(async (o) => {
         const orgId = String(o.id);
-        const [orders, clients] = await Promise.all([
+        const [orders, clients, recent, last, invoices] = await Promise.all([
           admin
             .from("orders")
             .select("id", { count: "exact", head: true })
@@ -80,7 +93,30 @@ export async function GET() {
             .from("clients")
             .select("id", { count: "exact", head: true })
             .eq("organization_id", orgId),
+          // Activity over the last 30 days (orders + CA), cancelled excluded.
+          admin
+            .from("orders")
+            .select("montant_total")
+            .eq("organization_id", orgId)
+            .eq("devis", false)
+            .eq("is_restock", false)
+            .is("cancelled_at", null)
+            .gte("createdAt", since30)
+            .limit(5000),
+          admin
+            .from("orders")
+            .select("createdAt")
+            .eq("organization_id", orgId)
+            .eq("devis", false)
+            .order("createdAt", { ascending: false })
+            .limit(1),
+          admin
+            .from("invoices")
+            .select("id", { count: "exact", head: true })
+            .eq("organization_id", orgId),
         ]);
+        const recentRows = (recent.data ?? []) as { montant_total: unknown }[];
+        const ca30 = recentRows.reduce((s, r) => s + (Number(r.montant_total) || 0), 0);
         const members = profiles.filter((p) => String(p.organization_id) === orgId);
         return {
           id: orgId,
@@ -92,6 +128,12 @@ export async function GET() {
           createdAt: String(o.created_at ?? ""),
           city: (o.city as string | null) ?? null,
           orders: orders.count ?? 0,
+          orders30: recentRows.length,
+          ca30: Math.round(ca30 * 100) / 100,
+          lastOrderAt: ((last.data?.[0] as { createdAt?: string } | undefined)?.createdAt as string | null) ?? null,
+          invoices: invoices.count ?? 0,
+          currentPeriodEnd: (o.current_period_end as string | null) ?? null,
+          stripe: Boolean(o.stripe_subscription_id),
           clients: clients.count ?? 0,
           staff: members.filter((p) => !p.client_id && !p.livreur_id).length,
           garages: members.filter((p) => p.client_id).length,

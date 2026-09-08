@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    name: Type-check, lint, test, build
+    runs-on: ubuntu-latest
+    env:
+      # Placeholders: the build only needs the variables to exist.
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Type-check
+        run: npm run typecheck --workspace=web
+      - name: Lint
+        run: npm run lint --workspace=web
+      - name: Unit tests (money maths, dates, statements)
+        run: npm test --workspace=web
+      - name: Build
+        run: npm run build --workspace=web
+
+  migrations:
+    name: Migrations are the single source of truth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No SQL outside supabase/migrations (except audits and legacy/)
+        run: |
+          stray=$(find supabase -maxdepth 1 -name '*.sql' ! -name 'audit_rls_isolation.sql' ! -name 'check_app_schema.sql')
+          if [ -n "$stray" ]; then echo "Move these into supabase/migrations/ or supabase/legacy/: $stray"; exit 1; fi
+      - name: Migration files are named <timestamp>_<slug>.sql
+        run: |
+          bad=$(ls supabase/migrations | grep -vE '^[0-9]{14}_[a-z0-9_]+\.sql$' || true)
+          if [ -n "$bad" ]; then echo "Bad migration names: $bad"; exit 1; fi
+      - name: Never write \d in migrations (use [0-9])
+        run: |
+          if grep -rn '\\d' supabase/migrations --include=*.sql | grep -v '^\s*--' | grep -q 'regexp'; then
+            echo "Use [0-9] instead of \\d in migration regexes"; exit 1; fi

@@ -17,6 +17,8 @@ const STATUS_CLASS: Record<string, string> = {
   RENDUE: "utilise",
 };
 
+const STATUS_LABEL: Record<string, string> = { ACTIF: "Active", RENDUE: "Rendue" };
+
 export default function ConsignesPage() {
   const { profile } = useAuth();
   const [rows, setRows] = useState<ConsigneRow[]>([]);
@@ -146,7 +148,7 @@ export default function ConsignesPage() {
                   <td><p className="av-motif">{row.description}</p></td>
                   <td className="av-th-right">{row.quantity}</td>
                   <td className="av-th-right av-montant av-montant--consigne">{fmtMoney(row.amount)}</td>
-                  <td><span className={`av-statut av-statut--${STATUS_CLASS[row.status] ?? "encours"}`}>{row.status}</span></td>
+                  <td><span className={`av-statut av-statut--${STATUS_CLASS[row.status] ?? "encours"}`}>{STATUS_LABEL[row.status] ?? row.status}</span></td>
                   <td className="od-td-right">
                     <button
                       type="button"

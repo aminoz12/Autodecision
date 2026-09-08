@@ -116,7 +116,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false).eq("is_restock", false)
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
         .eq("date_commande", today),
     ),
     headCount(
@@ -124,7 +124,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false).eq("is_restock", false)
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
         .eq("date_commande", yesterday),
     ),
     headCount(
@@ -132,7 +132,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false).eq("is_restock", false)
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
         .eq("workflow_status", "PENDING"),
     ),
     headCount(
@@ -164,7 +164,7 @@ export async function loadDashboardOverview(
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", orgId)
-        .eq("devis", false).eq("is_restock", false),
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null),
     ),
     supabase
       .from("orders")
@@ -172,7 +172,7 @@ export async function loadDashboardOverview(
         "id,ref_demande,workflow_status,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
       )
       .eq("organization_id", orgId)
-      .eq("devis", false).eq("is_restock", false)
+      .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
       .order("createdAt", { ascending: false })
       .limit(5),
     supabase
@@ -191,7 +191,7 @@ export async function loadDashboardOverview(
       .from("orders")
       .select("date_commande,client_id,clients(name)")
       .eq("organization_id", orgId)
-      .eq("devis", false).eq("is_restock", false)
+      .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
       .gte("date_commande", since30)
       .limit(1000),
   ]);

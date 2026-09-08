@@ -13,13 +13,21 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { garageStage, loadGarageOrders, type GarageOrder } from "@/lib/data/garage";
+import {
+  buildGarageStatement,
+  garageStage,
+  loadGarageCredits,
+  loadGarageOrders,
+  loadGarageReturns,
+  type GarageCredit,
+  type GarageOrder,
+} from "@/lib/data/garage";
 
 const ACTIONS = [
   { href: "/garagiste/dashboard/commander", title: "Commander", desc: "Passer une nouvelle commande de pièces.", icon: Plus, color: "#5b4ee5", bg: "#EEF2FF" },
   { href: "/garagiste/dashboard/commandes", title: "Mes commandes", desc: "Suivre l'état de vos commandes.", icon: ShoppingCart, color: "#2563EB", bg: "#DBEAFE" },
   { href: "/garagiste/dashboard/retours", title: "Retours", desc: "Demander le retour d'une pièce.", icon: RotateCcw, color: "#D97706", bg: "#FEF3C7" },
-  { href: "/garagiste/dashboard/factures", title: "Factures", desc: "Consulter votre encours et vos paiements.", icon: CreditCard, color: "#16A34A", bg: "#DCFCE7" },
+  { href: "/garagiste/dashboard/factures", title: "Mon compte", desc: "Historique, encours du mois, avoirs et solde.", icon: CreditCard, color: "#16A34A", bg: "#DCFCE7" },
 ];
 
 function eur(v: number) {
@@ -29,11 +37,22 @@ function eur(v: number) {
 export default function GarageHomePage() {
   const { supabase, profile } = useAuth();
   const [orders, setOrders] = useState<GarageOrder[]>([]);
+  const [credits, setCredits] = useState<GarageCredit[]>([]);
+  const [returnCount, setReturnCount] = useState(0);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || !profile.client_id) return;
+    const orgId = profile.organization_id;
+    const clientId = profile.client_id;
     try {
-      setOrders(await loadGarageOrders(supabase, profile.organization_id, profile.client_id));
+      const [o, c, r] = await Promise.all([
+        loadGarageOrders(supabase, orgId, clientId),
+        loadGarageCredits(supabase, orgId, clientId).catch(() => [] as GarageCredit[]),
+        loadGarageReturns(supabase, orgId, clientId).catch(() => []),
+      ]);
+      setOrders(o);
+      setCredits(c);
+      setReturnCount(r.length);
     } catch {
       /* home summary is best-effort */
     }
@@ -46,14 +65,15 @@ export default function GarageHomePage() {
   const summary = useMemo(() => {
     const confirmed = orders.filter((o) => !o.devis);
     const stages = confirmed.map(garageStage);
+    const statement = buildGarageStatement(orders, credits, returnCount);
     return {
-      total: orders.length,
+      total: confirmed.length,
       awaiting: stages.filter((s) => s === "AWAITING_RECEPTION").length,
       preparing: stages.filter((s) => s === "PREPARING").length,
       delivering: stages.filter((s) => s === "IN_DELIVERY").length,
-      balance: orders.reduce((s, o) => s + o.balance, 0),
+      balance: statement.balance,
     };
-  }, [orders]);
+  }, [orders, credits, returnCount]);
 
   return (
     <div className="gp-page">
@@ -70,7 +90,7 @@ export default function GarageHomePage() {
         <div className="gp-stat"><span className="gp-stat-label"><Hourglass className="h-4 w-4" /> En attente de réception</span><span className="gp-stat-value" style={{ color: "#B45309" }}>{summary.awaiting}</span></div>
         <div className="gp-stat"><span className="gp-stat-label"><PackageCheck className="h-4 w-4" /> En préparation</span><span className="gp-stat-value" style={{ color: "#1D4ED8" }}>{summary.preparing}</span></div>
         <div className="gp-stat"><span className="gp-stat-label"><Truck className="h-4 w-4" /> En cours de livraison</span><span className="gp-stat-value" style={{ color: "#6D28D9" }}>{summary.delivering}</span></div>
-        <div className="gp-stat gp-stat--accent"><span className="gp-stat-label"><Wallet className="h-4 w-4" /> Encours</span><span className="gp-stat-value" style={{ color: summary.balance > 0 ? "#DC2626" : "#16A34A" }}>{eur(summary.balance)}</span></div>
+        <div className="gp-stat gp-stat--accent"><span className="gp-stat-label"><Wallet className="h-4 w-4" /> Solde du compte</span><span className="gp-stat-value" style={{ color: summary.balance > 0 ? "#DC2626" : "#16A34A" }}>{eur(summary.balance)}</span></div>
       </div>
 
       <div className="gp-actions">

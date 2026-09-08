@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     if (ctx instanceof NextResponse) return ctx;
     const { admin, orgId } = ctx;
 
-    let body: { name?: string; email?: string; password?: string; role?: string };
+    let body: { name?: string; email?: string; password?: string; role?: string; invite?: boolean };
     try {
       body = await request.json();
     } catch {
@@ -141,11 +141,62 @@ export async function POST(request: Request) {
     const email = (body.email ?? "").trim().toLowerCase();
     const password = body.password ?? "";
     const role = body.role === "ADMIN" ? "ADMIN" : "CAISSIER";
-    if (!name || !email || password.length < 6) {
+    const invite = body.invite === true;
+    if (!name || !email || (!invite && password.length < 8)) {
       return NextResponse.json(
-        { error: "Nom, email et mot de passe (≥ 6 caractères) requis." },
+        { error: invite ? "Nom et email requis." : "Nom, email et mot de passe (≥ 8 caractères) requis." },
         { status: 400 },
       );
+    }
+
+    // Seats: the plan's seat_limit counts counter staff (not garagistes / livreurs).
+    const [{ data: org }, { count: staffCount }] = await Promise.all([
+      admin.from("organizations").select("seat_limit").eq("id", orgId).maybeSingle(),
+      admin
+        .from("profiles")
+        .select("user_id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .is("client_id", null)
+        .is("livreur_id", null),
+    ]);
+    const seatLimit = Number(org?.seat_limit ?? 0);
+    if (seatLimit > 0 && (staffCount ?? 0) >= seatLimit) {
+      return NextResponse.json(
+        {
+          error: `Limite de ${seatLimit} accès atteinte pour votre abonnement. Supprimez un accès ou passez à un plan supérieur.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    if (invite) {
+      // Invitation email: the user picks their own password on the landing
+      // page. handle_new_user provisions the profile when app_metadata lands.
+      const origin = new URL(request.url).origin;
+      const { data: invited, error: invErr } = await admin.auth.admin.inviteUserByEmail(email, {
+        data: { display_name: name },
+        redirectTo: `${origin}/auth/callback?next=/reinitialiser-mot-de-passe`,
+      });
+      if (invErr || !invited.user) {
+        const exists = invErr?.message?.toLowerCase().includes("already");
+        return NextResponse.json(
+          { error: exists ? "Cet email est déjà utilisé par un autre compte." : (invErr?.message ?? "Invitation impossible.") },
+          { status: 400 },
+        );
+      }
+      const { error: metaErr } = await admin.auth.admin.updateUserById(invited.user.id, {
+        app_metadata: { organization_id: orgId, staff_role: role },
+      });
+      if (metaErr) {
+        return NextResponse.json({ error: metaErr.message }, { status: 500 });
+      }
+      await admin
+        .from("profiles")
+        .upsert(
+          { user_id: invited.user.id, organization_id: orgId, role, display_name: name, client_id: null, livreur_id: null },
+          { onConflict: "user_id" },
+        );
+      return NextResponse.json({ ok: true, email, invited: true });
     }
 
     const { data: created, error } = await admin.auth.admin.createUser({

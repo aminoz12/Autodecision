@@ -97,7 +97,7 @@ export default function ClientProfilePage() {
   // Edit profile
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", city: "", plate: "", vehicle: "", notes: "" });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", city: "", plate: "", vehicle: "", notes: "" });
 
   // Loyalty action
   const [loyaltyMode, setLoyaltyMode] = useState<"REDEEM" | "BONUS" | null>(null);
@@ -118,6 +118,7 @@ export default function ClientProfilePage() {
           name: c.name,
           phone: c.phone ?? "",
           email: c.email ?? "",
+          address: c.address ?? "",
           city: c.city ?? "",
           plate: c.plate ?? "",
           vehicle: c.vehicle ?? "",
@@ -251,6 +252,7 @@ export default function ClientProfilePage() {
               </div>
               <div className="ga-modal-row">
                 <div className="od-field"><span className="od-label">Email</span><input className="od-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+                <div className="od-field"><span className="od-label">Adresse (livraison)</span><input className="od-input" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="12 rue des Garages" /></div>
                 <div className="od-field"><span className="od-label">Ville</span><input className="od-input" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
               </div>
               <div className="ga-modal-row">

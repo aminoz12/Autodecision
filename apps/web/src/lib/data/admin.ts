@@ -53,9 +53,12 @@ export function loadTeam(): Promise<TeamPayload> {
 export function createStaffMember(input: {
   name: string;
   email: string;
+  /** Ignored when `invite` is true (the user picks it from the email link). */
   password: string;
   role: "ADMIN" | "CAISSIER";
-}): Promise<{ ok: true; email: string }> {
+  /** Send an invitation email instead of handing over a password. */
+  invite?: boolean;
+}): Promise<{ ok: true; email: string; invited?: boolean }> {
   return call("POST", input);
 }
 

@@ -50,9 +50,9 @@ async function handle(request: Request) {
   const livreurId = (body.livreurId ?? "").trim();
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  if (!livreurId || !email || password.length < 6) {
+  if (!livreurId || !email || password.length < 8) {
     return NextResponse.json(
-      { error: "Email et mot de passe (≥ 6 caractères) requis." },
+      { error: "Email et mot de passe (≥ 8 caractères) requis." },
       { status: 400 },
     );
   }
@@ -79,8 +79,8 @@ async function handle(request: Request) {
     const exists = error.message?.toLowerCase().includes("already");
     if (exists) {
       // Idempotent reset when the email already belongs to a livreur of THIS org.
-      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      const existing = list?.users?.find((u) => u.email?.toLowerCase() === email);
+      const { data: existingId } = await admin.rpc("find_user_id_by_email", { p_email: email });
+      const existing = existingId ? { id: String(existingId) } : null;
       if (existing) {
         const { data: ep } = await admin
           .from("profiles")

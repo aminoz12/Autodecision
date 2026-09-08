@@ -12,13 +12,14 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const NAV = [
   { href: "/garagiste/dashboard", label: "Accueil", icon: LayoutDashboard, exact: true },
   { href: "/garagiste/dashboard/commander", label: "Commander", icon: Plus },
   { href: "/garagiste/dashboard/commandes", label: "Mes commandes", icon: ShoppingCart },
   { href: "/garagiste/dashboard/retours", label: "Retours", icon: RotateCcw },
-  { href: "/garagiste/dashboard/factures", label: "Factures", icon: CreditCard },
+  { href: "/garagiste/dashboard/factures", label: "Mon compte", icon: CreditCard },
 ];
 
 export function GarageNav() {
@@ -41,6 +42,7 @@ export function GarageNav() {
           <span className="gp-brand-name">{profile?.display_name ?? "Mon garage"}</span>
           <span className="gp-brand-sub">Espace garagiste</span>
         </span>
+        <NotificationBell compact />
       </div>
 
       <nav className="gp-nav-items">

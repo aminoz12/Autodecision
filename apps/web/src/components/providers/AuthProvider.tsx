@@ -151,8 +151,11 @@ export function AuthProvider({
       setProfileLoadError(null);
       return;
     }
-    setUser(u);
+    // Load the profile BEFORE exposing the user, so consumers never see a
+    // signed-in user with a not-yet-loaded profile: `user && !profile` means
+    // the account genuinely has no profile row.
     const { profile: p, errorMessage } = await loadProfile(supabase, u.id);
+    setUser(u);
     setProfile(p);
     setProfileLoadError(errorMessage);
   }, [supabase]);
@@ -167,21 +170,27 @@ export function AuthProvider({
       }
     })();
 
+    // Same rule as refreshProfile: user + profile are published together.
+    // A later event (e.g. sign-out) invalidates any profile load still in
+    // flight so a stale result can't resurrect a signed-out user.
+    let seq = 0;
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        void loadProfile(supabase, session.user.id).then(
-          ({ profile: p, errorMessage }) => {
-            setProfile(p);
-            setProfileLoadError(errorMessage);
-          },
-        );
-      } else {
+      const mine = ++seq;
+      const u = session?.user ?? null;
+      if (!u) {
+        setUser(null);
         setProfile(null);
         setProfileLoadError(null);
+        return;
       }
+      void loadProfile(supabase, u.id).then(({ profile: p, errorMessage }) => {
+        if (cancelled || mine !== seq) return;
+        setUser(u);
+        setProfile(p);
+        setProfileLoadError(errorMessage);
+      });
     });
 
     return () => {

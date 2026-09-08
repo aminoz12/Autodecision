@@ -7,7 +7,7 @@ import { isBuiltinSuperAdmin } from "@/lib/superadmin";
 
 export function DashboardGate({
   children,
-  loginHref = "/login",
+  loginHref = "/caissier/login",
 }: {
   children: React.ReactNode;
   /** Each space bounces anonymous visitors to its own login page. */
@@ -30,9 +30,9 @@ export function DashboardGate({
       return;
     }
     // A garagiste session in the magasin store is an anomaly (wrong login) —
-    // send to /login, which signs it out cleanly.
+    // this space's login page signs it out cleanly.
     if (profile?.client_id) {
-      router.replace("/login");
+      router.replace(loginHref);
       return;
     }
     // A livreur works in their own mobile space.
@@ -62,15 +62,18 @@ export function DashboardGate({
           </p>
         ) : null}
         <p>
-          1) Exécutez{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">supabase/schema.sql</code>{" "}
-          dans le SQL Editor (trigger{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">handle_new_user</code>).
+          Ce compte n&apos;est rattaché à aucun magasin. Contactez l&apos;administrateur
+          de votre magasin pour qu&apos;il vous crée un accès, ou reconnectez-vous
+          avec le bon compte.
         </p>
-        <p>
-          2) Si le compte existait déjà avant le trigger, exécutez aussi{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">supabase/backfill_profiles.sql</code>.
-        </p>
+        {process.env.NODE_ENV !== "production" && (
+          <p className="text-xs text-zinc-500">
+            Dev : le profil est créé par le trigger{" "}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">handle_new_user</code>
+            {" "}(migrations Supabase). Ne jamais exécuter les SQL legacy de{" "}
+            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">supabase/</code> sur un projet migré.
+          </p>
+        )}
       </div>
     );
   }

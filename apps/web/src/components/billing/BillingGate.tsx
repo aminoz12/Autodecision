@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { SubscribeButton } from "@/components/billing/SubscribeButton";
 import { createClient } from "@/lib/supabase/client";
 import {
   computeBillingState,
@@ -54,9 +55,10 @@ export function BillingGate({ children }: { children: React.ReactNode }) {
             choisissez un abonnement. Vos données sont conservées en sécurité.
           </p>
           <div className="bill-lock-actions">
-            <button type="button" className="od-btn od-btn--primary" disabled>
-              Choisir un abonnement (bientôt)
-            </button>
+            <SubscribeButton label="Choisir un abonnement" />
+            <Link href="/tarifs" className="od-btn od-btn--ghost">
+              Voir les tarifs
+            </Link>
             <Link href="/dashboard/parametres" className="od-btn od-btn--ghost">
               Paramètres
             </Link>
@@ -94,9 +96,9 @@ function TrialBanner({ state }: { state: BillingState }) {
             ? "Dernier jour d'essai gratuit."
             : `Essai gratuit — ${d} jour${d > 1 ? "s" : ""} restant${d > 1 ? "s" : ""}.`}
       </span>
-      <button type="button" className="bill-banner-cta" disabled>
-        Passer à un abonnement (bientôt)
-      </button>
+      <Link href="/tarifs" className="bill-banner-cta">
+        Passer à un abonnement
+      </Link>
     </div>
   );
 }

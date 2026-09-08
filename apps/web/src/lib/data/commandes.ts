@@ -12,6 +12,8 @@ function first<T>(value: Embedded<T>): T | null {
 export type ReceptionStatus =
   | "PENDING"
   | "RECEIVED"
+  /** Some units received, the rest still expected from the supplier. */
+  | "PARTIAL"
   | "BACKORDER"
   | "NOT_RECEIVED";
 
@@ -79,7 +81,7 @@ export async function loadReceptionBoard(
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
-          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage),livreurs(name))," +
+          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage),livreurs(name))," +
           "suppliers(name,own_delivery,lead_days),delivery_tours(name)",
       )
       .eq("organization_id", orgId)
@@ -101,13 +103,14 @@ export async function loadReceptionBoard(
 
   const rows = (data ?? [])
     .filter((raw) => {
-      // Devis (garagiste quote requests) are not real orders yet.
+      // Devis (garagiste quote requests) are not real orders yet, and a
+      // cancelled order has nothing left to receive or deliver.
       const o = first(
         (raw as unknown as Record<string, unknown>).orders as Embedded<
           Record<string, unknown>
         >,
       );
-      return !(o && o.devis === true);
+      return !(o && (o.devis === true || o.cancelled_at != null));
     })
     .map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
@@ -204,19 +207,6 @@ export async function setLineHandedOver(
 }
 
 /** Mark a received stock line as put away (rangé en stock). */
-export async function markLinePutAway(
-  supabase: SupabaseClient,
-  orgId: string,
-  lineId: string,
-): Promise<void> {
-  const { error } = await supabase
-    .from("order_lines")
-    .update({ retour_stock_fait: true })
-    .eq("id", lineId)
-    .eq("organization_id", orgId);
-  if (error) throw new Error(error.message);
-}
-
 /** Reliquat / Non reçu / re-open. "Reçu" goes through markLineReceived (stock side-effects). */
 export async function setLineReceptionStatus(
   supabase: SupabaseClient,
@@ -227,6 +217,24 @@ export async function setLineReceptionStatus(
   const { error } = await supabase.rpc("set_order_line_reception_status", {
     p_line_id: lineId,
     p_status: status,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Cancel an order that was not delivered, invoiced or handed over. The
+ * database puts the parts back on the shelf, refunds what was cashed (a
+ * refund mode is required when money was taken), frees the applied avoir
+ * and withdraws the delivery.
+ */
+export async function cancelOrder(
+  supabase: SupabaseClient,
+  input: { orderId: string; reason: string; refundMode?: string | null },
+): Promise<void> {
+  const { error } = await supabase.rpc("cancel_order", {
+    p_order_id: input.orderId,
+    p_reason: input.reason,
+    p_refund_mode: input.refundMode ?? null,
   });
   if (error) throw new Error(error.message);
 }
@@ -263,23 +271,6 @@ export async function loadSmsStates(
   return map;
 }
 
-export async function recordSmsSent(
-  supabase: SupabaseClient,
-  orgId: string,
-  input: { orderId: string; clientId: string | null; phone: string | null },
-): Promise<void> {
-  const { error } = await supabase.from("sms_notifications").insert({
-    organization_id: orgId,
-    order_id: input.orderId,
-    client_id: input.clientId,
-    phone: input.phone,
-    message: "Vos pièces sont disponibles en magasin.",
-    status: "ENVOYE",
-    sent_at: new Date().toISOString(),
-  });
-  if (error) throw new Error(error.message);
-}
-
 export async function markOrderSmsTreated(
   supabase: SupabaseClient,
   orgId: string,
@@ -312,7 +303,11 @@ export type OrderDetailLine = {
   expectedAt: string | null;
   receivedAt: string | null;
   tourName: string | null;
+  /** Net unit price (after the line discount). */
   prixVente: number;
+  /** Gross unit price before the line discount. */
+  prixBrut: number;
+  remisePct: number;
   total: number;
 };
 
@@ -335,6 +330,10 @@ export type OrderDetail = {
   avance: number;
   solde: number;
   statutPaiement: string;
+  /** ESPECES / CARTE / VIREMENT / CHEQUE / EN_COMPTE, null on older orders. */
+  modePaiement: string | null;
+  /** Due date of an on-account order. */
+  echeance: string | null;
   envoyerAuLivreur: boolean;
   statutLivreur: string;
   dateEnvoi: string | null;
@@ -347,6 +346,10 @@ export type OrderDetail = {
   livreurName: string | null;
   /** Credit note amount consumed as payment on this order. */
   avoirApplique: number;
+  /** Order-level discount (remise en pied), already deducted from `total`. */
+  remiseMontant: number;
+  cancelledAt: string | null;
+  cancelReason: string | null;
   lines: OrderDetailLine[];
 };
 
@@ -366,7 +369,7 @@ export async function loadOrderDetail(
       "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
         "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
-        "is_restock,livreur_id,avoir_applique,clients(name,phone,email,is_garage),livreurs(name)",
+        "is_restock,livreur_id,avoir_applique,mode_paiement,echeance,remise_montant,cancelled_at,cancel_reason,clients(name,phone,email,is_garage),livreurs(name)",
     )
     .eq("id", orderId)
     .eq("organization_id", orgId)
@@ -383,7 +386,7 @@ export async function loadOrderDetail(
       .from("order_lines")
       .select(
         "id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,prevue_le,received_at," +
-          "depuis_magasin,prix_vente_unitaire,suppliers(name),delivery_tours(name)",
+          "depuis_magasin,prix_vente_unitaire,prix_brut_unitaire,remise_pct,suppliers(name),delivery_tours(name)",
       )
       .eq("order_id", orderId)
       .eq("organization_id", orgId),
@@ -417,6 +420,8 @@ export async function loadOrderDetail(
       receivedAt: (row.received_at as string | null) ?? null,
       tourName: tour ? String(tour.name ?? "") : null,
       prixVente: pv,
+      prixBrut: row.prix_brut_unitaire == null ? pv : toNumber(row.prix_brut_unitaire),
+      remisePct: toNumber(row.remise_pct),
       total: qty * pv,
     };
   });
@@ -451,6 +456,8 @@ export async function loadOrderDetail(
     avance: toNumber(order.avance_payee),
     solde: toNumber(order.solde_restant),
     statutPaiement: String(order.statut_paiement ?? ""),
+    modePaiement: (order.mode_paiement as string | null) ?? null,
+    echeance: (order.echeance as string | null) ?? null,
     envoyerAuLivreur: Boolean(order.envoyer_au_livreur),
     statutLivreur: String(order.statut_livreur ?? "EN_ATTENTE"),
     dateEnvoi: (order.date_envoi as string | null) ?? null,
@@ -460,6 +467,9 @@ export async function loadOrderDetail(
     isRestock: order.is_restock === true,
     isGarage: client?.is_garage === true,
     avoirApplique: toNumber(order.avoir_applique),
+    remiseMontant: toNumber(order.remise_montant),
+    cancelledAt: (order.cancelled_at as string | null) ?? null,
+    cancelReason: (order.cancel_reason as string | null) ?? null,
     livreurName: (() => {
       const l = first(order.livreurs as Embedded<Record<string, unknown>>);
       return l ? String(l.name ?? "") : null;

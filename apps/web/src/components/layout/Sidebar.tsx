@@ -1,15 +1,19 @@
 "use client";
 
 import {
+  Banknote,
   Boxes,
   ChartColumn,
   CircleDollarSign,
   ClipboardPlus,
+  FileSignature,
+  FileText,
   LayoutDashboard,
   LogOut,
   Menu,
   PackageCheck,
   Receipt,
+  Search,
   Settings,
   ShieldCheck,
   Store,
@@ -25,8 +29,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { loginFor } from "@/lib/spaces";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/NotificationBell";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
 type NavGroup = { label: string; items: NavItem[] };
@@ -37,13 +43,16 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
       { href: "/dashboard/nouvelle-commande", label: "Nouvelle commande", icon: ClipboardPlus },
+      { href: "/dashboard/devis", label: "Devis", icon: FileSignature },
       { href: "/dashboard/commandes", label: "Suivi des commandes", icon: PackageCheck },
+      { href: "/dashboard/caisse", label: "Caisse", icon: Banknote },
     ],
   },
   {
     label: "Pièces",
     items: [
       { href: "/dashboard/stock", label: "Stock", icon: Boxes },
+      { href: "/dashboard/recherche-piece", label: "Recherche pièce", icon: Search },
       { href: "/dashboard/retours", label: "Retours", icon: Undo2 },
       { href: "/dashboard/avoirs", label: "Avoirs", icon: Receipt },
       { href: "/dashboard/consignes", label: "Consignes", icon: CircleDollarSign },
@@ -60,6 +69,7 @@ const navGroups: NavGroup[] = [
   {
     label: "Pilotage",
     items: [
+      { href: "/dashboard/factures", label: "Factures", icon: FileText },
       { href: "/dashboard/rapports", label: "Rapports", icon: ChartColumn },
       { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
     ],
@@ -95,7 +105,7 @@ function initials(name: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { profile, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
 
@@ -120,8 +130,9 @@ export function Sidebar() {
   const userRole = profile?.role ? ROLE_LABEL[profile.role] ?? profile.role : "";
 
   async function onLogout() {
+    const door = loginFor(profile, user?.email);
     await logout();
-    router.replace("/login");
+    router.replace(door);
   }
 
   function isActive(href: string): boolean {
@@ -138,6 +149,7 @@ export function Sidebar() {
           </span>
           <span>{brand}</span>
         </div>
+        <NotificationBell compact />
         <button
           type="button"
           className="sidebar-mobile-toggle"
@@ -152,6 +164,7 @@ export function Sidebar() {
       <aside className={cn("sidebar", mobileOpen ? "sidebar--open" : "")}>
         {/* Brand */}
         <div className="sidebar-brand">
+          <div className="sidebar-bell-slot"><NotificationBell /></div>
           <div className="sidebar-brand-content">
             <div className="sidebar-brand-icon-new">
               <Store className="h-5 w-5 text-white" />

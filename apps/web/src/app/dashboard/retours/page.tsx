@@ -17,6 +17,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { PAYMENT_MODES, PAYMENT_MODE_LABEL, type PaymentMode } from "@/lib/data/payments";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -103,6 +104,7 @@ export default function RetoursPage() {
   const [settle, setSettle] = useState<{ row: ReturnRow; mode: "REMBOURSEMENT" | "AVOIR" } | null>(null);
   const [settleAmount, setSettleAmount] = useState("");
   const [settleReason, setSettleReason] = useState("");
+  const [settleRefundMode, setSettleRefundMode] = useState<PaymentMode>("ESPECES");
   const [settleBusy, setSettleBusy] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
 
@@ -164,6 +166,7 @@ export default function RetoursPage() {
       const sb = createClient();
       const avoirNum = await settleClientReturn(sb, settle.row.id, {
         mode: settle.mode,
+        refundMode: settleRefundMode,
         amount,
         reason: settleReason,
       });
@@ -501,12 +504,31 @@ export default function RetoursPage() {
                 <input className="od-input" value={settleReason} onChange={(e) => setSettleReason(e.target.value)} placeholder={settle.row.reason} />
               </div>
             </div>
+            {settle.mode === "REMBOURSEMENT" && (
+              <div className="od-field">
+                <span className="od-label">Mode de remboursement</span>
+                <div className="nc-pay-quick" role="radiogroup" aria-label="Mode de remboursement">
+                  {PAYMENT_MODES.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={settleRefundMode === m}
+                      className={`nc-chip${settleRefundMode === m ? " nc-chip--on" : ""}`}
+                      onClick={() => setSettleRefundMode(m)}
+                    >
+                      {PAYMENT_MODE_LABEL[m]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="od-note">
               <Wallet className="h-4 w-4" />
               <p>
                 {settle.mode === "AVOIR"
                   ? "Un avoir valable 1 an est créé pour ce client ; il pourra le déduire sur une prochaine commande."
-                  : "Le client est remboursé en caisse : le retour passe en « Remboursé »."}
+                  : "Le client est remboursé : le retour passe en « Remboursé » et la sortie d'argent est inscrite au journal de caisse."}
               </p>
             </div>
             <div className="ga-modal-actions">

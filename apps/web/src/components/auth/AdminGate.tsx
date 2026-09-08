@@ -20,6 +20,14 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
     if (!allowed) router.replace(homeSpace(profile, user?.email));
   }, [ready, allowed, profile, user?.email, router]);
 
-  if (!allowed) return null;
+  if (!allowed) {
+    return (
+      <div className="od-page">
+        <div className="od-card rc-empty">
+          <p>Page réservée à l&apos;administrateur du magasin. Redirection…</p>
+        </div>
+      </div>
+    );
+  }
   return <>{children}</>;
 }

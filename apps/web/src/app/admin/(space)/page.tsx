@@ -130,6 +130,7 @@ function AdminContent() {
   /* ---- Create staff modal ---- */
   const [staffModal, setStaffModal] = useState(false);
   const [sForm, setSForm] = useState({ name: "", email: "", password: "", role: "CAISSIER" as "CAISSIER" | "ADMIN" });
+  const [sInvite, setSInvite] = useState(true);
   const [sSaving, setSSaving] = useState(false);
   const [sError, setSError] = useState<string | null>(null);
 
@@ -138,9 +139,13 @@ function AdminContent() {
     setSSaving(true);
     setSError(null);
     try {
-      await createStaffMember(sForm);
+      await createStaffMember({ ...sForm, invite: sInvite });
       setStaffModal(false);
-      setNotice(`Compte ${sForm.role === "ADMIN" ? "administrateur" : "caissier"} créé pour ${sForm.email}. Transmettez-lui l'email et le mot de passe.`);
+      setNotice(
+        sInvite
+          ? `Invitation envoyée à ${sForm.email} : la personne choisit son mot de passe depuis le lien reçu.`
+          : `Compte ${sForm.role === "ADMIN" ? "administrateur" : "caissier"} créé pour ${sForm.email}. Transmettez-lui l'email et le mot de passe.`,
+      );
       setSForm({ name: "", email: "", password: "", role: "CAISSIER" });
       await load();
     } catch (err) {
@@ -685,6 +690,15 @@ function AdminContent() {
                   <input className="od-input" type="email" value={sForm.email} onChange={(e) => setSForm({ ...sForm, email: e.target.value })} placeholder="caissier@monmagasin.fr" />
                 </div>
                 <div className="od-field">
+                  <span className="od-label">Accès</span>
+                  <label className="admin-toggle">
+                    <input type="checkbox" checked={sInvite} onChange={(e) => setSInvite(e.target.checked)} />
+                    <span>Envoyer une invitation par email (la personne choisit son mot de passe)</span>
+                  </label>
+                </div>
+              </div>
+              <div className="ga-modal-row" hidden={sInvite}>
+                <div className="od-field">
                   <span className="od-label">Mot de passe <span className="od-req">*</span></span>
                   <div className="admin-pwd">
                     <input className="od-input" value={sForm.password} onChange={(e) => setSForm({ ...sForm, password: e.target.value })} />
@@ -712,7 +726,7 @@ function AdminContent() {
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setStaffModal(false)} disabled={sSaving}>Annuler</button>
-                <button type="submit" className="od-btn od-btn--primary" disabled={sSaving || !sForm.name.trim() || !sForm.email.trim() || sForm.password.length < 6}>
+                <button type="submit" className="od-btn od-btn--primary" disabled={sSaving || !sForm.name.trim() || !sForm.email.trim() || (!sInvite && sForm.password.length < 8)}>
                   {sSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
                   Créer le compte
                 </button>

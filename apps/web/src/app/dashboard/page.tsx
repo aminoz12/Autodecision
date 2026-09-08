@@ -194,11 +194,10 @@ export default function DashboardPage() {
 
         <div className="dashboard-date-row">
           <span className="dashboard-date-label">Vue du jour</span>
-          <button type="button" className="date-picker-btn" aria-label="Choisir la date affichée">
+          <span className="date-picker-btn" aria-label="Date affichée">
             <Calendar className="h-4 w-4" />
             <span style={{ textTransform: "capitalize" }}>{todayLabel}</span>
-            <ChevronDown className="h-4 w-4 opacity-50" />
-          </button>
+          </span>
         </div>
       </section>
 
@@ -212,7 +211,7 @@ export default function DashboardPage() {
           <p>Les priorités opérationnelles de la journée.</p>
         </div>
         <div className="stats-grid">
-          {stats.map((s) => {
+          {stats.map((s, i) => {
             const Icon = s.icon;
             return (
               <div key={s.label} className="stat-card" style={{ "--accent": s.iconColor } as React.CSSProperties}>
@@ -227,7 +226,7 @@ export default function DashboardPage() {
                     <p className="stat-value">{s.value}</p>
                     <p className="stat-change" style={{ color: s.changeColor }}>{s.change}</p>
                   </div>
-                  <Sparkline data={spark} color={s.changeColor} />
+                  {i === 0 ? <Sparkline data={spark} color={s.changeColor} /> : null}
                 </div>
               </div>
             );

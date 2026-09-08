@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { ThemeInitializer } from "@/components/theme/ThemeToggle";
@@ -21,6 +21,15 @@ export const metadata: Metadata = {
   // Tell translators not to translate the app: Google Translate rewrites text
   // nodes and breaks React's DOM reconciliation (insertBefore NotFoundError).
   other: { google: "notranslate" },
+  manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Livraisons" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#635BFF",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

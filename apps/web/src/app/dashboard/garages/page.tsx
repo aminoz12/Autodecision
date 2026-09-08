@@ -16,6 +16,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -25,6 +26,12 @@ import {
   loadGarages,
   type GarageSummary,
 } from "@/lib/data/saas";
+import {
+  PAYMENT_TERMS,
+  PAYMENT_TERMS_LABEL,
+  paymentTermsLabel,
+  type PaymentTermsDays,
+} from "@/lib/constants/enums";
 import {
   loadGarageRequests,
   respondDevis,
@@ -56,7 +63,7 @@ export default function GaragesPage() {
 
   // Create-garage modal
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", city: "" });
+  const [form, setForm] = useState<{ name: string; phone: string; email: string; address: string; city: string; terms: PaymentTermsDays }>({ name: "", phone: "", email: "", address: "", city: "", terms: 30 });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -132,9 +139,16 @@ export default function GaragesPage() {
     setFormError(null);
     try {
       const sb = createClient();
-      await createGarage(sb, profile.organization_id, form);
+      await createGarage(sb, profile.organization_id, {
+        name: form.name,
+        phone: form.phone,
+        email: form.email,
+        city: form.city,
+        address: form.address,
+        paymentTermsDays: form.terms,
+      });
       setModalOpen(false);
-      setForm({ name: "", phone: "", email: "", city: "" });
+      setForm({ name: "", phone: "", email: "", address: "", city: "", terms: 30 });
       await load();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -223,7 +237,7 @@ export default function GaragesPage() {
             <div className="ga-card-head">
               <span className="ga-avatar" style={{ background: ["#4F46E5", "#0EA5E9", "#16A34A", "#DB2777"][index % 4] }}>{initials(row.name)}</span>
               <div className="ga-card-id">
-                <p className="ga-name">{row.name}</p>
+                <p className="ga-name"><Link href={`/dashboard/garages/${row.id}`}>{row.name}</Link></p>
                 <p className="ga-meta">
                   <MapPin className="h-3.5 w-3.5" />
                   {row.city ?? "-"}
@@ -235,11 +249,17 @@ export default function GaragesPage() {
             <div className="ga-contact">
               <span className="ga-contact-row"><Phone className="h-3.5 w-3.5" />{row.phone ?? "-"}</span>
               <span className="ga-contact-row"><Mail className="h-3.5 w-3.5" />{row.email ?? "-"}</span>
+              <span className="ga-contact-row"><Wallet className="h-3.5 w-3.5" />Paiement en compte · {paymentTermsLabel(row.paymentTermsDays).toLowerCase()}</span>
             </div>
             <div className="ga-stats-row">
               <div className="ga-mini"><p className="ga-mini-val">{row.orders}</p><p className="ga-mini-lbl">Commandes</p></div>
               <div className="ga-mini"><p className="ga-mini-val">{fmtMoney(row.revenue)}</p><p className="ga-mini-lbl">CA</p></div>
               <div className="ga-mini"><p className={`ga-mini-val${row.outstanding > 0 ? " ga-mini-val--encours" : ""}`}>{fmtMoney(row.outstanding)}</p><p className="ga-mini-lbl">Encours</p></div>
+            </div>
+            <div className="ga-card-foot">
+              <Link href={`/dashboard/garages/${row.id}`} className="od-btn od-btn--outline">
+                <Wallet className="h-4 w-4" /> Compte &amp; règlements
+              </Link>
             </div>
           </article>
         ))}
@@ -278,8 +298,32 @@ export default function GaragesPage() {
                 </div>
               </div>
               <div className="od-field">
+                <span className="od-label">Adresse de livraison</span>
+                <input className="od-input" placeholder="12 rue des Garages" value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
+              </div>
+              <div className="od-field">
                 <span className="od-label">Email</span>
                 <input className="od-input" type="email" placeholder="contact@garage.fr" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div className="od-field">
+                <span className="od-label">Délai de paiement (en compte)</span>
+                <div className="nc-pay-quick" role="radiogroup" aria-label="Délai de paiement">
+                  {PAYMENT_TERMS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      role="radio"
+                      aria-checked={form.terms === d}
+                      className={`nc-chip${form.terms === d ? " nc-chip--on" : ""}`}
+                      onClick={() => setForm((f) => ({ ...f, terms: d }))}
+                    >
+                      {PAYMENT_TERMS_LABEL[d]}
+                    </button>
+                  ))}
+                </div>
+                <span className="st-cmd-hint">
+                  Les commandes « en compte » de ce garage seront à régler sous {form.terms} jours.
+                </span>
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setModalOpen(false)} disabled={saving}>Annuler</button>

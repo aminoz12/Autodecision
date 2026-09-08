@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  FileSignature,
   Info,
   Loader2,
   Package,
@@ -24,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
+import { createQuote, loadQuote, type QuotePayload } from "@/lib/data/quotes";
 import {
   createClientRecord,
   loadClientCredits,
@@ -40,6 +42,12 @@ import {
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import type { CreateOrderPayload } from "@/lib/types/api";
+import {
+  MODE_PAIEMENT,
+  MODE_PAIEMENT_LABEL,
+  paymentTermsLabel,
+  type ModePaiement,
+} from "@/lib/constants/enums";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -64,7 +72,10 @@ interface LineForm {
   fournisseur_id: string;
   quantity: number;
   prix_achat: number;
+  /** Gross unit price; the line discount applies to it. */
   prix_vente: number;
+  /** Line discount in percent (0-100). */
+  remise_pct?: number;
   retours_impossible?: boolean;
   consigne?: boolean;
   consigne_price?: number;
@@ -118,6 +129,12 @@ function todayISO(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Net unit price after the line discount, rounded to the cent (same rule as the database). */
+function netUnit(gross: number, pct?: number): number {
+  const p = Math.min(100, Math.max(0, pct || 0));
+  return Math.round(gross * (1 - p / 100) * 100) / 100;
 }
 
 /** Parse a money input and cap it: the cashier can never type more than due. */
@@ -286,16 +303,10 @@ export default function NouvelleCommandePage() {
           envoyer_au_livreur: !forStock,
           statut_livreur: "EN_ATTENTE",
           bl: false,
+          // A stock replenishment has no client; shown as "Réappro stock".
+          is_restock: forStock,
         };
         const order = await createOrderWithLines(supabase, userId, orgId, payload);
-        if (forStock) {
-          // Flag it as a stock replenishment (no client; shown as "Réappro stock").
-          await supabase
-            .from("orders")
-            .update({ is_restock: true })
-            .eq("id", order.id)
-            .eq("organization_id", orgId);
-        }
         createdRefs.push(order.ref_demande);
       }
 
@@ -326,6 +337,16 @@ export default function NouvelleCommandePage() {
 
   /* ---- Payment & delivery ---- */
   const [montantPaye, setMontantPaye] = useState(0);
+  /** Remise en pied de commande (€), capped by the parts subtotal. */
+  const [remiseMontant, setRemiseMontant] = useState(0);
+
+  /* ---- Devis particulier ---- */
+  /** Quote this order is being created from (deep link ?quote=<id>). */
+  const [sourceQuote, setSourceQuote] = useState<{ id: string; ref: string } | null>(null);
+  const [quoteSaving, setQuoteSaving] = useState(false);
+  const [createdQuote, setCreatedQuote] = useState<{ id: string; ref: string } | null>(null);
+  /** ESPECES by default; EN_COMPTE is only offered for garages. */
+  const [modePaiement, setModePaiement] = useState<ModePaiement>("ESPECES");
 
   /* ---- Avoir as payment ---- */
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
@@ -384,6 +405,51 @@ export default function NouvelleCommandePage() {
             setImmatriculation(c.immatriculation ?? "");
             setVehicleModel(c.vehicleModel ?? "");
           }
+        }
+        // Deep link from Devis: /dashboard/nouvelle-commande?quote=<id> loads
+        // the quote (client, parts, discounts) so it becomes an order.
+        const wantedQuote = params.get("quote");
+        if (wantedQuote) {
+          void loadQuote(supabase, orgId, wantedQuote)
+            .then((q) => {
+              if (cancelled || !q) return;
+              if (q.convertedOrderId) {
+                setError(`Le devis ${q.ref} a déjà été transformé en commande.`);
+                return;
+              }
+              const p = q.payload;
+              const c = q.clientId ? cls.find((x) => x.id === q.clientId) : undefined;
+              const isGarage = Boolean(q.clientId) && gars.some((g) => g.id === q.clientId);
+              setDestineA(isGarage ? "GARAGE" : "COMPTOIR");
+              setClientId(c ? c.id : NEW_CLIENT);
+              setClientName(c?.name ?? q.clientName);
+              setClientPhone(p.client_phone && p.client_phone !== "-" ? p.client_phone : (c?.phone ?? ""));
+              setClientEmail(p.client_email ?? c?.email ?? "");
+              setImmatriculation(p.immatriculation ?? c?.immatriculation ?? "");
+              setVehicleModel(p.vehicle_model ?? c?.vehicleModel ?? "");
+              setKilometrage(p.kilometrage ? String(p.kilometrage) : "");
+              if (p.canal_vente) setCanalVente(p.canal_vente);
+              setLines(
+                (p.lines ?? []).map((l) => ({
+                  nom_produit: l.nom_produit,
+                  reference: l.reference,
+                  fournisseur_id: l.fournisseur_id ?? "",
+                  quantity: l.quantity,
+                  prix_achat: l.prix_achat_unitaire || 0,
+                  prix_vente: l.prix_brut_unitaire ?? l.prix_vente_unitaire ?? 0,
+                  remise_pct: l.remise_pct || 0,
+                  retours_impossible: Boolean(l.retour_impossible),
+                  consigne: Boolean(l.consigne),
+                  consigne_price: l.consigne_price,
+                })),
+              );
+              setRemiseMontant(p.remise_montant || 0);
+              setSourceQuote({ id: q.id, ref: q.ref });
+              setPdfInfo(`Devis ${q.ref} chargé : vérifiez les pièces et le paiement, puis envoyez la commande.`);
+            })
+            .catch((e: unknown) => {
+              if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+            });
         }
       })
       .catch((e: unknown) => {
@@ -564,11 +630,19 @@ export default function NouvelleCommandePage() {
       ),
     [lines],
   );
-  // Order total = parts + returnable deposits (consigne) charged to the client.
-  const total = useMemo(
-    () => lines.reduce((s, l) => s + l.quantity * l.prix_vente, 0) + consigneTotal,
-    [lines, consigneTotal],
+  /* Parts subtotal at net prices (line discounts applied), then the order
+   * discount (remise en pied, never more than the parts), then deposits. */
+  const partsTotal = useMemo(
+    () => lines.reduce((s, l) => s + l.quantity * netUnit(l.prix_vente, l.remise_pct), 0),
+    [lines],
   );
+  const lineDiscountTotal = useMemo(
+    () => lines.reduce((s, l) => s + l.quantity * (l.prix_vente - netUnit(l.prix_vente, l.remise_pct)), 0),
+    [lines],
+  );
+  const remiseApplied = Math.min(Math.max(0, remiseMontant), Math.round(partsTotal * 100) / 100);
+  // Order total = parts − remise + returnable deposits (consigne) charged to the client.
+  const total = Math.round((partsTotal - remiseApplied + consigneTotal) * 100) / 100;
   const selectedCredit = useMemo(
     () => clientCredits.find((c) => c.id === avoirId) ?? null,
     [clientCredits, avoirId],
@@ -583,7 +657,9 @@ export default function NouvelleCommandePage() {
     ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, total)
     : 0;
   const dueAfterAvoir = Math.max(0, total - avoirApplied);
-  const paidEffective = Math.min(Math.max(0, montantPaye), dueAfterAvoir);
+  /* "En compte": nothing is cashed now, the garage settles within its terms. */
+  const onAccount = modePaiement === "EN_COMPTE";
+  const paidEffective = onAccount ? 0 : Math.min(Math.max(0, montantPaye), dueAfterAvoir);
   const remaining = Math.max(0, dueAfterAvoir - paidEffective);
   const effectiveStatut =
     total > 0 && remaining <= 0
@@ -591,7 +667,26 @@ export default function NouvelleCommandePage() {
       : paidEffective + avoirApplied > 0
         ? "PARTIEL"
         : "NON_PAYÉ";
-  const paiement = PAIEMENT_LABEL[effectiveStatut];
+  const paiement =
+    onAccount && remaining > 0
+      ? { label: "En compte", cls: "violet" }
+      : PAIEMENT_LABEL[effectiveStatut];
+  const selectedGarage = useMemo(
+    () => (destineA === "GARAGE" ? garages.find((g) => g.id === clientId) ?? null : null),
+    [destineA, garages, clientId],
+  );
+  /** Due date the DB will stamp on an on-account order (today + garage terms). */
+  const accountDueDate = useMemo(() => {
+    if (!onAccount || !selectedGarage) return null;
+    const d = new Date();
+    d.setDate(d.getDate() + selectedGarage.paymentTermsDays);
+    return d;
+  }, [onAccount, selectedGarage]);
+
+  // "En compte" only exists for garages: fall back to cash for anyone else.
+  useEffect(() => {
+    if (modePaiement === "EN_COMPTE" && destineA !== "GARAGE") setModePaiement("ESPECES");
+  }, [modePaiement, destineA]);
   /** Most the avoir can cover on this order. */
   const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
 
@@ -679,6 +774,59 @@ export default function NouvelleCommandePage() {
     }
   }
 
+  /* ---- Enregistrer en devis (pas de paiement, pas de stock, pas de livraison) ---- */
+  async function handleSaveQuote() {
+    if (!profile?.organization_id) {
+      setError("Aucun magasin associé à ce compte.");
+      return;
+    }
+    if (!clientName.trim()) {
+      setError("Renseignez le nom du client.");
+      return;
+    }
+    const validLines = lines.filter((l) => l.nom_produit.trim() && l.reference.trim());
+    if (validLines.length === 0) {
+      setError("Ajoutez au moins une pièce avec une désignation et une référence.");
+      return;
+    }
+    setQuoteSaving(true);
+    setError(null);
+    try {
+      const payload: QuotePayload = {
+        canal_vente: canalVente,
+        client_id: clientId === NEW_CLIENT ? undefined : clientId,
+        client_name: clientName.trim(),
+        client_phone: clientPhone.trim() || "-",
+        client_email: clientEmail.trim() || undefined,
+        immatriculation: immatriculation.trim() || undefined,
+        vehicle_model: vehicleModel.trim() || undefined,
+        kilometrage: kilometrage.trim() ? Number(kilometrage.replace(/\D/g, "")) : undefined,
+        lines: validLines.map((l) => ({
+          nom_produit: l.nom_produit.trim(),
+          reference: l.reference.trim(),
+          fournisseur_id: l.fournisseur_id || undefined,
+          quantity: l.quantity || 1,
+          a_commander_pour_livreur: Boolean(l.fournisseur_id),
+          depuis_magasin: !l.fournisseur_id,
+          retour_impossible: Boolean(l.retours_impossible),
+          consigne: Boolean(l.consigne),
+          consigne_price: l.consigne ? l.consigne_price || 0 : undefined,
+          prix_achat_unitaire: l.prix_achat || 0,
+          prix_brut_unitaire: l.prix_vente || 0,
+          remise_pct: l.remise_pct || 0,
+          prix_vente_unitaire: netUnit(l.prix_vente || 0, l.remise_pct),
+        })),
+        remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
+        validity_days: 30,
+      };
+      setCreatedQuote(await createQuote(supabase, payload));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erreur lors de la création du devis.");
+    } finally {
+      setQuoteSaving(false);
+    }
+  }
+
   /* ---- Submit ---- */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -761,10 +909,15 @@ export default function NouvelleCommandePage() {
           consigne_price: l.consigne ? l.consigne_price || 0 : undefined,
           qte_remise: !l.fournisseur_id && l.client_a_pris ? l.quantity || 1 : 0,
           prix_achat_unitaire: l.prix_achat || 0,
-          prix_vente_unitaire: l.prix_vente || 0,
+          prix_brut_unitaire: l.prix_vente || 0,
+          remise_pct: l.remise_pct || 0,
+          prix_vente_unitaire: netUnit(l.prix_vente || 0, l.remise_pct),
         })),
+        remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
+        quote_id: sourceQuote?.id,
         devis: false,
         statut_paiement: effectiveStatut,
+        mode_paiement: modePaiement,
         montant_paye: paidEffective || 0,
         avance_payee: 0,
         avoir_id: avoirApplied > 0 ? avoirId : undefined,
@@ -799,7 +952,7 @@ export default function NouvelleCommandePage() {
           reference: l.reference.trim(),
           designation: l.nom_produit.trim(),
           quantity: l.quantity || 1,
-          prixVente: l.prix_vente || 0,
+          prixVente: netUnit(l.prix_vente || 0, l.remise_pct),
           retourPossible: !l.retours_impossible,
           taken: !l.fournisseur_id && Boolean(l.client_a_pris),
         })),
@@ -808,6 +961,8 @@ export default function NouvelleCommandePage() {
         paye: paidEffective,
         reste: remaining,
         statutPaiement: effectiveStatut,
+        modePaiement,
+        echeance: accountDueDate ? accountDueDate.toISOString().slice(0, 10) : null,
       });
       // Refresh client list in case a new one was created.
       void loadClients(supabase, orgId).then(setClients).catch(() => {});
@@ -847,6 +1002,10 @@ export default function NouvelleCommandePage() {
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
     setMontantPaye(0);
+    setRemiseMontant(0);
+    setSourceQuote(null);
+    setCreatedQuote(null);
+    setModePaiement("ESPECES");
     setAvoirId("");
     setAvoirAmount(0);
     setError(null);
@@ -859,6 +1018,33 @@ export default function NouvelleCommandePage() {
   /* ---------------------------------------------------------------- */
   /*  Success screen                                                   */
   /* ---------------------------------------------------------------- */
+
+  if (createdQuote) {
+    return (
+      <div className="od-page">
+        <div className="od-card nc-success">
+          <span className="nc-success-icon">
+            <FileSignature className="h-8 w-8" />
+          </span>
+          <h2 className="nc-success-title">Devis enregistré</h2>
+          <p className="nc-success-sub">
+            Le devis <strong>{createdQuote.ref}</strong> ({eur(total)}) est valable 30 jours. Il devient une
+            commande depuis la page Devis, quand le client accepte.
+          </p>
+          <div className="nc-success-actions">
+            <Link href="/dashboard/devis" className="od-btn od-btn--primary">
+              <FileSignature className="h-4 w-4" />
+              Voir les devis
+            </Link>
+            <button type="button" className="od-btn od-btn--ghost" onClick={resetForm}>
+              <Plus className="h-4 w-4" />
+              Nouvelle commande
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (createdRef) {
     return (
@@ -1159,6 +1345,7 @@ export default function NouvelleCommandePage() {
                 <th>Fournisseur</th>
                 <th className="od-th-center">Qté</th>
                 <th className="od-th-right">Prix vente</th>
+                <th className="od-th-center">Remise %</th>
                 <th className="od-th-center">Retour imp.</th>
                 <th className="od-th-center">Consigne</th>
                 <th className="od-th-center">Remis client</th>
@@ -1241,6 +1428,24 @@ export default function NouvelleCommandePage() {
                   </td>
                   <td className="od-td-center">
                     <input
+                      className="od-input nc-cell-input nc-cell-num nc-cell-pct"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.5"
+                      placeholder="0"
+                      title="Remise sur cette ligne (%)"
+                      value={l.remise_pct || ""}
+                      onChange={(e) =>
+                        setLine(idx, "remise_pct", Math.min(100, Math.max(0, Number(e.target.value))))
+                      }
+                    />
+                    {(l.remise_pct || 0) > 0 && (
+                      <p className="nc-net-hint">net {eur(netUnit(l.prix_vente, l.remise_pct))}</p>
+                    )}
+                  </td>
+                  <td className="od-td-center">
+                    <input
                       type="checkbox"
                       className="nc-cell-check"
                       checked={Boolean(l.retours_impossible)}
@@ -1296,7 +1501,7 @@ export default function NouvelleCommandePage() {
                   <td className="od-td-right od-num od-num-strong">
                     {eur(
                       l.quantity *
-                        (l.prix_vente + (l.consigne ? l.consigne_price || 0 : 0)),
+                        (netUnit(l.prix_vente, l.remise_pct) + (l.consigne ? l.consigne_price || 0 : 0)),
                     )}
                   </td>
                   <td className="od-td-menu">
@@ -1385,6 +1590,29 @@ export default function NouvelleCommandePage() {
           Ajouter une pièce
         </button>
 
+        <div className="nc-remise-row">
+          <label className="od-field nc-remise-field">
+            <span className="od-label">Remise en pied de commande (€)</span>
+            <input
+              className="od-input"
+              type="number"
+              min={0}
+              step="0.01"
+              max={Math.round(partsTotal * 100) / 100}
+              value={remiseMontant || ""}
+              placeholder="0,00"
+              onChange={(e) => setRemiseMontant(clampMoney(e.target.value, partsTotal))}
+            />
+          </label>
+          <div className="nc-remise-sum">
+            {lineDiscountTotal > 0 && (
+              <span className="rl-muted">remises lignes : − {eur(lineDiscountTotal)}</span>
+            )}
+            {remiseApplied > 0 && (
+              <span className="rl-muted">remise en pied : − {eur(remiseApplied)}</span>
+            )}
+          </div>
+        </div>
         <div className="od-lines-total">
           Total commande <strong>{eur(total)}</strong>
         </div>
@@ -1453,6 +1681,45 @@ export default function NouvelleCommandePage() {
           )}
         </div>
 
+        <div className="od-field nc-pay-mode">
+          <span className="od-label">Mode de paiement</span>
+          <div className="nc-pay-quick" role="radiogroup" aria-label="Mode de paiement">
+            {MODE_PAIEMENT.map((m) => {
+              const garageOnly = m === "EN_COMPTE";
+              const disabled = garageOnly && destineA !== "GARAGE";
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={modePaiement === m}
+                  className={`nc-chip${modePaiement === m ? " nc-chip--on" : ""}${garageOnly ? " nc-chip--account" : ""}`}
+                  disabled={disabled}
+                  title={disabled ? "Réservé aux commandes garage" : undefined}
+                  onClick={() => setModePaiement(m)}
+                >
+                  {MODE_PAIEMENT_LABEL[m]}
+                </button>
+              );
+            })}
+          </div>
+          {onAccount ? (
+            <span className="st-cmd-hint nc-account-hint">
+              Rien à encaisser : le montant est porté au compte du garage
+              {selectedGarage
+                ? ` (paiement ${paymentTermsLabel(selectedGarage.paymentTermsDays).toLowerCase()}${
+                    accountDueDate ? `, échéance le ${accountDueDate.toLocaleDateString("fr-FR")}` : ""
+                  })`
+                : ""}
+              .
+            </span>
+          ) : destineA === "GARAGE" ? (
+            <span className="st-cmd-hint">
+              Choisissez « En compte » pour ajouter cette commande au compte du garage.
+            </span>
+          ) : null}
+        </div>
+
         <div className="nc-pay">
           <div className="nc-pay-form">
             <div className="od-field">
@@ -1464,37 +1731,39 @@ export default function NouvelleCommandePage() {
                   min={0}
                   max={dueAfterAvoir}
                   step="0.01"
-                  value={montantPaye || ""}
+                  value={onAccount ? "" : montantPaye || ""}
                   placeholder="0,00"
-                  disabled={dueAfterAvoir <= 0}
+                  disabled={dueAfterAvoir <= 0 || onAccount}
                   onChange={(e) => setMontantPaye(clampMoney(e.target.value, dueAfterAvoir))}
                 />
                 <span className="nc-pay-unit">€</span>
               </div>
               <div className="nc-pay-quick">
-                <button type="button" className={`nc-chip${paidEffective <= 0 ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(0)} disabled={dueAfterAvoir <= 0}>
+                <button type="button" className={`nc-chip${paidEffective <= 0 ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(0)} disabled={dueAfterAvoir <= 0 || onAccount}>
                   Rien maintenant
                 </button>
-                <button type="button" className={`nc-chip${dueAfterAvoir > 0 && paidEffective >= dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(dueAfterAvoir)} disabled={dueAfterAvoir <= 0}>
+                <button type="button" className={`nc-chip${dueAfterAvoir > 0 && paidEffective >= dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(dueAfterAvoir)} disabled={dueAfterAvoir <= 0 || onAccount}>
                   Tout · {eur(dueAfterAvoir)}
                 </button>
-                {dueAfterAvoir > 0 && (
+                {dueAfterAvoir > 0 && !onAccount && (
                   <button type="button" className={`nc-chip${paidEffective > 0 && paidEffective < dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(Math.round((dueAfterAvoir / 2) * 100) / 100)}>
                     Moitié · {eur(Math.round((dueAfterAvoir / 2) * 100) / 100)}
                   </button>
                 )}
               </div>
               <span className="st-cmd-hint">
-                {dueAfterAvoir <= 0
-                  ? "Rien à encaisser : le total est couvert."
-                  : "Ce que le client règle aujourd'hui. Le reste sera à payer à la remise des pièces."}
+                {onAccount
+                  ? "Paiement en compte : le garage règle à l'échéance, pas de montant à saisir."
+                  : dueAfterAvoir <= 0
+                    ? "Rien à encaisser : le total est couvert."
+                    : "Ce que le client règle aujourd'hui. Le reste sera à payer à la remise des pièces."}
               </span>
             </div>
           </div>
 
           <aside className="nc-recap nc-recap--simple" aria-label="Reste à payer">
-            <div className={`nc-recap-total${remaining > 0 ? " is-due" : total > 0 ? " is-ok" : ""}`}>
-              <span>Reste à payer</span>
+            <div className={`nc-recap-total${remaining > 0 ? (onAccount ? " is-account" : " is-due") : total > 0 ? " is-ok" : ""}`}>
+              <span>{onAccount ? "Porté au compte" : "Reste à payer"}</span>
               <strong>{eur(remaining)}</strong>
             </div>
             <span className={`rt-badge rt-badge--${paiement.cls}`}>{paiement.label}</span>
@@ -1508,9 +1777,19 @@ export default function NouvelleCommandePage() {
           Réinitialiser
         </button>
         <button
+          type="button"
+          className="od-btn od-btn--ghost"
+          onClick={() => void handleSaveQuote()}
+          disabled={saving || quoteSaving || Boolean(sourceQuote)}
+          title={sourceQuote ? `Commande issue du devis ${sourceQuote.ref}` : "Enregistrer ces pièces et prix comme devis, sans commander"}
+        >
+          {quoteSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <FileSignature className="h-4 w-4" />}
+          {quoteSaving ? "Enregistrement…" : "Enregistrer en devis"}
+        </button>
+        <button
           type="submit"
           className="od-btn od-btn--primary nc-submit"
-          disabled={saving}
+          disabled={saving || quoteSaving}
         >
           {saving ? (
             <Loader2 className="h-4 w-4 nc-spin" />

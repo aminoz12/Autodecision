@@ -143,7 +143,7 @@ export default function SignupPage() {
                 <button
                   type="button"
                   className="auth-btn"
-                  onClick={() => router.replace("/login")}
+                  onClick={() => router.replace("/admin/login")}
                 >
                   Aller à la connexion
                 </button>
@@ -262,7 +262,7 @@ export default function SignupPage() {
           )}
 
           <p className="auth-foot">
-            Déjà un compte ? <Link href="/login">Se connecter</Link>
+            Déjà un compte ? <Link href="/admin/login">Se connecter</Link>
           </p>
         </div>
       </main>

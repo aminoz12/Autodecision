@@ -33,7 +33,7 @@ export default function GaragisteLoginPage() {
     if (profile && !profile.client_id) {
       void logout();
       setError(
-        "Ce compte est un compte magasin. Connectez-vous sur la page magasin (/login).",
+        "Ce compte est un compte magasin. Connectez-vous sur la page magasin (/caissier/login).",
       );
       return;
     }
@@ -167,6 +167,7 @@ export default function GaragisteLoginPage() {
               </div>
             </div>
 
+            <p className="auth-row-links"><a href="/mot-de-passe-oublie">Mot de passe oublié ?</a></p>
             <button type="submit" className="auth-btn auth-btn--garage" disabled={loading}>
               {loading && <Loader2 className="h-4 w-4 auth-spin" />}
               {loading ? "Connexion…" : "Se connecter"}
@@ -174,7 +175,7 @@ export default function GaragisteLoginPage() {
           </form>
 
           <p className="auth-foot">
-            Vous êtes un magasin ? <a href="/login">Connexion magasin</a>
+            Vous êtes un magasin ? <a href="/caissier/login">Connexion magasin</a>
           </p>
         </div>
       </main>

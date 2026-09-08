@@ -46,6 +46,7 @@ export function pointsValue(points: number): number {
 /* ---- List ---- */
 
 export type ClientSummary = {
+  address?: string | null;
   id: string;
   name: string;
   phone: string | null;
@@ -84,6 +85,7 @@ export async function loadParticulierClients(
       .eq("organization_id", orgId)
       .eq("devis", false)
       .eq("is_restock", false)
+      .is("cancelled_at", null)
       .not("client_id", "is", null)
       .limit(5000),
     supabase
@@ -156,6 +158,8 @@ export type ClientInput = {
   name: string;
   phone?: string | null;
   email?: string | null;
+  /** Street address (delivery + invoices). */
+  address?: string | null;
   city?: string | null;
   plate?: string | null;
   vehicle?: string | null;
@@ -168,6 +172,7 @@ function toRow(input: Partial<ClientInput>): Record<string, unknown> {
   if (input.name !== undefined) row.name = input.name.trim();
   if (input.phone !== undefined) row.phone = input.phone?.trim() || null;
   if (input.email !== undefined) row.email = input.email?.trim() || null;
+  if (input.address !== undefined) row.address = input.address?.trim() || null;
   if (input.city !== undefined) row.city = input.city?.trim() || null;
   if (input.plate !== undefined) row.immatriculation = input.plate?.trim().toUpperCase() || null;
   if (input.vehicle !== undefined) row.vehicle_model = input.vehicle?.trim() || null;
@@ -284,7 +289,7 @@ export async function loadClientProfile(
   const [clientRes, ordersRes, returnsRes, creditsRes, loyaltyRes] = await Promise.all([
     supabase
       .from("clients")
-      .select("id,name,phone,email,city,immatriculation,vehicle_model,is_active,notes,createdAt,is_garage")
+      .select("id,name,phone,email,address,city,immatriculation,vehicle_model,is_active,notes,createdAt,is_garage")
       .eq("id", clientId)
       .eq("organization_id", orgId)
       .maybeSingle(),
@@ -394,6 +399,7 @@ export async function loadClientProfile(
     phone: (c.phone as string | null) ?? null,
     email: (c.email as string | null) ?? null,
     city: (c.city as string | null) ?? null,
+    address: (c.address as string | null) ?? null,
     plate: (c.immatriculation as string | null) ?? null,
     vehicle: (c.vehicle_model as string | null) ?? null,
     active: c.is_active !== false,

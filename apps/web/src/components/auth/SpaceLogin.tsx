@@ -27,15 +27,33 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { homeSpace } from "@/lib/spaces";
+import {
+  accountSpace,
+  SPACE_HOME,
+  SPACE_LOGIN,
+  type AccountSpace,
+  type SpaceKey,
+} from "@/lib/spaces";
 
 /* ------------------------------------------------------------------ */
 /*  One login page per space — same shell, its own colors, icon and    */
-/*  role-specific pitch. After sign-in the account is routed to ITS    */
-/*  space, even if it used the wrong door.                             */
+/*  role-specific pitch. Each door only accepts ITS OWN accounts: an   */
+/*  account from another space is signed out again with an error, it  */
+/*  is never redirected to its space.                                  */
 /* ------------------------------------------------------------------ */
 
-export type SpaceKey = "superadmin" | "admin" | "caissier" | "livreur";
+export type { SpaceKey };
+
+const SPACE_LABEL: Record<AccountSpace, string> = {
+  superadmin: "Console SaaS",
+  admin: "Espace Administrateur",
+  caissier: "Espace Caissier",
+  livreur: "Espace Livreur",
+  garagiste: "Espace Garagiste",
+};
+
+/** The other doors, offered when someone lands on the wrong one. */
+const OTHER_DOORS: AccountSpace[] = ["admin", "caissier", "livreur", "garagiste"];
 
 type Feature = { icon: LucideIcon; label: string };
 
@@ -115,7 +133,7 @@ const SPACES: Record<
 
 export function SpaceLogin({ space }: { space: SpaceKey }) {
   const cfg = SPACES[space];
-  const { login, logout, ready, user, profile } = useAuth();
+  const { login, logout, ready, user, profile, profileLoadError } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -125,17 +143,28 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
 
   useEffect(() => {
     if (!ready || !user) return;
-    // A garagiste session would pollute the magasin cookie — sign it out.
-    if (profile?.client_id) {
-      void logout();
+    const account = accountSpace(profile, user.email);
+
+    if (account === space) {
+      router.replace(SPACE_HOME[space]);
+      return;
+    }
+
+    // Wrong door — or no profile at all. Either way this session has no
+    // business here: drop it and say which link the account belongs to.
+    void logout();
+    if (account === null) {
       setError(
-        "Ce compte est un compte garagiste. Connectez-vous sur la page Garagiste (/garagiste).",
+        profileLoadError
+          ? `Profil introuvable pour ce compte (${profileLoadError}).`
+          : "Profil introuvable pour ce compte. Exécutez supabase/schema.sql puis backfill_profiles.sql.",
       );
       return;
     }
-    const home = homeSpace(profile, user.email);
-    if (home !== "/login") router.replace(home);
-  }, [ready, user, profile, router, logout]);
+    setError(
+      `Ce compte n'appartient pas à cet espace (${cfg.name}). C'est un compte ${SPACE_LABEL[account]} : connectez-vous sur ${SPACE_LOGIN[account]}.`,
+    );
+  }, [ready, user, profile, profileLoadError, space, cfg.name, router, logout]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -269,6 +298,7 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
               </div>
             </div>
 
+            <p className="auth-row-links"><Link href="/mot-de-passe-oublie">Mot de passe oublié ?</Link></p>
             <button type="submit" className="auth-btn" disabled={loading}>
               {loading && <Loader2 className="h-4 w-4 auth-spin" />}
               {loading ? "Connexion…" : "Se connecter"}
@@ -276,7 +306,13 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
           </form>
 
           <p className="auth-foot">
-            Pas votre espace ? <Link href="/login">Connexion générale</Link>
+            Pas votre espace ?{" "}
+            {OTHER_DOORS.filter((d) => d !== space).map((d, i) => (
+              <span key={d}>
+                {i > 0 && " · "}
+                <Link href={SPACE_LOGIN[d]}>{SPACE_LABEL[d].replace("Espace ", "")}</Link>
+              </span>
+            ))}
           </p>
         </div>
       </main>

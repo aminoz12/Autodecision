@@ -279,6 +279,7 @@ export async function loadReceptionLines(
     )
     .eq("organization_id", orgId)
     .eq("orders.devis", false)
+    .is("orders.cancelled_at", null)
     .neq("reception_status", "RECEIVED")
     // Parts served from the magasin stock are not awaited from anyone: they
     // only show up here once re-ordered from a supplier (Stock → Commander).
@@ -318,13 +319,20 @@ export async function loadReceptionLines(
   });
 }
 
+/**
+ * Receive a supplier line. Without `qty` every missing unit is received;
+ * with `qty` only that many (réception partielle — the line stays expected
+ * for the rest).
+ */
 export async function markLineReceived(
   supabase: SupabaseClient,
   _orgId: string,
   line: Pick<ReceptionLine, "id" | "reference" | "designation" | "quantity" | "receivedQuantity">,
+  qty?: number,
 ): Promise<void> {
   const { error } = await supabase.rpc("receive_order_line", {
     p_line_id: line.id,
+    p_qty: qty == null ? null : Math.max(1, Math.floor(qty)),
   });
   if (error) throw new Error(error.message);
 }
@@ -532,19 +540,6 @@ export async function loadStockItems(
   });
 }
 
-export async function adjustStockItem(
-  supabase: SupabaseClient,
-  orgId: string,
-  input: { sku: string; name: string; delta: number },
-): Promise<void> {
-  const rpc = await supabase.rpc("adjust_stock_item", {
-    p_delta: input.delta,
-    p_name: input.name || input.sku,
-    p_sku: input.sku,
-  });
-  if (rpc.error) throw new Error(rpc.error.message);
-}
-
 export type PartSearchResult = {
   kind: "stock" | "order-line";
   id: string;
@@ -652,6 +647,8 @@ export type GarageSummary = {
   city: string | null;
   rating: number | null;
   active: boolean;
+  /** Days the garage has to settle an on-account order (7/10/15/30). */
+  paymentTermsDays: number;
   orders: number;
   revenue: number;
   outstanding: number;
@@ -664,7 +661,7 @@ export async function loadGarages(
   const [clientsRes, ordersRes] = await Promise.all([
     supabase
       .from("clients")
-      .select("id,name,phone,email,city,rating,is_active")
+      .select("id,name,phone,email,city,rating,is_active,payment_terms_days")
       .eq("organization_id", orgId)
       .eq("is_garage", true)
       .order("name"),
@@ -672,7 +669,8 @@ export async function loadGarages(
       .from("orders")
       .select("client_id,montant_total,solde_restant")
       .eq("organization_id", orgId)
-      .eq("devis", false),
+      .eq("devis", false)
+      .is("cancelled_at", null),
   ]);
 
   if (clientsRes.error) throw new Error(clientsRes.error.message);
@@ -702,6 +700,7 @@ export async function loadGarages(
       city: (row.city as string | null) ?? null,
       rating: row.rating == null ? null : toNumber(row.rating),
       active: row.is_active !== false,
+      paymentTermsDays: row.payment_terms_days == null ? 30 : toNumber(row.payment_terms_days),
       ...t,
     };
   });
@@ -710,7 +709,16 @@ export async function loadGarages(
 export async function createGarage(
   supabase: SupabaseClient,
   orgId: string,
-  input: { name: string; phone?: string; email?: string; city?: string },
+  input: {
+    name: string;
+    phone?: string;
+    email?: string;
+    city?: string;
+    /** Street address (delivery + invoices). */
+    address?: string;
+    /** 7 / 10 / 15 / 30 — defaults to 30 days. */
+    paymentTermsDays?: number;
+  },
 ): Promise<void> {
   const { error } = await supabase.from("clients").insert({
     organization_id: orgId,
@@ -718,6 +726,8 @@ export async function createGarage(
     phone: input.phone?.trim() || null,
     email: input.email?.trim() || null,
     city: input.city?.trim() || null,
+    address: input.address?.trim() || null,
+    payment_terms_days: input.paymentTermsDays ?? 30,
     is_garage: true,
     is_professional: true,
   });
@@ -817,13 +827,20 @@ export type ReturnTreatment =
 export async function settleClientReturn(
   supabase: SupabaseClient,
   returnId: string,
-  input: { mode: "REMBOURSEMENT" | "AVOIR"; amount: number; reason?: string },
+  input: {
+    mode: "REMBOURSEMENT" | "AVOIR";
+    amount: number;
+    reason?: string;
+    /** How the client is refunded (cash journal). Default ESPECES. */
+    refundMode?: "ESPECES" | "CARTE" | "VIREMENT" | "CHEQUE";
+  },
 ): Promise<string | null> {
   const { data, error } = await supabase.rpc("settle_client_return", {
     p_return_id: returnId,
     p_mode: input.mode,
     p_amount: Math.round(Math.max(0, input.amount) * 100) / 100,
     p_reason: input.reason?.trim() || null,
+    p_refund_mode: input.refundMode ?? "ESPECES",
   });
   if (error) throw new Error(error.message);
   return typeof data === "string" ? data : null;
@@ -881,7 +898,7 @@ export async function loadRefundableOrders(
           "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,retour_impossible)",
       )
       .eq("organization_id", orgId)
-      .eq("devis", false).eq("is_restock", false)
+      .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
       .order("date_commande", { ascending: false })
       .limit(150),
     supabase
@@ -932,113 +949,6 @@ export async function loadRefundableOrders(
     };
   });
 }
-
-/** Next sequential avoir number for an org: AV-YYYY-NNNNN. */
-async function nextAvoirSeq(
-  supabase: SupabaseClient,
-  orgId: string,
-  year: number,
-): Promise<number> {
-  const prefix = `AV-${year}-`;
-  const { data } = await supabase
-    .from("credit_notes")
-    .select("num")
-    .eq("organization_id", orgId)
-    .like("num", `${prefix}%`)
-    .order("num", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const ref = (data as { num?: string } | null)?.num;
-  if (ref) {
-    const num = parseInt(ref.replace(prefix, ""), 10);
-    if (!Number.isNaN(num)) return num + 1;
-  }
-  return 1;
-}
-
-/**
- * Record a walk-in return, compensated either in cash (REMBOURSE) or with a
- * credit note (AVOIR — one avoir for the whole return, valable 1 an comme
- * sur la feuille legacy). With compensation FOURNISSEUR (stock part sent
- * back to its supplier) nothing is paid to a client: the return simply
- * enters the supplier pipeline (A_TRAITER) on the Retours page.
- */
-/*
- * Historical browser-side implementation. Return creation is now a single
- * database transaction so a return cannot exist without its credit note.
-export async function createWalkInReturnLegacy(
-  supabase: SupabaseClient,
-  orgId: string,
-  input: {
-    orderId: string;
-    clientId: string | null;
-    reason: string;
-    lines: RefundableLine[];
-    compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
-    // Supplier the part goes back to (FOURNISSEUR mode).
-    supplierId?: string | null;
-  },
-): Promise<{ avoirNum: string | null }> {
-  const refundable = input.lines.filter(
-    (l) => !l.retourImpossible && !l.alreadyReturned,
-  );
-  if (refundable.length === 0) {
-    throw new Error("Aucune ligne remboursable sélectionnée.");
-  }
-  const toSupplier = input.compensation === "FOURNISSEUR";
-  const asAvoir = input.compensation === "AVOIR";
-  const motif =
-    input.reason.trim() || (toSupplier ? "Retour fournisseur" : "Remboursement comptoir");
-
-  const year = new Date().getFullYear();
-  const stamp = Date.now() % 100000;
-  const rows = refundable.map((l, i) => ({
-    organization_id: orgId,
-    client_id: input.clientId,
-    order_id: input.orderId,
-    order_line_id: l.id,
-    ref: `RET-${year}-${String((stamp + i) % 100000).padStart(5, "0")}`,
-    designation: l.designation,
-    reason: motif,
-    motif,
-    type_retour: "RETOURNABLE",
-    statut_traitement: toSupplier ? "A_TRAITER" : asAvoir ? "AVOIR" : "REMBOURSE",
-    decote_pct: 0,
-    montant: l.lineTotal,
-    ...(toSupplier && input.supplierId ? { supplier_id: input.supplierId } : {}),
-  }));
-
-  const { error } = await supabase.from("sales_returns").insert(rows);
-  if (error) throw new Error(error.message);
-
-  if (!asAvoir) return { avoirNum: null };
-
-  const total = refundable.reduce((s, l) => s + l.lineTotal, 0);
-  const echeance = new Date();
-  echeance.setFullYear(echeance.getFullYear() + 1);
-  const seq = await nextAvoirSeq(supabase, orgId, year);
-  const num = `AV-${year}-${String(seq).padStart(5, "0")}`;
-
-  const { error: avErr } = await supabase.from("credit_notes").insert({
-    organization_id: orgId,
-    client_id: input.clientId,
-    order_id: input.orderId,
-    num,
-    amount: total,
-    used_amount: 0,
-    statut: "EN_COURS",
-    echeance: echeance.toISOString().slice(0, 10),
-    motif,
-    designation: refundable.map((l) => l.designation).join(", "),
-  });
-  if (avErr) {
-    throw new Error(
-      `Retour enregistré mais la création de l'avoir a échoué : ${avErr.message}`,
-    );
-  }
-  return { avoirNum: num };
-}
-*/
 
 export async function createWalkInReturn(
   supabase: SupabaseClient,
@@ -1290,7 +1200,7 @@ export type ReportsOverview = {
  * `makeQuery` must build a FRESH query for the given range (builders mutate),
  * ordered by a stable column so pages never overlap.
  */
-async function fetchAllPages<T>(
+export async function fetchAllPages<T>(
   makeQuery: (
     from: number,
     to: number,
@@ -1321,7 +1231,7 @@ export async function loadReportsOverview(
         .from("orders")
         .select("montant_total,montant_paye,solde_restant")
         .eq("organization_id", orgId)
-        .eq("devis", false).eq("is_restock", false)
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
         .order("id")
         .range(from, to),
     ),
@@ -1383,6 +1293,21 @@ export type OrganizationSettings = {
   plan: string | null;
   subscriptionStatus: string;
   seatLimit: number;
+  /* Identité légale & facturation */
+  legalName: string | null;
+  legalForm: string | null;
+  siret: string | null;
+  tvaIntra: string | null;
+  rcs: string | null;
+  capital: string | null;
+  iban: string | null;
+  bic: string | null;
+  /** Default VAT rate (%) applied to lines without their own rate. */
+  tvaRate: number;
+  invoicePrefix: string;
+  invoiceFooter: string | null;
+  paymentTermsText: string | null;
+  logoUrl: string | null;
 };
 
 export async function loadOrganizationSettings(
@@ -1391,22 +1316,67 @@ export async function loadOrganizationSettings(
 ): Promise<OrganizationSettings> {
   const { data, error } = await supabase
     .from("organizations")
-    .select("id,name,phone,address,city,plan,subscription_status,seat_limit")
+    .select(
+      "id,name,phone,address,city,plan,subscription_status,seat_limit," +
+        "legal_name,legal_form,siret,tva_intra,rcs,capital,iban,bic,tva_rate,invoice_prefix,invoice_footer,payment_terms_text,logo_url",
+    )
     .eq("id", orgId)
     .single();
 
   if (error) throw new Error(error.message);
-  const row = data as Record<string, unknown>;
+  const row = data as unknown as Record<string, unknown>;
+  const s = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
   return {
     id: String(row.id),
     name: String(row.name ?? ""),
-    phone: (row.phone as string | null) ?? null,
-    address: (row.address as string | null) ?? null,
-    city: (row.city as string | null) ?? null,
-    plan: (row.plan as string | null) ?? null,
+    phone: s(row.phone),
+    address: s(row.address),
+    city: s(row.city),
+    plan: s(row.plan),
     subscriptionStatus: String(row.subscription_status ?? "active"),
     seatLimit: toNumber(row.seat_limit),
+    legalName: s(row.legal_name),
+    legalForm: s(row.legal_form),
+    siret: s(row.siret),
+    tvaIntra: s(row.tva_intra),
+    rcs: s(row.rcs),
+    capital: s(row.capital),
+    iban: s(row.iban),
+    bic: s(row.bic),
+    tvaRate: row.tva_rate == null ? 20 : toNumber(row.tva_rate),
+    invoicePrefix: String(row.invoice_prefix ?? "FA"),
+    invoiceFooter: s(row.invoice_footer),
+    paymentTermsText: s(row.payment_terms_text),
+    logoUrl: s(row.logo_url),
   };
+}
+
+/** Full organisation profile (identity + legal + invoicing). ADMIN only. */
+export async function updateOrganizationProfile(
+  supabase: SupabaseClient,
+  input: Omit<OrganizationSettings, "id" | "plan" | "subscriptionStatus" | "seatLimit" | "logoUrl">,
+): Promise<void> {
+  const { error } = await supabase.rpc("update_organization_profile", {
+    p: {
+      name: input.name,
+      phone: input.phone ?? "",
+      address: input.address ?? "",
+      city: input.city ?? "",
+      legal_name: input.legalName ?? "",
+      legal_form: input.legalForm ?? "",
+      siret: input.siret ?? "",
+      tva_intra: input.tvaIntra ?? "",
+      rcs: input.rcs ?? "",
+      capital: input.capital ?? "",
+      iban: input.iban ?? "",
+      bic: input.bic ?? "",
+      tva_rate: input.tvaRate,
+      invoice_prefix: input.invoicePrefix,
+      invoice_footer: input.invoiceFooter ?? "",
+      payment_terms_text: input.paymentTermsText ?? "",
+    },
+  });
+  if (error) throw new Error(error.message);
 }
 
 export async function updateOrganizationSettings(

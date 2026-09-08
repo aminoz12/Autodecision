@@ -26,6 +26,7 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { workflowLabel } from "@/lib/data/dashboard";
 import {
+  cancelOrder,
   loadOrderDetail,
   setLineHandedOver,
   type OrderDetail,
@@ -33,6 +34,17 @@ import {
   type ReceptionStatus,
 } from "@/lib/data/commandes";
 import { loadOrganizationSettings, type OrganizationSettings } from "@/lib/data/saas";
+import {
+  loadOrderPayments,
+  PAYMENT_MODE_LABEL,
+  PAYMENT_MODES,
+  recordOrderPayment,
+  type Payment,
+  type PaymentMode,
+} from "@/lib/data/payments";
+import { Ban, Banknote, HandCoins, Loader2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { emitInvoice, loadOrderInvoice, type Invoice } from "@/lib/data/invoices";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -44,6 +56,7 @@ const LINE_STATUT: Record<
 > = {
   PENDING: { label: "En attente", cls: "attente", icon: Clock },
   RECEIVED: { label: "Reçu", cls: "recu", icon: CheckCircle2 },
+  PARTIAL: { label: "Reçu partiel", cls: "reliquat", icon: Hourglass },
   BACKORDER: { label: "Reliquat", cls: "reliquat", icon: Hourglass },
   NOT_RECEIVED: { label: "Non reçu", cls: "nonrecu", icon: XCircle },
 };
@@ -52,6 +65,14 @@ const PAIEMENT_LABEL: Record<string, { label: string; type: "success" | "info" |
   "PAYÉ": { label: "Payé", type: "success" },
   PARTIEL: { label: "Acompte", type: "warning" },
   "NON_PAYÉ": { label: "Non payé", type: "warning" },
+};
+
+const MODE_PAIEMENT_LABEL: Record<string, string> = {
+  ESPECES: "Espèces",
+  CARTE: "Carte bancaire",
+  VIREMENT: "Virement",
+  CHEQUE: "Chèque",
+  EN_COMPTE: "En compte (garage)",
 };
 
 const LIVREUR_LABEL: Record<string, string> = {
@@ -138,6 +159,94 @@ export default function OrderDetailPage() {
   const [handBusy, setHandBusy] = useState(false);
   const [handError, setHandError] = useState<string | null>(null);
 
+  /* ---- Encaissement ---- */
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMode, setPayMode] = useState<PaymentMode>("ESPECES");
+  const [payRef, setPayRef] = useState("");
+  const [payNote, setPayNote] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  const [payNotice, setPayNotice] = useState<string | null>(null);
+
+  /* ---- Facture (document immuable) ---- */
+  const router = useRouter();
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+
+  /* ---- Annulation ---- */
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelMode, setCancelMode] = useState<PaymentMode>("ESPECES");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!profile?.organization_id || !orderId) return;
+    let cancelled = false;
+    loadOrderInvoice(supabase, profile.organization_id, orderId)
+      .then((i) => {
+        if (!cancelled) setInvoice(i);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, profile?.organization_id, orderId, reloadKey]);
+  const doEmitInvoice = useCallback(async () => {
+    setInvoiceBusy(true);
+    try {
+      const id = await emitInvoice(supabase, orderId);
+      router.push(`/dashboard/factures/${id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInvoiceBusy(false);
+    }
+  }, [supabase, orderId, router]);
+
+  const openPay = useCallback((balance: number) => {
+    setPayAmount(balance > 0 ? balance.toFixed(2) : "");
+    setPayMode("ESPECES");
+    setPayRef("");
+    setPayNote("");
+    setPayError(null);
+    setPayOpen(true);
+  }, []);
+
+  const submitPay = useCallback(async () => {
+    const amount = Math.round(Number(String(payAmount).replace(",", ".")) * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setPayError("Indiquez le montant encaissé.");
+      return;
+    }
+    setPayBusy(true);
+    setPayError(null);
+    try {
+      await recordOrderPayment(supabase, { orderId, amount, mode: payMode, reference: payRef, note: payNote });
+      setPayOpen(false);
+      setPayNotice(`${amount.toLocaleString("fr-FR", { minimumFractionDigits: 2 })} € encaissés (${PAYMENT_MODE_LABEL[payMode].toLowerCase()}).`);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setPayError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPayBusy(false);
+    }
+  }, [supabase, orderId, payAmount, payMode, payRef, payNote]);
+
+  useEffect(() => {
+    if (!profile?.organization_id || !orderId) return;
+    let cancelled = false;
+    loadOrderPayments(supabase, profile.organization_id, orderId)
+      .then((p) => {
+        if (!cancelled) setPayments(p);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, profile?.organization_id, orderId, reloadKey]);
+
   const openHanding = useCallback((l: OrderDetailLine) => {
     // Default: everything the client can take right now (on the shelf, or
     // already received from the supplier).
@@ -223,6 +332,37 @@ export default function OrderDetailPage() {
     type: "info" as const,
   };
   const linesTotal = order.lines.reduce((s, l) => s + l.total, 0);
+  const cashed = order.paye + order.avance;
+  // Cancellation is only possible while nothing irreversible happened:
+  // not delivered, not invoiced, no unit handed to the client.
+  const canCancel =
+    !order.cancelledAt &&
+    order.workflow !== "DELIVERED" &&
+    !invoice &&
+    !order.lines.some((l) => l.handedOver > 0);
+
+  async function submitCancel() {
+    if (!cancelReason.trim()) {
+      setCancelError("Indiquez le motif de l'annulation.");
+      return;
+    }
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await cancelOrder(supabase, {
+        orderId,
+        reason: cancelReason.trim(),
+        refundMode: cashed > 0 ? cancelMode : null,
+      });
+      setCancelOpen(false);
+      setCancelReason("");
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setCancelError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCancelBusy(false);
+    }
+  }
 
   return (
     <div className="od-page">
@@ -244,7 +384,11 @@ export default function OrderDetailPage() {
         <div>
           <h1 className="od-title">
             {order.ref}
-            <span className={`status-badge status-badge--${wf.type}`}>{wf.label}</span>
+            {order.cancelledAt ? (
+              <span className="status-badge status-badge--warning">Annulée</span>
+            ) : (
+              <span className={`status-badge status-badge--${wf.type}`}>{wf.label}</span>
+            )}
           </h1>
           <div className="od-meta">
             <span className="od-meta-item">
@@ -266,15 +410,46 @@ export default function OrderDetailPage() {
             <ScrollText className="h-4 w-4" />
             Bon de livraison
           </button>
-          <button type="button" className="od-btn od-btn--primary" onClick={() => printDoc("facture")}>
-            <Printer className="h-4 w-4" />
-            Imprimer la facture
-          </button>
+          {invoice ? (
+            <Link href={`/dashboard/factures/${invoice.id}`} className="od-btn od-btn--primary">
+              <Printer className="h-4 w-4" />
+              Facture {invoice.number}
+            </Link>
+          ) : !order.devis && !order.isRestock && !order.cancelledAt ? (
+            <button type="button" className="od-btn od-btn--primary" onClick={() => void doEmitInvoice()} disabled={invoiceBusy}>
+              {invoiceBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Printer className="h-4 w-4" />}
+              Émettre la facture
+            </button>
+          ) : null}
+          {canCancel && (
+            <button
+              type="button"
+              className="od-btn od-btn--ghost od-btn--danger"
+              onClick={() => {
+                setCancelError(null);
+                setCancelOpen(true);
+              }}
+            >
+              <Ban className="h-4 w-4" />
+              Annuler la commande
+            </button>
+          )}
           <Link href="/dashboard/commandes" className="od-btn od-btn--ghost">
             Retour
           </Link>
         </div>
       </div>
+
+      {order.cancelledAt && (
+        <div className="od-note od-note--danger">
+          <Ban className="h-4 w-4" />
+          <p>
+            Commande annulée le {fmtDateTime(order.cancelledAt)}
+            {order.cancelReason ? ` — ${order.cancelReason}` : ""}. Les pièces sont revenues en stock et
+            les sommes encaissées ont été remboursées.
+          </p>
+        </div>
+      )}
 
       <div className="od-grid">
         {/* ---- Main column ---- */}
@@ -400,7 +575,14 @@ export default function OrderDetailPage() {
                             </p>
                           )}
                         </td>
-                        <td className="od-td-right od-num">{eur(l.prixVente)}</td>
+                        <td className="od-td-right od-num">
+                          {eur(l.prixVente)}
+                          {l.remisePct > 0 && (
+                            <p className="od-statut-sub">
+                              <s>{eur(l.prixBrut)}</s> · −{l.remisePct.toLocaleString("fr-FR")} %
+                            </p>
+                          )}
+                        </td>
                         <td className="od-td-center od-num">{l.quantity}</td>
                         <td>
                           {editing ? (
@@ -481,6 +663,9 @@ export default function OrderDetailPage() {
             <div className="od-lines-total">
               Total pièces <strong>{eur(linesTotal)}</strong>
             </div>
+            {order.remiseMontant > 0 && (
+              <div className="od-lines-consigne">remise en pied de commande : − {eur(order.remiseMontant)}</div>
+            )}
           </section>
 
           {/* Consigne note */}
@@ -505,6 +690,12 @@ export default function OrderDetailPage() {
                 <dt>Total commande</dt>
                 <dd className="od-kv-strong">{eur(order.total)}</dd>
               </div>
+              {order.remiseMontant > 0 && (
+                <div className="od-kv-row">
+                  <dt>dont remise en pied</dt>
+                  <dd style={{ color: "var(--clr-success-text)", fontWeight: 700 }}>− {eur(order.remiseMontant)}</dd>
+                </div>
+              )}
               <div className="od-kv-row">
                 <dt>Payé</dt>
                 <dd>{eur(order.paye)}</dd>
@@ -533,8 +724,161 @@ export default function OrderDetailPage() {
                   </span>
                 </dd>
               </div>
+              {order.modePaiement && (
+                <div className="od-kv-row">
+                  <dt>Mode de paiement</dt>
+                  <dd className="od-kv-strong">
+                    {MODE_PAIEMENT_LABEL[order.modePaiement] ?? order.modePaiement}
+                  </dd>
+                </div>
+              )}
+              {order.modePaiement === "EN_COMPTE" && order.echeance && (
+                <div className="od-kv-row">
+                  <dt>Échéance</dt>
+                  <dd
+                    style={
+                      order.solde > 0 && order.echeance < new Date().toISOString().slice(0, 10)
+                        ? { color: "var(--clr-danger-text)", fontWeight: 700 }
+                        : undefined
+                    }
+                  >
+                    {new Date(order.echeance).toLocaleDateString("fr-FR")}
+                  </dd>
+                </div>
+              )}
             </dl>
+            {payNotice && (
+              <div className="od-note" style={{ marginTop: 10 }}>
+                <HandCoins className="h-4 w-4" />
+                <p>{payNotice}</p>
+              </div>
+            )}
+            {!order.devis && !order.isRestock && !order.cancelledAt && order.solde > 0 && (
+              <button
+                type="button"
+                className="od-btn od-btn--primary"
+                style={{ marginTop: 12, width: "100%", justifyContent: "center" }}
+                onClick={() => openPay(order.solde)}
+              >
+                <Banknote className="h-4 w-4" /> Encaisser {eur(order.solde)}
+              </button>
+            )}
+            {payments.length > 0 && (
+              <div className="cx-history">
+                <div className="cx-history-title">Règlements</div>
+                {payments.map((p) => (
+                  <div key={p.id} className="cx-history-row">
+                    <span>
+                      {new Date(p.receivedAt).toLocaleDateString("fr-FR")} · {PAYMENT_MODE_LABEL[p.mode]}
+                      {p.kind === "REGLEMENT_COMPTE" ? " · règlement de compte" : p.kind === "REMBOURSEMENT" ? " · remboursement" : ""}
+                      {p.receivedByName ? ` · ${p.receivedByName}` : ""}
+                    </span>
+                    <strong style={{ color: p.kind === "REMBOURSEMENT" ? "var(--clr-danger-text)" : "var(--clr-success-text)" }}>
+                      {p.kind === "REMBOURSEMENT" ? "− " : ""}
+                      {eur(
+                        p.kind === "REGLEMENT_COMPTE"
+                          ? (p.allocations.find((a) => a.orderId === orderId)?.amount ?? p.amount)
+                          : p.amount,
+                      )}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
+
+          {cancelOpen && (
+            <div className="ga-modal-overlay" onClick={() => !cancelBusy && setCancelOpen(false)}>
+              <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title" onClick={(e) => e.stopPropagation()}>
+                <div className="ga-modal-head">
+                  <span className="ga-modal-title" id="cancel-title"><Ban className="h-4 w-4" /> Annuler {order.ref}</span>
+                  <button type="button" className="ga-modal-close" onClick={() => setCancelOpen(false)} aria-label="Fermer" disabled={cancelBusy}><X className="h-4 w-4" /></button>
+                </div>
+                <div className="ga-modal-form">
+                  <p className="od-hint">
+                    Les pièces prises en stock y retournent, la livraison est retirée
+                    {order.avoirApplique > 0 ? ", l'avoir utilisé redevient disponible" : ""}
+                    {cashed > 0 ? ` et ${eur(cashed)} sont remboursés au client.` : "."}
+                  </p>
+                  <div className="od-field">
+                    <span className="od-label">Motif <span className="od-req">*</span></span>
+                    <input className="od-input" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Client parti, erreur de saisie, pièce indisponible…" autoFocus />
+                  </div>
+                  {cashed > 0 && (
+                    <div className="od-field">
+                      <span className="od-label">Remboursement de {eur(cashed)} par</span>
+                      <div className="nc-pay-quick" role="radiogroup">
+                        {PAYMENT_MODES.map((m) => (
+                          <button key={m} type="button" role="radio" aria-checked={cancelMode === m} className={`nc-chip${cancelMode === m ? " nc-chip--on" : ""}`} onClick={() => setCancelMode(m)}>
+                            {PAYMENT_MODE_LABEL[m]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {cancelError && <div className="nc-error">{cancelError}</div>}
+                  <div className="ga-modal-actions">
+                    <button type="button" className="od-btn od-btn--ghost" onClick={() => setCancelOpen(false)} disabled={cancelBusy}>Garder la commande</button>
+                    <button type="button" className="od-btn od-btn--primary od-btn--danger-solid" onClick={() => void submitCancel()} disabled={cancelBusy}>
+                      {cancelBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Ban className="h-4 w-4" />} Confirmer l&apos;annulation
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {payOpen && (
+            <div className="ga-modal-overlay" onClick={() => !payBusy && setPayOpen(false)}>
+              <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="pay-title" onClick={(e) => e.stopPropagation()}>
+                <div className="ga-modal-head">
+                  <span className="ga-modal-title" id="pay-title"><Banknote className="h-4 w-4" /> Encaisser {order.ref}</span>
+                  <button type="button" className="ga-modal-close" onClick={() => setPayOpen(false)} aria-label="Fermer" disabled={payBusy}><X className="h-4 w-4" /></button>
+                </div>
+                <div className="ga-modal-form">
+                  {payError && <div className="nc-error">{payError}</div>}
+                  <div className="od-field">
+                    <span className="od-label">Montant encaissé <span className="od-req">*</span></span>
+                    <div className="nc-pay-input">
+                      <input className="od-input nc-pay-amount" type="number" min={0} max={order.solde} step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} autoFocus />
+                      <span className="nc-pay-unit">€</span>
+                    </div>
+                    <div className="nc-pay-quick">
+                      <button type="button" className="nc-chip" onClick={() => setPayAmount(order.solde.toFixed(2))}>Tout · {eur(order.solde)}</button>
+                      <button type="button" className="nc-chip" onClick={() => setPayAmount((Math.round((order.solde / 2) * 100) / 100).toFixed(2))}>Moitié</button>
+                    </div>
+                    <span className="st-cmd-hint">Reste à payer : {eur(order.solde)}.</span>
+                  </div>
+                  <div className="od-field">
+                    <span className="od-label">Mode de paiement</span>
+                    <div className="nc-pay-quick" role="radiogroup" aria-label="Mode de paiement">
+                      {PAYMENT_MODES.map((m) => (
+                        <button key={m} type="button" role="radio" aria-checked={payMode === m} className={`nc-chip${payMode === m ? " nc-chip--on" : ""}`} onClick={() => setPayMode(m)}>
+                          {PAYMENT_MODE_LABEL[m]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="ga-modal-row">
+                    <div className="od-field">
+                      <span className="od-label">Référence</span>
+                      <input className="od-input" value={payRef} onChange={(e) => setPayRef(e.target.value)} placeholder="N° chèque, virement…" />
+                    </div>
+                    <div className="od-field">
+                      <span className="od-label">Note</span>
+                      <input className="od-input" value={payNote} onChange={(e) => setPayNote(e.target.value)} placeholder="Facultatif" />
+                    </div>
+                  </div>
+                  <div className="ga-modal-actions">
+                    <button type="button" className="od-btn od-btn--ghost" onClick={() => setPayOpen(false)} disabled={payBusy}>Annuler</button>
+                    <button type="button" className="od-btn od-btn--primary" onClick={() => void submitPay()} disabled={payBusy}>
+                      {payBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Banknote className="h-4 w-4" />}
+                      Valider l&apos;encaissement
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Delivery */}
           <section className="od-card">
@@ -629,6 +973,7 @@ export default function OrderDetailPage() {
 
           {printMode === "facture" ? (
             <div className="print-totals">
+              {order.remiseMontant > 0 && <div><span>Remise commerciale</span><strong>− {eur(order.remiseMontant)}</strong></div>}
               <div><span>Total commande</span><strong>{eur(order.total)}</strong></div>
               {order.avoirApplique > 0 && <div><span>Avoir déduit</span><strong>− {eur(order.avoirApplique)}</strong></div>}
               <div><span>Payé</span><strong>{eur(order.paye + order.avance)}</strong></div>

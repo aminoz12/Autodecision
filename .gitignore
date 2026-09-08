@@ -26,3 +26,7 @@ Thumbs.db
 .claude/settings.local.json
 .supabase/
 supabase/.temp/
+
+# business spreadsheets (reference only, never commit)
+*.xlsx
+apps/web/dev.log

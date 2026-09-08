@@ -45,6 +45,10 @@ export type OrderLineDto = {
   qte_remise?: number;
   prix_achat_unitaire: number;
   prix_vente_unitaire: number;
+  /** Gross unit price before the line discount (defaults to prix_vente_unitaire). */
+  prix_brut_unitaire?: number;
+  /** Line discount in percent (0-100); the net unit price is derived server-side. */
+  remise_pct?: number;
 };
 
 export type CreateOrderPayload = {
@@ -61,12 +65,20 @@ export type CreateOrderPayload = {
   devis?: boolean;
   devis_status?: string;
   statut_paiement: string;
+  /** ESPECES / CARTE / VIREMENT / CHEQUE / EN_COMPTE (garages only). */
+  mode_paiement?: string;
   montant_paye: number;
   avance_payee: number;
   /** Credit note consumed as payment on this order. */
   avoir_id?: string;
   avoir_applique?: number;
+  /** Order-level discount (remise en pied), capped by the parts subtotal. */
+  remise_montant?: number;
+  /** Walk-in quote this order was created from (the quote becomes ACCEPTE). */
+  quote_id?: string;
   envoyer_au_livreur?: boolean;
+  /** Stock replenishment order (no client). Staff only. */
+  is_restock?: boolean;
   date_envoi?: string;
   statut_livreur?: string;
   consigne?: string;

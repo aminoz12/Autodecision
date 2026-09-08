@@ -43,7 +43,6 @@ import {
   loadReceptionBoard,
   loadSmsStates,
   markOrderSmsTreated,
-  recordSmsSent,
   setLineHandedOver,
   setLineReceptionStatus,
   type BoardLine,
@@ -61,6 +60,7 @@ const STATUT: Record<
 > = {
   PENDING: { label: "En attente", cls: "attente", icon: Clock },
   RECEIVED: { label: "Reçu", cls: "recu", icon: CheckCircle2 },
+  PARTIAL: { label: "Reçu partiel", cls: "reliquat", icon: Hourglass },
   BACKORDER: { label: "Reliquat", cls: "reliquat", icon: Hourglass },
   NOT_RECEIVED: { label: "Non reçu", cls: "nonrecu", icon: XCircle },
 };
@@ -357,7 +357,7 @@ export default function ReceptionCommandesPage() {
     return [...byOrder.entries()]
       .map(([orderId, lines]) => {
         const first = lines[0];
-        const awaited = lines.filter((l) => l.status === "PENDING" || l.status === "BACKORDER");
+        const awaited = lines.filter((l) => l.status === "PENDING" || l.status === "BACKORDER" || l.status === "PARTIAL");
         const received = lines.filter((l) => l.status === "RECEIVED").length;
         const expected = lines.filter((l) => l.status !== "NOT_RECEIVED").length;
         const inTransit = first.workflow === "IN_TRANSIT";
@@ -471,21 +471,37 @@ export default function ReceptionCommandesPage() {
     }
   }, []);
 
-  const actReceive = (line: BoardLine) =>
+  /** Réception partielle: which line has its quantity input open. */
+  const [partial, setPartial] = useState<{ lineId: string; qty: string } | null>(null);
+
+  // Without qty every missing unit is received; with qty only that many and
+  // the line stays expected for the rest (statut « Reçu partiel »).
+  const actReceive = (line: BoardLine, qty?: number) =>
     withBusy(line.id, async () => {
       if (!orgId) return;
-      await markLineReceived(supabase, orgId, {
-        id: line.id,
-        reference: line.reference,
-        designation: line.designation,
-        quantity: line.quantity,
-        receivedQuantity: line.received,
-      });
+      const missing = Math.max(0, line.quantity - line.received);
+      if (qty != null && (qty < 1 || qty > missing)) {
+        throw new Error(`Quantité invalide : il reste ${missing} pièce(s) à recevoir.`);
+      }
+      await markLineReceived(
+        supabase,
+        orgId,
+        {
+          id: line.id,
+          reference: line.reference,
+          designation: line.designation,
+          quantity: line.quantity,
+          receivedQuantity: line.received,
+        },
+        qty,
+      );
       const now = new Date().toISOString();
+      const received = qty == null ? line.quantity : Math.min(line.quantity, line.received + qty);
+      setPartial(null);
       setBoard((prev) =>
         prev.map((l) =>
           l.id === line.id
-            ? { ...l, status: "RECEIVED", received: l.quantity, receivedAt: now }
+            ? { ...l, status: received >= l.quantity ? "RECEIVED" : "PARTIAL", received, receivedAt: now }
             : l,
         ),
       );
@@ -536,21 +552,17 @@ export default function ReceptionCommandesPage() {
       }
       // Real send through the server (Twilio env) — simulated when no
       // provider is configured, so the workflow still moves forward.
+      // The server resolves the phone number from the order and records the send.
       const res = await fetch("/api/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone: o.clientPhone,
+          orderId: o.orderId,
           message: `Bonjour, vos pièces (${o.received}/${o.total}) sont disponibles en magasin. À bientôt !`,
         }),
       });
       const sent = (await res.json().catch(() => ({}))) as { ok?: boolean; simulated?: boolean; error?: string };
       if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
-      await recordSmsSent(supabase, orgId, {
-        orderId: o.orderId,
-        clientId: o.clientId,
-        phone: o.clientPhone,
-      });
       setNotice(
         sent.simulated
           ? `SMS enregistré pour ${o.clientName} (mode simulation — configurez un fournisseur SMS dans les variables TWILIO_* pour l'envoi réel).`
@@ -865,6 +877,50 @@ export default function ReceptionCommandesPage() {
                               <Check className="h-3.5 w-3.5" />
                             )}
                           </button>
+                          {r.quantity - r.received > 1 &&
+                            (partial?.lineId === r.id ? (
+                              <span className="rc-partial">
+                                <input
+                                  className="od-input rc-partial-input"
+                                  type="number"
+                                  min={1}
+                                  max={r.quantity - r.received - 1}
+                                  value={partial.qty}
+                                  autoFocus
+                                  aria-label="Quantité reçue"
+                                  onChange={(e) => setPartial({ lineId: r.id, qty: e.target.value })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void actReceive(r, Number(partial.qty));
+                                    }
+                                    if (e.key === "Escape") setPartial(null);
+                                  }}
+                                />
+                                <span className="rl-muted">/ {r.quantity - r.received}</span>
+                                <button
+                                  type="button"
+                                  className="rc-act rc-act--recu"
+                                  disabled={isBusy || !partial.qty}
+                                  onClick={() => actReceive(r, Number(partial.qty))}
+                                >
+                                  OK
+                                </button>
+                                <button type="button" className="rc-act rc-act--quiet" onClick={() => setPartial(null)}>
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="rc-act rc-act--recu rc-act--quiet"
+                                disabled={isBusy}
+                                title="Réception partielle : une partie seulement des pièces est arrivée"
+                                onClick={() => setPartial({ lineId: r.id, qty: "1" })}
+                              >
+                                Partiel
+                              </button>
+                            ))}
                           <button
                             type="button"
                             className="rc-act rc-act--reliquat rc-act--quiet"

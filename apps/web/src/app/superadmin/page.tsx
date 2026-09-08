@@ -38,6 +38,14 @@ type Org = {
   createdAt: string;
   city: string | null;
   orders: number;
+  /** Orders and CA over the last 30 days (cancelled excluded). */
+  orders30: number;
+  ca30: number;
+  lastOrderAt: string | null;
+  invoices: number;
+  currentPeriodEnd: string | null;
+  /** Subscribed through Stripe (vs manual activation). */
+  stripe: boolean;
   clients: number;
   staff: number;
   garages: number;
@@ -61,6 +69,21 @@ function frDate(v: string | null): string {
   if (!v) return "—";
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
+}
+
+function eur(v: number): string {
+  return `${v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`;
+}
+
+/** Display price of the monthly plan (the real amount lives on Stripe). */
+const MONTHLY_PRICE = Number((process.env.NEXT_PUBLIC_PRICE_MONTHLY_EUR ?? "49").replace(",", ".")) || 0;
+
+/** No order in 30 days on a paying or trialing magasin older than two weeks: worth a call. */
+function isDormant(o: Org): boolean {
+  if (statusInfo(o).cls === "red") return false;
+  if (o.orders30 > 0) return false;
+  const created = new Date(o.createdAt).getTime();
+  return Date.now() - created > 14 * 24 * 60 * 60 * 1000;
 }
 
 async function api<T>(body?: unknown): Promise<T> {
@@ -151,6 +174,11 @@ export default function SuperAdminPage() {
       trial: orgs.filter((o) => statusInfo(o).label === "Essai").length,
       blocked: orgs.filter((o) => statusInfo(o).cls === "red").length,
       orders: orgs.reduce((s, o) => s + o.orders, 0),
+      orders30: orgs.reduce((s, o) => s + o.orders30, 0),
+      ca30: orgs.reduce((s, o) => s + o.ca30, 0),
+      newOrgs30: orgs.filter((o) => Date.now() - new Date(o.createdAt).getTime() < 30 * 24 * 60 * 60 * 1000).length,
+      dormant: orgs.filter(isDormant).length,
+      mrr: orgs.filter((o) => statusInfo(o).cls === "green").length * MONTHLY_PRICE,
     }),
     [orgs],
   );
@@ -164,7 +192,7 @@ export default function SuperAdminPage() {
           <span className="admin-locked-icon"><ShieldCheck className="h-7 w-7" /></span>
           <h1>Console propriétaire</h1>
           <p>{denied}</p>
-          <Link href="/login" className="od-btn od-btn--primary">Se connecter</Link>
+          <Link href="/superadmin/login" className="od-btn od-btn--primary">Se connecter</Link>
         </div>
       </div>
     );
@@ -188,7 +216,7 @@ export default function SuperAdminPage() {
         <button
           type="button"
           className="od-btn od-btn--ghost"
-          onClick={() => { void logout().then(() => router.replace("/login")); }}
+          onClick={() => { void logout().then(() => router.replace("/superadmin/login")); }}
           title="Se déconnecter"
         >
           <LogOut className="h-4 w-4" />
@@ -204,6 +232,13 @@ export default function SuperAdminPage() {
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#FCEDB9", color: "#983705" }}><AlarmClock className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.trial}</p><p className="ga-stat-label">En essai</p></div></div>
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#FFE7F2", color: "#B3093C" }}><Pause className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.blocked}</p><p className="ga-stat-label">Suspendus / expirés</p></div></div>
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#D6ECFF", color: "#0055BC" }}><ClipboardList className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.orders}</p><p className="ga-stat-label">Commandes (total)</p></div></div>
+      </div>
+      <div className="ga-stats sa-stats">
+        <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#D7F7C2", color: "#0E6245" }}><ClipboardList className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.orders30}</p><p className="ga-stat-label">Commandes · 30 derniers jours</p></div></div>
+        <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#D6ECFF", color: "#0055BC" }}><ClipboardList className="h-5 w-5" /></span><div><p className="ga-stat-value">{eur(stats.ca30)}</p><p className="ga-stat-label">CA des magasins · 30 jours</p></div></div>
+        <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#EEEDFF", color: "#635BFF" }}><Building2 className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.newOrgs30}</p><p className="ga-stat-label">Nouveaux magasins · 30 jours</p></div></div>
+        <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#FCEDB9", color: "#983705" }}><AlarmClock className="h-5 w-5" /></span><div><p className="ga-stat-value">{stats.dormant}</p><p className="ga-stat-label">Sans commande depuis 30 j</p></div></div>
+        <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#D7F7C2", color: "#0E6245" }}><Check className="h-5 w-5" /></span><div><p className="ga-stat-value">{eur(stats.mrr)}</p><p className="ga-stat-label">MRR estimé ({stats.active} actifs × {MONTHLY_PRICE} €)</p></div></div>
       </div>
 
       {loading && orgs.length === 0 ? (
@@ -222,6 +257,9 @@ export default function SuperAdminPage() {
                     <p className="sa-meta">
                       Créé le {frDate(o.createdAt)}{o.city ? ` · ${o.city}` : ""}
                       {st.label === "Essai" && o.trialEndsAt ? ` · essai jusqu'au ${frDate(o.trialEndsAt)}` : ""}
+                      {o.stripe ? ` · Stripe${o.currentPeriodEnd ? `, échéance ${frDate(o.currentPeriodEnd)}` : ""}` : ""}
+                      {` · dernière commande ${o.lastOrderAt ? frDate(o.lastOrderAt) : "jamais"}`}
+                      {isDormant(o) ? " · inactif" : ""}
                     </p>
                   </div>
                   <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
@@ -229,6 +267,8 @@ export default function SuperAdminPage() {
 
                 <div className="sa-kpis">
                   <span><strong>{o.orders}</strong> commandes</span>
+                  <span title="30 derniers jours"><strong>{o.orders30}</strong> sur 30 j · {eur(o.ca30)}</span>
+                  <span><strong>{o.invoices}</strong> factures</span>
                   <span><strong>{o.clients}</strong> clients</span>
                   <span><strong>{o.staff}</strong> staff</span>
                   <span><strong>{o.garages}</strong> garagistes</span>

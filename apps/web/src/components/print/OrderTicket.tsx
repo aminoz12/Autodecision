@@ -34,6 +34,10 @@ export type TicketData = {
   paye: number;
   reste: number;
   statutPaiement: string;
+  /** ESPECES / CARTE / VIREMENT / CHEQUE / EN_COMPTE. */
+  modePaiement?: string | null;
+  /** Due date of an on-account order (yyyy-mm-dd). */
+  echeance?: string | null;
 };
 
 function eur(v: number): string {
@@ -45,6 +49,28 @@ const REGLEMENT_LABEL: Record<string, string> = {
   PARTIEL: "ACOMPTE VERSÉ",
   "NON_PAYÉ": "NON PAYÉ",
 };
+
+const MODE_LABEL: Record<string, string> = {
+  ESPECES: "ESPÈCES",
+  CARTE: "CARTE BANCAIRE",
+  VIREMENT: "VIREMENT",
+  CHEQUE: "CHÈQUE",
+  EN_COMPTE: "EN COMPTE",
+};
+
+function reglementText(data: TicketData): string {
+  const statut = REGLEMENT_LABEL[data.statutPaiement] ?? data.statutPaiement;
+  if (data.modePaiement === "EN_COMPTE") {
+    const due = data.echeance ? new Date(data.echeance) : null;
+    const dueText =
+      due && !Number.isNaN(due.getTime())
+        ? ` · ÉCHÉANCE ${due.toLocaleDateString("fr-FR")}`
+        : "";
+    return `EN COMPTE${dueText}`;
+  }
+  const mode = data.modePaiement ? MODE_LABEL[data.modePaiement] : null;
+  return mode ? `${mode} · ${statut}` : statut;
+}
 
 /* ---- Code 39 barcode (native SVG, no library) ---- */
 /* 9 elements per char (bar/space alternating), n = narrow, w = wide.  */
@@ -97,14 +123,15 @@ export function OrderTicket({
   org,
   data,
 }: {
-  org: Pick<OrganizationSettings, "name" | "phone" | "address" | "city"> | null;
+  org: Pick<OrganizationSettings, "name" | "phone" | "address" | "city" | "tvaRate"> | null;
   data: TicketData;
 }) {
   const created = new Date(data.createdAt);
   const dateStr = created.toLocaleDateString("fr-FR");
   const timeStr = created.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   const magasin = [org?.name, org?.city].filter(Boolean).join(" — ") || "Magasin";
-  const totalHT = data.total / 1.2;
+  const tvaRate = org?.tvaRate ?? 20;
+  const totalHT = data.total / (1 + tvaRate / 100);
   const tva = data.total - totalHT;
 
   return (
@@ -201,7 +228,7 @@ export function OrderTicket({
 
       <div className="tk-totals">
         <div><span>TOTAL HT :</span><span>{eur(totalHT)}</span></div>
-        <div><span>TVA (20%) :</span><span>{eur(tva)}</span></div>
+        <div><span>TVA ({tvaRate.toLocaleString("fr-FR")}%) :</span><span>{eur(tva)}</span></div>
         <div className="tk-dash tk-dash--tight" />
         <div className="tk-totals-ttc"><span>TOTAL TTC :</span><span>{eur(data.total)}</span></div>
         {data.avoirApplique > 0 && <div><span>AVOIR DÉDUIT :</span><span>− {eur(data.avoirApplique)}</span></div>}
@@ -209,7 +236,7 @@ export function OrderTicket({
         {data.reste > 0 && <div className="tk-totals-ttc"><span>RESTE À PAYER :</span><span>{eur(data.reste)}</span></div>}
       </div>
 
-      <p className="tk-reglement">MODE DE RÈGLEMENT : {REGLEMENT_LABEL[data.statutPaiement] ?? data.statutPaiement}</p>
+      <p className="tk-reglement">MODE DE RÈGLEMENT : {reglementText(data)}</p>
 
       <div className="tk-dash" />
 

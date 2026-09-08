@@ -56,9 +56,9 @@ async function handle(request: Request) {
   const garageId = (body.garageId ?? "").trim();
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  if (!garageId || !email || password.length < 6) {
+  if (!garageId || !email || password.length < 8) {
     return NextResponse.json(
-      { error: "Email et mot de passe (≥ 6 caractères) requis." },
+      { error: "Email et mot de passe (≥ 8 caractères) requis." },
       { status: 400 },
     );
   }
@@ -92,10 +92,8 @@ async function handle(request: Request) {
     // Idempotent: if the email already belongs to a garagiste of THIS org,
     // reset its password instead of failing (lets the magasin re-issue creds).
     if (exists) {
-      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      const existing = list?.users?.find(
-        (u) => u.email?.toLowerCase() === email,
-      );
+      const { data: existingId } = await admin.rpc("find_user_id_by_email", { p_email: email });
+      const existing = existingId ? { id: String(existingId) } : null;
       if (existing) {
         const { data: ep } = await admin
           .from("profiles")
