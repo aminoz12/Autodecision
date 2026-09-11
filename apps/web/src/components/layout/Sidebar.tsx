@@ -31,6 +31,7 @@ import { loginFor } from "@/lib/spaces";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/NotificationBell";
+import { MagasinSwitcher } from "@/components/MagasinSwitcher";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
 type NavGroup = { label: string; items: NavItem[] };
@@ -170,6 +171,7 @@ export function Sidebar() {
               <p className="sidebar-brand-sub">Comptoir</p>
             </div>
           </div>
+          <MagasinSwitcher className="sidebar-switch" />
           <button
             type="button"
             className="sidebar-close-btn"

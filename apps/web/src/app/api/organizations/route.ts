@@ -3,13 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * Magasins of the caller's group (server-only, service role).
- *   GET  → every magasin sharing the caller's root organization
- *   POST → create a new magasin { name, city?, phone?, adminName, email, password, copySettings? }
+ * The magasins an owner (ADMIN) can open with one login (server-only, service role).
+ *   GET   → magasins the caller is a member of (organization_members)
+ *   POST  → create a magasin { name, city?, phone?, copySettings? } owned by the caller
+ *   PATCH → switch the session to a magasin { organizationId } the caller is a member of
  *
- * A magasin created here gets its own organization (own trial, own team,
- * own data) with parent_organization_id = the caller's root, so the owner
- * sees all their magasins from /admin. Only an ADMIN of a magasin can call.
+ * profiles.organization_id is « the magasin currently open »: every RLS rule
+ * reads it, so switching is a single update. Caissiers, livreurs and
+ * garagistes belong to one magasin and never reach this route.
  */
 
 const SETTINGS_TO_COPY = [
@@ -27,6 +28,8 @@ const SETTINGS_TO_COPY = [
   "sms_sender",
 ] as const;
 
+const ORG_COLUMNS = "id, name, city, phone, plan, subscription_status, trial_ends_at, created_at";
+
 async function requireOrgAdmin() {
   const supabase = await createClient();
   const {
@@ -42,80 +45,59 @@ async function requireOrgAdmin() {
   if (!profile?.organization_id || profile.role !== "ADMIN" || profile.client_id || profile.livreur_id) {
     return NextResponse.json({ error: "Réservé à l'administrateur du magasin." }, { status: 403 });
   }
-  const orgId = String(profile.organization_id);
-  const { data: org } = await admin
-    .from("organizations")
-    .select("id, name, parent_organization_id")
-    .eq("id", orgId)
-    .maybeSingle();
-  const rootId = String((org?.parent_organization_id as string | null) ?? orgId);
-  return { admin, user, orgId, rootId, displayName: String(profile.display_name ?? "") };
+  return { admin, userId: user.id, orgId: String(profile.organization_id) };
 }
 
-function isMissingColumn(message: string | undefined): boolean {
-  return /parent_organization_id/.test(message ?? "") && /column|schema cache/i.test(message ?? "");
+function missingTable(message: string | undefined): boolean {
+  return /organization_members/.test(message ?? "") && /relation|schema cache|does not exist/i.test(message ?? "");
+}
+
+/** Ids of the magasins the user is a member of; null when the migration is not applied. */
+async function memberOrgIds(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<string[] | null> {
+  const { data, error } = await admin.from("organization_members").select("organization_id").eq("user_id", userId);
+  if (error) {
+    if (missingTable(error.message)) return null;
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((r) => String((r as { organization_id: unknown }).organization_id));
+}
+
+function slugFor(name: string): string {
+  const base = name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${base || "magasin"}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export async function GET() {
   try {
     const ctx = await requireOrgAdmin();
     if (ctx instanceof NextResponse) return ctx;
-    const { admin, orgId, rootId } = ctx;
+    const { admin, userId, orgId } = ctx;
 
-    let rows: Record<string, unknown>[] = [];
-    const grouped = await admin
+    const ids = (await memberOrgIds(admin, userId)) ?? [];
+    if (!ids.includes(orgId)) ids.push(orgId);
+    const { data, error } = await admin
       .from("organizations")
-      .select("id, name, city, phone, plan, subscription_status, trial_ends_at, created_at, parent_organization_id")
-      .or(`id.eq.${rootId},parent_organization_id.eq.${rootId}`)
+      .select(ORG_COLUMNS)
+      .in("id", ids)
       .order("created_at", { ascending: true });
-    if (grouped.error) {
-      if (!isMissingColumn(grouped.error.message)) throw new Error(grouped.error.message);
-      // Migration not applied yet: only the caller's own magasin is known.
-      const own = await admin
-        .from("organizations")
-        .select("id, name, city, phone, plan, subscription_status, trial_ends_at, created_at")
-        .eq("id", orgId);
-      if (own.error) throw new Error(own.error.message);
-      rows = (own.data ?? []) as Record<string, unknown>[];
-    } else {
-      rows = (grouped.data ?? []) as Record<string, unknown>[];
-    }
+    if (error) throw new Error(error.message);
 
-    const ids = rows.map((r) => String(r.id));
-    const { data: admins } = await admin
-      .from("profiles")
-      .select("user_id, organization_id, display_name, role, client_id, livreur_id")
-      .in("organization_id", ids)
-      .eq("role", "ADMIN")
-      .is("client_id", null)
-      .is("livreur_id", null);
-    const adminRows = (admins ?? []) as Record<string, unknown>[];
-    const emails = new Map<string, string | null>();
-    await Promise.all(
-      adminRows.map(async (p) => {
-        const { data } = await admin.auth.admin.getUserById(String(p.user_id));
-        emails.set(String(p.user_id), data?.user?.email ?? null);
-      }),
-    );
-
-    const magasins = rows.map((r) => {
-      const id = String(r.id);
-      return {
-        id,
-        name: String(r.name ?? ""),
-        city: (r.city as string | null) ?? null,
-        phone: (r.phone as string | null) ?? null,
-        plan: String(r.plan ?? ""),
-        status: String(r.subscription_status ?? ""),
-        trialEndsAt: (r.trial_ends_at as string | null) ?? null,
-        createdAt: String(r.created_at ?? ""),
-        isCurrent: id === orgId,
-        isRoot: id === rootId,
-        admins: adminRows
-          .filter((p) => String(p.organization_id) === id)
-          .map((p) => ({ name: String(p.display_name ?? ""), email: emails.get(String(p.user_id)) ?? null })),
-      };
-    });
+    const magasins = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      name: String(r.name ?? ""),
+      city: (r.city as string | null) ?? null,
+      phone: (r.phone as string | null) ?? null,
+      plan: String(r.plan ?? ""),
+      status: String(r.subscription_status ?? ""),
+      trialEndsAt: (r.trial_ends_at as string | null) ?? null,
+      createdAt: String(r.created_at ?? ""),
+      isCurrent: String(r.id) === orgId,
+    }));
     return NextResponse.json({ magasins });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur serveur.";
@@ -127,70 +109,26 @@ export async function POST(request: Request) {
   try {
     const ctx = await requireOrgAdmin();
     if (ctx instanceof NextResponse) return ctx;
-    const { admin, orgId, rootId } = ctx;
+    const { admin, userId, orgId } = ctx;
 
-    let body: {
-      name?: string;
-      city?: string;
-      phone?: string;
-      adminName?: string;
-      email?: string;
-      password?: string;
-      copySettings?: boolean;
-    };
+    let body: { name?: string; city?: string; phone?: string; copySettings?: boolean };
     try {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Corps de requête invalide." }, { status: 400 });
     }
     const name = (body.name ?? "").trim();
-    const adminName = (body.adminName ?? "").trim();
-    const email = (body.email ?? "").trim().toLowerCase();
-    const password = body.password ?? "";
-    if (!name || !adminName || !email || password.length < 8) {
-      return NextResponse.json(
-        { error: "Nom du magasin, nom de l'administrateur, email et mot de passe (≥ 8 caractères) requis." },
-        { status: 400 },
-      );
-    }
+    if (!name) return NextResponse.json({ error: "Le nom du magasin est requis." }, { status: 400 });
 
-    // The signup trigger creates the organization (trial 14 j) + its ADMIN profile.
-    const { data: created, error: createErr } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { organization_name: name, display_name: adminName },
-    });
-    if (createErr || !created.user) {
-      const exists = createErr?.message?.toLowerCase().includes("already");
-      return NextResponse.json(
-        { error: exists ? "Cet email est déjà utilisé : choisissez un autre email pour l'administrateur du nouveau magasin." : createErr?.message ?? "Création impossible." },
-        { status: 400 },
-      );
-    }
-
-    // The profile can land a moment after the insert (metadata update): retry briefly.
-    let newOrgId: string | null = null;
-    for (let i = 0; i < 6 && !newOrgId; i += 1) {
-      const { data: prof } = await admin
-        .from("profiles")
-        .select("organization_id")
-        .eq("user_id", created.user.id)
-        .maybeSingle();
-      newOrgId = prof?.organization_id ? String(prof.organization_id) : null;
-      if (!newOrgId) await new Promise((r) => setTimeout(r, 300));
-    }
-    if (!newOrgId) {
-      return NextResponse.json(
-        { ok: true, email, warning: "Compte créé, mais le magasin n'a pas encore été rattaché : rechargez dans quelques secondes." },
-      );
-    }
-
-    // Link to the group and copy the owner's settings / suppliers.
-    const patch: Record<string, unknown> = {
+    // Settings inherited from the magasin currently open (TVA, legal identity…).
+    const row: Record<string, unknown> = {
+      name,
+      slug: slugFor(name),
+      plan: "TRIAL",
+      subscription_status: "trialing",
+      trial_ends_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
       city: (body.city ?? "").trim() || null,
       phone: (body.phone ?? "").trim() || null,
-      updated_at: new Date().toISOString(),
     };
     if (body.copySettings !== false) {
       const { data: source } = await admin
@@ -201,20 +139,30 @@ export async function POST(request: Request) {
       if (source) {
         for (const key of SETTINGS_TO_COPY) {
           const v = (source as unknown as Record<string, unknown>)[key];
-          if (v != null && v !== "") patch[key] = v;
+          if (v != null && v !== "") row[key] = v;
         }
       }
     }
-    let linked = true;
-    const withParent = await admin
+    // Group link (kept for the superadmin console); ignored when the column is absent.
+    let created = await admin
       .from("organizations")
-      .update({ ...patch, parent_organization_id: rootId })
-      .eq("id", newOrgId);
-    if (withParent.error) {
-      if (!isMissingColumn(withParent.error.message)) throw new Error(withParent.error.message);
-      linked = false;
-      const { error } = await admin.from("organizations").update(patch).eq("id", newOrgId);
-      if (error) throw new Error(error.message);
+      .insert({ ...row, parent_organization_id: orgId })
+      .select("id")
+      .single();
+    if (created.error && /parent_organization_id/.test(created.error.message)) {
+      created = await admin.from("organizations").insert(row).select("id").single();
+    }
+    if (created.error || !created.data) throw new Error(created.error?.message ?? "Création impossible.");
+    const newOrgId = String(created.data.id);
+
+    // The owner opens the new magasin with the same login.
+    const { error: memberErr } = await admin
+      .from("organization_members")
+      .upsert({ user_id: userId, organization_id: newOrgId }, { onConflict: "user_id,organization_id" });
+    let warning: string | undefined;
+    if (memberErr) {
+      if (!missingTable(memberErr.message)) throw new Error(memberErr.message);
+      warning = "Magasin créé, mais l'accès multi-magasins demande la migration « organization_members ».";
     }
 
     if (body.copySettings !== false) {
@@ -223,18 +171,54 @@ export async function POST(request: Request) {
         .select("name, code, own_delivery, lead_days")
         .eq("organization_id", orgId);
       if (suppliers && suppliers.length > 0) {
-        await admin.from("suppliers").insert(
-          suppliers.map((s) => ({ ...(s as Record<string, unknown>), organization_id: newOrgId })),
-        );
+        await admin
+          .from("suppliers")
+          .insert(suppliers.map((s) => ({ ...(s as Record<string, unknown>), organization_id: newOrgId })));
       }
     }
 
-    return NextResponse.json({
-      ok: true,
-      orgId: newOrgId,
-      email,
-      warning: linked ? undefined : "Magasin créé, mais non rattaché au groupe : appliquez la migration « organization_groups ».",
-    });
+    return NextResponse.json({ ok: true, orgId: newOrgId, warning });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Erreur serveur.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const ctx = await requireOrgAdmin();
+    if (ctx instanceof NextResponse) return ctx;
+    const { admin, userId, orgId } = ctx;
+
+    let body: { organizationId?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Corps de requête invalide." }, { status: 400 });
+    }
+    const target = (body.organizationId ?? "").trim();
+    if (!target) return NextResponse.json({ error: "Magasin requis." }, { status: 400 });
+    if (target === orgId) return NextResponse.json({ ok: true, organizationId: orgId });
+
+    const ids = await memberOrgIds(admin, userId);
+    if (ids === null) {
+      return NextResponse.json(
+        { error: "Le changement de magasin demande la migration « organization_members »." },
+        { status: 503 },
+      );
+    }
+    if (!ids.includes(target)) {
+      return NextResponse.json({ error: "Vous n'êtes pas administrateur de ce magasin." }, { status: 403 });
+    }
+    const { error } = await admin
+      .from("profiles")
+      .update({ organization_id: target })
+      .eq("user_id", userId)
+      .eq("role", "ADMIN")
+      .is("client_id", null)
+      .is("livreur_id", null);
+    if (error) throw new Error(error.message);
+    return NextResponse.json({ ok: true, organizationId: target });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur serveur.";
     return NextResponse.json({ error: message }, { status: 500 });

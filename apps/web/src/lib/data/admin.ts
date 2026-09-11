@@ -123,7 +123,8 @@ export function generatePassword(): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Magasins du groupe — /api/organizations (service role)             */
+/*  Mes magasins — /api/organizations (service role). One owner login   */
+/*  opens several magasins; caissiers, livreurs, garages stay per magasin. */
 /* ------------------------------------------------------------------ */
 
 export type MagasinRow = {
@@ -135,11 +136,8 @@ export type MagasinRow = {
   status: string;
   trialEndsAt: string | null;
   createdAt: string;
-  /** The magasin the caller is signed in to. */
+  /** The magasin currently open in this session. */
   isCurrent: boolean;
-  /** Root of the group (the first magasin). */
-  isRoot: boolean;
-  admins: { name: string; email: string | null }[];
 };
 
 async function orgCall<T>(method: string, body?: unknown): Promise<T> {
@@ -157,16 +155,18 @@ export function loadMagasins(): Promise<{ magasins: MagasinRow[] }> {
   return orgCall("GET");
 }
 
-/** Create a new magasin (own organization + its administrator account). */
+/** Create a new magasin owned by the signed-in administrator (same login). */
 export function createMagasin(input: {
   name: string;
   city?: string;
   phone?: string;
-  adminName: string;
-  email: string;
-  password: string;
   /** Copy TVA, legal identity, invoice footer and suppliers from the current magasin (default true). */
   copySettings?: boolean;
-}): Promise<{ ok: true; orgId?: string; email: string; warning?: string }> {
+}): Promise<{ ok: true; orgId: string; warning?: string }> {
   return orgCall("POST", input);
+}
+
+/** Open another magasin: the session's magasin changes server-side; reload afterwards. */
+export function switchMagasin(organizationId: string): Promise<{ ok: true; organizationId: string }> {
+  return orgCall("PATCH", { organizationId });
 }

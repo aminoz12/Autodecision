@@ -6623,3 +6623,10 @@ a.gp-stat:hover { border-color: var(--clr-primary-border); box-shadow: var(--sha
 .pr-features svg { flex-shrink: 0; margin-top: 2px; color: var(--clr-success-text, #0E6245); }
 .pr-footnote { text-align: center; font-size: 12.5px; color: var(--text-muted, #666); margin-top: 28px; }
 @media (max-width: 760px) { .pr-plans--two { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- Magasin switcher (owner with several magasins) ---- */
+.ms-switch { position: relative; display: inline-flex; align-items: center; min-width: 200px; }
+.ms-switch select { padding-left: 32px; font-weight: 600; }
+.ms-switch-icon { position: absolute; left: 10px; pointer-events: none; color: var(--clr-primary, #635BFF); }
+.sidebar-switch { margin-top: 10px; width: 100%; }
+.sidebar-switch select { width: 100%; }
