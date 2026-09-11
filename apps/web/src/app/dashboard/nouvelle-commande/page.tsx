@@ -40,12 +40,7 @@ import {
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import type { CreateOrderPayload } from "@/lib/types/api";
-import {
-  MODE_PAIEMENT,
-  MODE_PAIEMENT_LABEL,
-  paymentTermsLabel,
-  type ModePaiement,
-} from "@/lib/constants/enums";
+import { paymentTermsLabel } from "@/lib/constants/enums";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -56,6 +51,14 @@ const PAIEMENT_LABEL: Record<string, { label: string; cls: string }> = {
   "PAYÉ": { label: "Payé", cls: "green" },
   PARTIEL: { label: "Acompte", cls: "amber" },
   "NON_PAYÉ": { label: "Non payé", cls: "red" },
+};
+
+/** What happens to the money at creation: cashed in full, nothing yet, or carried by the garage account. */
+type Reglement = "PAYEE" | "NON_PAYEE" | "EN_COMPTE";
+const REGLEMENT_LABEL: Record<Reglement, string> = {
+  PAYEE: "Payée",
+  NON_PAYEE: "Non payée",
+  EN_COMPTE: "En compte",
 };
 
 const NEW_CLIENT = "__new__";
@@ -334,11 +337,10 @@ export default function NouvelleCommandePage() {
   ]);
 
   /* ---- Payment & delivery ---- */
-  const [montantPaye, setMontantPaye] = useState(0);
+  /** Règlement à la création : payée, non payée, ou portée au compte du garage. */
+  const [reglement, setReglement] = useState<Reglement>("NON_PAYEE");
   /** Remise en pied de commande (€), capped by the parts subtotal. */
   const [remiseMontant, setRemiseMontant] = useState(0);
-  /** ESPECES by default; EN_COMPTE is only offered for garages. */
-  const [modePaiement, setModePaiement] = useState<ModePaiement>("ESPECES");
 
   /* ---- Avoir as payment ---- */
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
@@ -605,8 +607,9 @@ export default function NouvelleCommandePage() {
     : 0;
   const dueAfterAvoir = Math.max(0, total - avoirApplied);
   /* "En compte": nothing is cashed now, the garage settles within its terms. */
-  const onAccount = modePaiement === "EN_COMPTE";
-  const paidEffective = onAccount ? 0 : Math.min(Math.max(0, montantPaye), dueAfterAvoir);
+  const onAccount = reglement === "EN_COMPTE";
+  /* "Payée": everything left after the avoir is cashed now; otherwise nothing. */
+  const paidEffective = reglement === "PAYEE" ? dueAfterAvoir : 0;
   const remaining = Math.max(0, dueAfterAvoir - paidEffective);
   const effectiveStatut =
     total > 0 && remaining <= 0
@@ -630,16 +633,14 @@ export default function NouvelleCommandePage() {
     return d;
   }, [onAccount, selectedGarage]);
 
-  // A garage order is always carried by its account; a walk-in client pays
-  // on the spot (cash, card, transfer, cheque). The mode follows the destination.
+  // A garage order is always carried by its account; a walk-in client is
+  // either paid or not paid at the counter. The choice follows the destination.
   useEffect(() => {
-    if (destineA === "GARAGE" && modePaiement !== "EN_COMPTE") setModePaiement("EN_COMPTE");
-    if (destineA !== "GARAGE" && modePaiement === "EN_COMPTE") setModePaiement("ESPECES");
-  }, [modePaiement, destineA]);
-  /** Modes offered for the current destination. */
-  const availableModes = MODE_PAIEMENT.filter((m) =>
-    destineA === "GARAGE" ? m === "EN_COMPTE" : m !== "EN_COMPTE",
-  );
+    if (destineA === "GARAGE" && reglement !== "EN_COMPTE") setReglement("EN_COMPTE");
+    if (destineA !== "GARAGE" && reglement === "EN_COMPTE") setReglement("NON_PAYEE");
+  }, [reglement, destineA]);
+  /** Choices offered for the current destination. */
+  const availableReglements: Reglement[] = destineA === "GARAGE" ? ["EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
   /** Most the avoir can cover on this order. */
   const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
 
@@ -648,9 +649,6 @@ export default function NouvelleCommandePage() {
   useEffect(() => {
     if (avoirAmount > avoirCap) setAvoirAmount(avoirCap);
   }, [avoirAmount, avoirCap]);
-  useEffect(() => {
-    if (montantPaye > dueAfterAvoir) setMontantPaye(dueAfterAvoir);
-  }, [montantPaye, dueAfterAvoir]);
 
   const pickAvoir = useCallback(
     (id: string) => {
@@ -816,7 +814,7 @@ export default function NouvelleCommandePage() {
         remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
         devis: false,
         statut_paiement: effectiveStatut,
-        mode_paiement: modePaiement,
+        mode_paiement: onAccount ? "EN_COMPTE" : undefined,
         montant_paye: paidEffective || 0,
         avance_payee: 0,
         avoir_id: avoirApplied > 0 ? avoirId : undefined,
@@ -860,7 +858,7 @@ export default function NouvelleCommandePage() {
         paye: paidEffective,
         reste: remaining,
         statutPaiement: effectiveStatut,
-        modePaiement,
+        modePaiement: onAccount ? "EN_COMPTE" : null,
         echeance: accountDueDate ? accountDueDate.toISOString().slice(0, 10) : null,
       });
       // Refresh client list in case a new one was created.
@@ -900,9 +898,8 @@ export default function NouvelleCommandePage() {
     setKilometrage("");
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
-    setMontantPaye(0);
+    setReglement("NON_PAYEE");
     setRemiseMontant(0);
-    setModePaiement("ESPECES");
     setAvoirId("");
     setAvoirAmount(0);
     setError(null);
@@ -1551,72 +1548,39 @@ export default function NouvelleCommandePage() {
           )}
         </div>
 
-        <div className="od-field nc-pay-mode">
-          <span className="od-label">Mode de paiement</span>
-          <div className="nc-pay-quick" role="radiogroup" aria-label="Mode de paiement">
-            {availableModes.map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="radio"
-                aria-checked={modePaiement === m}
-                className={`nc-chip${modePaiement === m ? " nc-chip--on" : ""}${m === "EN_COMPTE" ? " nc-chip--account" : ""}`}
-                onClick={() => setModePaiement(m)}
-              >
-                {MODE_PAIEMENT_LABEL[m]}
-              </button>
-            ))}
-          </div>
-          {onAccount ? (
-            <span className="st-cmd-hint nc-account-hint">
-              Rien à encaisser : le montant est porté au compte du garage
-              {selectedGarage
-                ? ` (paiement ${paymentTermsLabel(selectedGarage.paymentTermsDays).toLowerCase()}${
-                    accountDueDate ? `, échéance le ${accountDueDate.toLocaleDateString("fr-FR")}` : ""
-                  })`
-                : ""}
-              .
-            </span>
-          ) : null}
-        </div>
-
         <div className="nc-pay">
           <div className="nc-pay-form">
-            <div className="od-field">
-              <span className="od-label">Montant payé maintenant</span>
-              <div className="nc-pay-input">
-                <input
-                  className="od-input nc-pay-amount"
-                  type="number"
-                  min={0}
-                  max={dueAfterAvoir}
-                  step="0.01"
-                  value={onAccount ? "" : montantPaye || ""}
-                  placeholder="0,00"
-                  disabled={dueAfterAvoir <= 0 || onAccount}
-                  onChange={(e) => setMontantPaye(clampMoney(e.target.value, dueAfterAvoir))}
-                />
-                <span className="nc-pay-unit">€</span>
-              </div>
-              <div className="nc-pay-quick">
-                <button type="button" className={`nc-chip${paidEffective <= 0 ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(0)} disabled={dueAfterAvoir <= 0 || onAccount}>
-                  Rien maintenant
-                </button>
-                <button type="button" className={`nc-chip${dueAfterAvoir > 0 && paidEffective >= dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(dueAfterAvoir)} disabled={dueAfterAvoir <= 0 || onAccount}>
-                  Tout · {eur(dueAfterAvoir)}
-                </button>
-                {dueAfterAvoir > 0 && !onAccount && (
-                  <button type="button" className={`nc-chip${paidEffective > 0 && paidEffective < dueAfterAvoir ? " nc-chip--on" : ""}`} onClick={() => setMontantPaye(Math.round((dueAfterAvoir / 2) * 100) / 100)}>
-                    Moitié · {eur(Math.round((dueAfterAvoir / 2) * 100) / 100)}
+            <div className="od-field nc-pay-mode">
+              <span className="od-label">Règlement</span>
+              <div className="nc-pay-quick" role="radiogroup" aria-label="Règlement">
+                {availableReglements.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    role="radio"
+                    aria-checked={reglement === r}
+                    className={`nc-chip${reglement === r ? " nc-chip--on" : ""}${r === "EN_COMPTE" ? " nc-chip--account" : ""}`}
+                    onClick={() => setReglement(r)}
+                  >
+                    {REGLEMENT_LABEL[r]}
+                    {r === "PAYEE" && dueAfterAvoir > 0 ? ` · ${eur(dueAfterAvoir)}` : ""}
                   </button>
-                )}
+                ))}
               </div>
-              <span className="st-cmd-hint">
+              <span className={`st-cmd-hint${onAccount ? " nc-account-hint" : ""}`}>
                 {onAccount
-                  ? "Paiement en compte : le garage règle à l'échéance, pas de montant à saisir."
-                  : dueAfterAvoir <= 0
-                    ? "Rien à encaisser : le total est couvert."
-                    : "Ce que le client règle aujourd'hui. Le reste sera à payer à la remise des pièces."}
+                  ? `Rien à encaisser : le montant est porté au compte du garage${
+                      selectedGarage
+                        ? ` (paiement ${paymentTermsLabel(selectedGarage.paymentTermsDays).toLowerCase()}${
+                            accountDueDate ? `, échéance le ${accountDueDate.toLocaleDateString("fr-FR")}` : ""
+                          })`
+                        : ""
+                    }.`
+                  : reglement === "PAYEE"
+                    ? dueAfterAvoir <= 0
+                      ? "Rien à encaisser : le total est couvert."
+                      : `Le client règle ${eur(dueAfterAvoir)} maintenant.`
+                    : "Rien d'encaissé aujourd'hui : le reste se règle à la remise des pièces (« Encaisser » sur la commande)."}
               </span>
             </div>
           </div>
