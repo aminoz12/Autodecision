@@ -34,12 +34,15 @@ import {
   changeStaffRole,
   createGarageAccess,
   createLivreurAccess,
+  createMagasin,
   createStaffMember,
   deleteAccess,
   generatePassword,
+  loadMagasins,
   loadTeam,
   type GarageAccount,
   type LivreurAccount,
+  type MagasinRow,
   type StaffMember,
 } from "@/lib/data/admin";
 import { fmtDateTime, loadGarages, type GarageSummary } from "@/lib/data/saas";
@@ -62,7 +65,19 @@ function frDate(v: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
 }
 
-type Tab = "equipe" | "garagistes" | "livreurs";
+type Tab = "equipe" | "garagistes" | "livreurs" | "magasins";
+
+const BLOCKED_STATUSES = new Set(["past_due", "unpaid", "canceled", "cancelled", "incomplete_expired", "expired"]);
+
+function magasinStatus(m: MagasinRow): { label: string; cls: string } {
+  const st = m.status.toLowerCase();
+  if (BLOCKED_STATUSES.has(st)) return { label: "Suspendu", cls: "red" };
+  if (st === "trialing" || st === "trial") {
+    const over = m.trialEndsAt && new Date(m.trialEndsAt).getTime() < Date.now();
+    return over ? { label: "Essai expiré", cls: "red" } : { label: "Essai", cls: "amber" };
+  }
+  return { label: "Actif", cls: "green" };
+}
 
 export default function AdminPage() {
   return (
@@ -83,6 +98,7 @@ function AdminContent() {
   const [livreurAccounts, setLivreurAccounts] = useState<LivreurAccount[]>([]);
   const [garages, setGarages] = useState<GarageSummary[]>([]);
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
+  const [magasins, setMagasins] = useState<MagasinRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -93,11 +109,13 @@ function AdminContent() {
     setLoading(true);
     setError(null);
     try {
-      const [team, gars, livs] = await Promise.all([
+      const [team, gars, livs, mag] = await Promise.all([
         loadTeam(),
         loadGarages(supabase, orgId),
         loadLivreurs(supabase, orgId),
+        loadMagasins().catch(() => ({ magasins: [] as MagasinRow[] })),
       ]);
+      setMagasins(mag.magasins);
       setStaff(team.staff);
       setGarageAccounts(team.garageAccounts);
       setLivreurAccounts(team.livreurAccounts ?? []);
@@ -161,6 +179,45 @@ function AdminContent() {
       setSError(err instanceof Error ? err.message : String(err));
     } finally {
       setSSaving(false);
+    }
+  }
+
+  /* ---- Create magasin modal (a whole new organization + its admin) ---- */
+  const [magModal, setMagModal] = useState(false);
+  const [mForm, setMForm] = useState({ name: "", city: "", phone: "", adminName: "", email: "", password: "", copySettings: true });
+  const [mSaving, setMSaving] = useState(false);
+  const [mError, setMError] = useState<string | null>(null);
+  /** Credentials of the magasin just created, shown once. */
+  const [mCreated, setMCreated] = useState<{ name: string; email: string; password: string; warning?: string } | null>(null);
+
+  function openMagModal() {
+    setMError(null);
+    setMCreated(null);
+    setMForm({ name: "", city: "", phone: "", adminName: profile?.display_name ?? "", email: "", password: generatePassword(), copySettings: true });
+    setMagModal(true);
+  }
+
+  async function submitMagasin(e: React.FormEvent) {
+    e.preventDefault();
+    setMSaving(true);
+    setMError(null);
+    try {
+      const res = await createMagasin({
+        name: mForm.name.trim(),
+        city: mForm.city.trim() || undefined,
+        phone: mForm.phone.trim() || undefined,
+        adminName: mForm.adminName.trim(),
+        email: mForm.email.trim(),
+        password: mForm.password,
+        copySettings: mForm.copySettings,
+      });
+      setMCreated({ name: mForm.name.trim(), email: res.email, password: mForm.password, warning: res.warning });
+      setTab("magasins");
+      await load();
+    } catch (err) {
+      setMError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMSaving(false);
     }
   }
 
@@ -262,6 +319,7 @@ function AdminContent() {
     { id: "equipe", label: "Équipe du magasin", sub: "Caissiers & administrateurs", icon: Users, count: staff.length },
     { id: "garagistes", label: "Accès garagistes", sub: "Comptes du portail garage", icon: Building2, count: garageAccounts.length },
     { id: "livreurs", label: "Livreurs", sub: "Équipe de livraison", icon: Truck, count: livreurs.length },
+    { id: "magasins", label: "Mes magasins", sub: "Autres points de vente", icon: Store, count: magasins.length },
   ];
 
   return (
@@ -277,9 +335,13 @@ function AdminContent() {
           </p>
         </div>
         <div className="rl-header-actions">
-          <button type="button" className="od-btn od-btn--primary" onClick={() => openStaffModal("CAISSIER")}>
+          <button type="button" className="od-btn od-btn--primary" onClick={openMagModal}>
             <Store className="h-4 w-4" />
-            Créer un espace magasin
+            Créer un nouveau magasin
+          </button>
+          <button type="button" className="od-btn od-btn--ghost" onClick={() => openStaffModal("CAISSIER")}>
+            <Plus className="h-4 w-4" />
+            Ajouter un caissier
           </button>
           <Link href="/dashboard/fournisseurs" className="od-btn od-btn--ghost">
             <Warehouse className="h-4 w-4" />
@@ -666,7 +728,189 @@ function AdminContent() {
               </div>
             </section>
           )}
+
+          {/* ================= Mes magasins ================= */}
+          {tab === "magasins" && (
+            <section className="od-card rl-table-card">
+              <div className="admin-card-head">
+                <div>
+                  <p className="admin-card-title">Mes magasins</p>
+                  <p className="admin-card-sub">
+                    Chaque magasin a son propre espace, sa propre équipe, ses données et son abonnement. Vous administrez chacun avec l&apos;email de son administrateur.
+                  </p>
+                </div>
+                <button type="button" className="od-btn od-btn--primary" onClick={openMagModal}>
+                  <Store className="h-4 w-4" />
+                  Créer un nouveau magasin
+                </button>
+              </div>
+              <div className="rl-table-wrap">
+                <table className="rl-table">
+                  <thead>
+                    <tr>
+                      <th>Magasin</th>
+                      <th>Administrateurs</th>
+                      <th>Abonnement</th>
+                      <th>Créé le</th>
+                      <th>Connexion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {magasins.map((m) => {
+                      const st = magasinStatus(m);
+                      return (
+                        <tr key={m.id}>
+                          <td>
+                            <p className="rl-client">
+                              {m.name}
+                              {m.isCurrent && <span className="rc-type rc-type--garage rc-type--inline">Vous êtes ici</span>}
+                            </p>
+                            <p className="rl-muted">{[m.city, m.phone].filter(Boolean).join(" · ") || "—"}</p>
+                          </td>
+                          <td>
+                            {m.admins.length === 0 && <span className="rl-muted">—</span>}
+                            {m.admins.map((a) => (
+                              <p key={a.email ?? a.name} className="rl-muted">
+                                <strong>{a.name || "Administrateur"}</strong>
+                                {a.email ? ` · ${a.email}` : ""}
+                              </p>
+                            ))}
+                          </td>
+                          <td>
+                            <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                            {st.label === "Essai" && m.trialEndsAt && (
+                              <p className="rl-muted">jusqu&apos;au {frDate(m.trialEndsAt)}</p>
+                            )}
+                          </td>
+                          <td className="rl-muted">{frDate(m.createdAt)}</td>
+                          <td className="rl-muted">
+                            {m.isCurrent ? "Session en cours" : (
+                              <>
+                                <Link href="/admin/login" className="rc-cmd">/admin/login</Link> avec l&apos;email de son administrateur
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {magasins.length === 0 && (
+                      <tr><td colSpan={5} className="rc-empty-cell">Aucun autre magasin. Créez-en un pour ouvrir un second point de vente.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </>
+      )}
+
+      {/* ================= Create magasin modal ================= */}
+      {magModal && (
+        <div className="ga-modal-overlay" onClick={() => !mSaving && setMagModal(false)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><Store className="h-4 w-4" />{mCreated ? "Magasin créé" : "Créer un nouveau magasin"}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setMagModal(false)} aria-label="Fermer" disabled={mSaving}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {mCreated ? (
+              <div className="ga-modal-form">
+                <div className="od-note">
+                  <Check className="h-4 w-4" />
+                  <p>
+                    <strong>{mCreated.name}</strong> est prêt, avec son propre espace et un essai de 14 jours. Notez ces identifiants : le mot de passe ne sera plus affiché.
+                  </p>
+                </div>
+                {mCreated.warning && <div className="nc-error">{mCreated.warning}</div>}
+                <div className="od-field">
+                  <span className="od-label">Email administrateur</span>
+                  <input className="od-input nc-readonly" readOnly value={mCreated.email} />
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Mot de passe</span>
+                  <div className="admin-pwd">
+                    <input className="od-input nc-readonly" readOnly value={mCreated.password} />
+                    <button
+                      type="button"
+                      className="rc-act rc-act--quiet"
+                      title="Copier"
+                      onClick={() => { void navigator.clipboard?.writeText(`${mCreated.email} / ${mCreated.password}`); setNotice("Identifiants copiés."); }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="ga-modal-actions">
+                  <button type="button" className="od-btn od-btn--ghost" onClick={() => setMagModal(false)}>Fermer</button>
+                  <Link href="/admin/login" className="od-btn od-btn--primary">Se connecter à ce magasin</Link>
+                </div>
+              </div>
+            ) : (
+              <form className="ga-modal-form" onSubmit={submitMagasin}>
+                {mError && <div className="nc-error">{mError}</div>}
+                <div className="od-field">
+                  <span className="od-label">Nom du magasin <span className="od-req">*</span></span>
+                  <input className="od-input" value={mForm.name} onChange={(e) => setMForm({ ...mForm, name: e.target.value })} placeholder="ESPACE AUTO 92 — Colombes" autoFocus />
+                </div>
+                <div className="ga-modal-row">
+                  <div className="od-field">
+                    <span className="od-label">Ville</span>
+                    <input className="od-input" value={mForm.city} onChange={(e) => setMForm({ ...mForm, city: e.target.value })} placeholder="Colombes" />
+                  </div>
+                  <div className="od-field">
+                    <span className="od-label">Téléphone</span>
+                    <input className="od-input" value={mForm.phone} onChange={(e) => setMForm({ ...mForm, phone: e.target.value })} placeholder="01 23 45 67 89" />
+                  </div>
+                </div>
+                <div className="ga-modal-row">
+                  <div className="od-field">
+                    <span className="od-label">Nom de l&apos;administrateur <span className="od-req">*</span></span>
+                    <input className="od-input" value={mForm.adminName} onChange={(e) => setMForm({ ...mForm, adminName: e.target.value })} placeholder="Votre nom" />
+                  </div>
+                  <div className="od-field">
+                    <span className="od-label">Email de connexion <span className="od-req">*</span></span>
+                    <input className="od-input" type="email" value={mForm.email} onChange={(e) => setMForm({ ...mForm, email: e.target.value })} placeholder="colombes@monmagasin.fr" />
+                  </div>
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Mot de passe <span className="od-req">*</span></span>
+                  <div className="admin-pwd">
+                    <input className="od-input" value={mForm.password} onChange={(e) => setMForm({ ...mForm, password: e.target.value })} />
+                    <button type="button" className="rc-act rc-act--quiet" title="Générer" onClick={() => setMForm({ ...mForm, password: generatePassword() })}>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rc-act rc-act--quiet"
+                      title="Copier"
+                      onClick={() => { void navigator.clipboard?.writeText(mForm.password); setNotice("Mot de passe copié."); }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <label className="admin-toggle">
+                  <input type="checkbox" checked={mForm.copySettings} onChange={(e) => setMForm({ ...mForm, copySettings: e.target.checked })} />
+                  <span>Reprendre mes réglages (TVA, mentions légales, pied de facture) et ma liste de fournisseurs</span>
+                </label>
+                <div className="od-note">
+                  <ShieldCheck className="h-4 w-4" />
+                  <p>
+                    Un email différent du vôtre est nécessaire : chaque magasin a son propre administrateur. Le nouveau magasin démarre avec un essai de 14 jours et son propre abonnement.
+                  </p>
+                </div>
+                <div className="ga-modal-actions">
+                  <button type="button" className="od-btn od-btn--ghost" onClick={() => setMagModal(false)} disabled={mSaving}>Annuler</button>
+                  <button type="submit" className="od-btn od-btn--primary" disabled={mSaving || !mForm.name.trim() || !mForm.adminName.trim() || !mForm.email.trim() || mForm.password.length < 8}>
+                    {mSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Store className="h-4 w-4" />}
+                    Créer le magasin
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ================= Create staff modal ================= */}
@@ -676,7 +920,7 @@ function AdminContent() {
             <div className="ga-modal-head">
               <span className="ga-modal-title">
                 {sForm.role === "ADMIN" ? <Users className="h-4 w-4" /> : <Store className="h-4 w-4" />}
-                {sForm.role === "ADMIN" ? "Ajouter un administrateur" : "Créer un espace magasin (caissier)"}
+                {sForm.role === "ADMIN" ? "Ajouter un administrateur" : "Ajouter un caissier"}
               </span>
               <button type="button" className="ga-modal-close" onClick={() => setStaffModal(false)} aria-label="Fermer" disabled={sSaving}>
                 <X className="h-4 w-4" />
