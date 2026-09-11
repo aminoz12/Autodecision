@@ -39,7 +39,7 @@ Create each database change as a new `supabase/migrations/<timestamp>_<slug>.sql
 Diagnostics that are safe to run any time: `supabase/check_app_schema.sql` (columns the
 app expects) and `supabase/audit_rls_isolation.sql` (cross-tenant isolation, rolled back).
 
-Signup flow: `/signup` creates the owner's organization via the `handle_new_user`
+Signup flow: `/admin/signup` (`/signup` redirects there) creates the owner's organization via the `handle_new_user`
 trigger (owner becomes ADMIN, 14-day trial). Spaces: `/admin` (org admin), `/dashboard`
 (counter staff), `/garagiste` (B2B portal), `/livreur` (drivers), `/superadmin` (SaaS
 owner, bound to `platform_owners`).

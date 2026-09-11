@@ -16,6 +16,9 @@ const SPACES: Array<{ prefix: string; login: string }> = [
   { prefix: "/garagiste/dashboard", login: "/garagiste" },
 ];
 
+/** Public doors inside a protected space (besides each login page). */
+const PUBLIC_DOORS = new Set(["/admin/signup"]);
+
 function inSpace(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix + "/");
 }
@@ -31,7 +34,7 @@ export async function middleware(request: NextRequest) {
   }
   if (!user) {
     for (const space of SPACES) {
-      if (inSpace(path, space.prefix) && path !== space.login) {
+      if (inSpace(path, space.prefix) && path !== space.login && !PUBLIC_DOORS.has(path)) {
         return NextResponse.redirect(new URL(space.login, request.url));
       }
     }

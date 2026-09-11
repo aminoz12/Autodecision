@@ -34,7 +34,7 @@ export default function TarifsPage() {
         <Link href="/" className="pr-brand">Autodecision</Link>
         <nav className="pr-nav">
           <Link href="/caissier/login" className="od-btn od-btn--ghost">Se connecter</Link>
-          <Link href="/signup" className="od-btn od-btn--primary">Essai gratuit</Link>
+          <Link href="/admin/signup" className="od-btn od-btn--primary">Essai gratuit</Link>
         </nav>
       </header>
 
