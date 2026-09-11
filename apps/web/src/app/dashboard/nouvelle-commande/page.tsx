@@ -339,8 +339,6 @@ export default function NouvelleCommandePage() {
   /* ---- Payment & delivery ---- */
   /** Règlement à la création : payée, non payée, ou portée au compte du garage. */
   const [reglement, setReglement] = useState<Reglement>("NON_PAYEE");
-  /** Remise en pied de commande (€), capped by the parts subtotal. */
-  const [remiseMontant, setRemiseMontant] = useState(0);
 
   /* ---- Avoir as payment ---- */
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
@@ -589,9 +587,8 @@ export default function NouvelleCommandePage() {
     () => lines.reduce((s, l) => s + l.quantity * (l.prix_vente - netUnit(l.prix_vente, l.remise_pct)), 0),
     [lines],
   );
-  const remiseApplied = Math.min(Math.max(0, remiseMontant), Math.round(partsTotal * 100) / 100);
-  // Order total = parts − remise + returnable deposits (consigne) charged to the client.
-  const total = Math.round((partsTotal - remiseApplied + consigneTotal) * 100) / 100;
+  // Order total = parts (net of line discounts) + returnable deposits (consigne).
+  const total = Math.round((partsTotal + consigneTotal) * 100) / 100;
   const selectedCredit = useMemo(
     () => clientCredits.find((c) => c.id === avoirId) ?? null,
     [clientCredits, avoirId],
@@ -811,7 +808,6 @@ export default function NouvelleCommandePage() {
           remise_pct: l.remise_pct || 0,
           prix_vente_unitaire: netUnit(l.prix_vente || 0, l.remise_pct),
         })),
-        remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
         devis: false,
         statut_paiement: effectiveStatut,
         mode_paiement: onAccount ? "EN_COMPTE" : undefined,
@@ -899,7 +895,6 @@ export default function NouvelleCommandePage() {
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
     setReglement("NON_PAYEE");
-    setRemiseMontant(0);
     setAvoirId("");
     setAvoirAmount(0);
     setError(null);
@@ -1457,32 +1452,12 @@ export default function NouvelleCommandePage() {
           Ajouter une pièce
         </button>
 
-        <div className="nc-remise-row">
-          <label className="od-field nc-remise-field">
-            <span className="od-label">Remise en pied de commande (€)</span>
-            <input
-              className="od-input"
-              type="number"
-              min={0}
-              step="0.01"
-              max={Math.round(partsTotal * 100) / 100}
-              value={remiseMontant || ""}
-              placeholder="0,00"
-              onChange={(e) => setRemiseMontant(clampMoney(e.target.value, partsTotal))}
-            />
-          </label>
-          <div className="nc-remise-sum">
-            {lineDiscountTotal > 0 && (
-              <span className="rl-muted">remises lignes : − {eur(lineDiscountTotal)}</span>
-            )}
-            {remiseApplied > 0 && (
-              <span className="rl-muted">remise en pied : − {eur(remiseApplied)}</span>
-            )}
-          </div>
-        </div>
         <div className="od-lines-total">
           Total commande <strong>{eur(total)}</strong>
         </div>
+        {lineDiscountTotal > 0 && (
+          <div className="od-lines-consigne">dont {eur(lineDiscountTotal)} de remises sur les lignes</div>
+        )}
         {consigneTotal > 0 && (
           <div className="od-lines-consigne">
             dont {eur(consigneTotal)} de consigne
