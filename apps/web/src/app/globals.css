@@ -6630,3 +6630,6 @@ a.gp-stat:hover { border-color: var(--clr-primary-border); box-shadow: var(--sha
 .ms-switch-icon { position: absolute; left: 10px; pointer-events: none; color: var(--clr-primary, #635BFF); }
 .sidebar-switch { margin-top: 10px; width: 100%; }
 .sidebar-switch select { width: 100%; }
+
+.auth-foot--signup { font-weight: 600; }
+.auth-foot-cta { color: var(--clr-primary, #635BFF); text-decoration: underline; }

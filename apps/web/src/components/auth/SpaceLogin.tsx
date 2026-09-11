@@ -305,6 +305,12 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
             </button>
           </form>
 
+          {space === "admin" && (
+            <p className="auth-foot auth-foot--signup">
+              Nouveau magasin ?{" "}
+              <Link href="/signup" className="auth-foot-cta">Créer votre magasin gratuitement</Link>
+            </p>
+          )}
           <p className="auth-foot">
             Pas votre espace ?{" "}
             {OTHER_DOORS.filter((d) => d !== space).map((d, i) => (
