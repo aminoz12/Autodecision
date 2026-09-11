@@ -339,6 +339,8 @@ export default function NouvelleCommandePage() {
   /* ---- Payment & delivery ---- */
   /** Règlement à la création : payée, non payée, ou portée au compte du garage. */
   const [reglement, setReglement] = useState<Reglement>("NON_PAYEE");
+  /** Acompte (€) cashed now on a « Non payée » order; the rest is due at pick-up. */
+  const [acompte, setAcompte] = useState(0);
 
   /* ---- Avoir as payment ---- */
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
@@ -605,8 +607,10 @@ export default function NouvelleCommandePage() {
   const dueAfterAvoir = Math.max(0, total - avoirApplied);
   /* "En compte": nothing is cashed now, the garage settles within its terms. */
   const onAccount = reglement === "EN_COMPTE";
-  /* "Payée": everything left after the avoir is cashed now; otherwise nothing. */
-  const paidEffective = reglement === "PAYEE" ? dueAfterAvoir : 0;
+  /* "Payée": everything left after the avoir is cashed now. "Non payée": only
+   * the acompte typed by the cashier (capped to what is due). "En compte": nothing. */
+  const paidEffective =
+    reglement === "PAYEE" ? dueAfterAvoir : reglement === "NON_PAYEE" ? Math.min(Math.max(0, acompte), dueAfterAvoir) : 0;
   const remaining = Math.max(0, dueAfterAvoir - paidEffective);
   const effectiveStatut =
     total > 0 && remaining <= 0
@@ -646,6 +650,9 @@ export default function NouvelleCommandePage() {
   useEffect(() => {
     if (avoirAmount > avoirCap) setAvoirAmount(avoirCap);
   }, [avoirAmount, avoirCap]);
+  useEffect(() => {
+    if (acompte > dueAfterAvoir) setAcompte(Math.max(0, dueAfterAvoir));
+  }, [acompte, dueAfterAvoir]);
 
   const pickAvoir = useCallback(
     (id: string) => {
@@ -895,6 +902,7 @@ export default function NouvelleCommandePage() {
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
     setReglement("NON_PAYEE");
+    setAcompte(0);
     setAvoirId("");
     setAvoirAmount(0);
     setError(null);
@@ -1470,10 +1478,26 @@ export default function NouvelleCommandePage() {
         <div className="od-card-title">Paiement</div>
 
         <div className="nc-grid">
-          <div className="od-field">
-            <span className="od-label">Total commande</span>
-            <input className="od-input nc-readonly" readOnly value={eur(total)} />
-          </div>
+          {!onAccount && (
+            <div className="od-field">
+              <span className="od-label">Acompte</span>
+              <div className="nc-pay-input">
+                <input
+                  className={`od-input nc-pay-amount${reglement === "PAYEE" ? " nc-readonly" : ""}`}
+                  type="number"
+                  min={0}
+                  max={dueAfterAvoir}
+                  step="0.01"
+                  value={reglement === "PAYEE" ? dueAfterAvoir.toFixed(2) : acompte || ""}
+                  placeholder="0,00"
+                  disabled={reglement === "PAYEE" || dueAfterAvoir <= 0}
+                  title={reglement === "PAYEE" ? "Commande payée : la totalité est encaissée" : "Somme versée aujourd'hui, le reste à la remise des pièces"}
+                  onChange={(e) => setAcompte(clampMoney(e.target.value, dueAfterAvoir))}
+                />
+                <span className="nc-pay-unit">€</span>
+              </div>
+            </div>
+          )}
           <div className="od-field nc-col-2">
             <span className="od-label">Avoir du client</span>
             {clientCredits.length > 0 ? (
@@ -1555,7 +1579,9 @@ export default function NouvelleCommandePage() {
                     ? dueAfterAvoir <= 0
                       ? "Rien à encaisser : le total est couvert."
                       : `Le client règle ${eur(dueAfterAvoir)} maintenant.`
-                    : "Rien d'encaissé aujourd'hui : le reste se règle à la remise des pièces (« Encaisser » sur la commande)."}
+                    : paidEffective > 0
+                      ? `Acompte de ${eur(paidEffective)} encaissé : reste ${eur(remaining)} à la remise des pièces.`
+                      : "Rien d'encaissé aujourd'hui : le reste se règle à la remise des pièces (« Encaisser » sur la commande)."}
               </span>
             </div>
           </div>
