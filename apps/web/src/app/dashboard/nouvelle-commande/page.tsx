@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  FileSignature,
   Info,
   Loader2,
   Package,
@@ -25,7 +24,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
-import { createQuote, loadQuote, type QuotePayload } from "@/lib/data/quotes";
 import {
   createClientRecord,
   loadClientCredits,
@@ -339,12 +337,6 @@ export default function NouvelleCommandePage() {
   const [montantPaye, setMontantPaye] = useState(0);
   /** Remise en pied de commande (€), capped by the parts subtotal. */
   const [remiseMontant, setRemiseMontant] = useState(0);
-
-  /* ---- Devis particulier ---- */
-  /** Quote this order is being created from (deep link ?quote=<id>). */
-  const [sourceQuote, setSourceQuote] = useState<{ id: string; ref: string } | null>(null);
-  const [quoteSaving, setQuoteSaving] = useState(false);
-  const [createdQuote, setCreatedQuote] = useState<{ id: string; ref: string } | null>(null);
   /** ESPECES by default; EN_COMPTE is only offered for garages. */
   const [modePaiement, setModePaiement] = useState<ModePaiement>("ESPECES");
 
@@ -405,51 +397,6 @@ export default function NouvelleCommandePage() {
             setImmatriculation(c.immatriculation ?? "");
             setVehicleModel(c.vehicleModel ?? "");
           }
-        }
-        // Deep link from Devis: /dashboard/nouvelle-commande?quote=<id> loads
-        // the quote (client, parts, discounts) so it becomes an order.
-        const wantedQuote = params.get("quote");
-        if (wantedQuote) {
-          void loadQuote(supabase, orgId, wantedQuote)
-            .then((q) => {
-              if (cancelled || !q) return;
-              if (q.convertedOrderId) {
-                setError(`Le devis ${q.ref} a déjà été transformé en commande.`);
-                return;
-              }
-              const p = q.payload;
-              const c = q.clientId ? cls.find((x) => x.id === q.clientId) : undefined;
-              const isGarage = Boolean(q.clientId) && gars.some((g) => g.id === q.clientId);
-              setDestineA(isGarage ? "GARAGE" : "COMPTOIR");
-              setClientId(c ? c.id : NEW_CLIENT);
-              setClientName(c?.name ?? q.clientName);
-              setClientPhone(p.client_phone && p.client_phone !== "-" ? p.client_phone : (c?.phone ?? ""));
-              setClientEmail(p.client_email ?? c?.email ?? "");
-              setImmatriculation(p.immatriculation ?? c?.immatriculation ?? "");
-              setVehicleModel(p.vehicle_model ?? c?.vehicleModel ?? "");
-              setKilometrage(p.kilometrage ? String(p.kilometrage) : "");
-              if (p.canal_vente) setCanalVente(p.canal_vente);
-              setLines(
-                (p.lines ?? []).map((l) => ({
-                  nom_produit: l.nom_produit,
-                  reference: l.reference,
-                  fournisseur_id: l.fournisseur_id ?? "",
-                  quantity: l.quantity,
-                  prix_achat: l.prix_achat_unitaire || 0,
-                  prix_vente: l.prix_brut_unitaire ?? l.prix_vente_unitaire ?? 0,
-                  remise_pct: l.remise_pct || 0,
-                  retours_impossible: Boolean(l.retour_impossible),
-                  consigne: Boolean(l.consigne),
-                  consigne_price: l.consigne_price,
-                })),
-              );
-              setRemiseMontant(p.remise_montant || 0);
-              setSourceQuote({ id: q.id, ref: q.ref });
-              setPdfInfo(`Devis ${q.ref} chargé : vérifiez les pièces et le paiement, puis envoyez la commande.`);
-            })
-            .catch((e: unknown) => {
-              if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-            });
         }
       })
       .catch((e: unknown) => {
@@ -780,59 +727,6 @@ export default function NouvelleCommandePage() {
     }
   }
 
-  /* ---- Enregistrer en devis (pas de paiement, pas de stock, pas de livraison) ---- */
-  async function handleSaveQuote() {
-    if (!profile?.organization_id) {
-      setError("Aucun magasin associé à ce compte.");
-      return;
-    }
-    if (!clientName.trim()) {
-      setError("Renseignez le nom du client.");
-      return;
-    }
-    const validLines = lines.filter((l) => l.nom_produit.trim() && l.reference.trim());
-    if (validLines.length === 0) {
-      setError("Ajoutez au moins une pièce avec une désignation et une référence.");
-      return;
-    }
-    setQuoteSaving(true);
-    setError(null);
-    try {
-      const payload: QuotePayload = {
-        canal_vente: canalVente,
-        client_id: clientId === NEW_CLIENT ? undefined : clientId,
-        client_name: clientName.trim(),
-        client_phone: clientPhone.trim() || "-",
-        client_email: clientEmail.trim() || undefined,
-        immatriculation: immatriculation.trim() || undefined,
-        vehicle_model: vehicleModel.trim() || undefined,
-        kilometrage: kilometrage.trim() ? Number(kilometrage.replace(/\D/g, "")) : undefined,
-        lines: validLines.map((l) => ({
-          nom_produit: l.nom_produit.trim(),
-          reference: l.reference.trim(),
-          fournisseur_id: l.fournisseur_id || undefined,
-          quantity: l.quantity || 1,
-          a_commander_pour_livreur: Boolean(l.fournisseur_id),
-          depuis_magasin: !l.fournisseur_id,
-          retour_impossible: Boolean(l.retours_impossible),
-          consigne: Boolean(l.consigne),
-          consigne_price: l.consigne ? l.consigne_price || 0 : undefined,
-          prix_achat_unitaire: l.prix_achat || 0,
-          prix_brut_unitaire: l.prix_vente || 0,
-          remise_pct: l.remise_pct || 0,
-          prix_vente_unitaire: netUnit(l.prix_vente || 0, l.remise_pct),
-        })),
-        remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
-        validity_days: 30,
-      };
-      setCreatedQuote(await createQuote(supabase, payload));
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Erreur lors de la création du devis.");
-    } finally {
-      setQuoteSaving(false);
-    }
-  }
-
   /* ---- Submit ---- */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -920,7 +814,6 @@ export default function NouvelleCommandePage() {
           prix_vente_unitaire: netUnit(l.prix_vente || 0, l.remise_pct),
         })),
         remise_montant: remiseApplied > 0 ? remiseApplied : undefined,
-        quote_id: sourceQuote?.id,
         devis: false,
         statut_paiement: effectiveStatut,
         mode_paiement: modePaiement,
@@ -1009,8 +902,6 @@ export default function NouvelleCommandePage() {
     setLines([{ ...emptyLine }]);
     setMontantPaye(0);
     setRemiseMontant(0);
-    setSourceQuote(null);
-    setCreatedQuote(null);
     setModePaiement("ESPECES");
     setAvoirId("");
     setAvoirAmount(0);
@@ -1024,33 +915,6 @@ export default function NouvelleCommandePage() {
   /* ---------------------------------------------------------------- */
   /*  Success screen                                                   */
   /* ---------------------------------------------------------------- */
-
-  if (createdQuote) {
-    return (
-      <div className="od-page">
-        <div className="od-card nc-success">
-          <span className="nc-success-icon">
-            <FileSignature className="h-8 w-8" />
-          </span>
-          <h2 className="nc-success-title">Devis enregistré</h2>
-          <p className="nc-success-sub">
-            Le devis <strong>{createdQuote.ref}</strong> ({eur(total)}) est valable 30 jours. Il devient une
-            commande depuis la page Devis, quand le client accepte.
-          </p>
-          <div className="nc-success-actions">
-            <Link href="/dashboard/devis" className="od-btn od-btn--primary">
-              <FileSignature className="h-4 w-4" />
-              Voir les devis
-            </Link>
-            <button type="button" className="od-btn od-btn--ghost" onClick={resetForm}>
-              <Plus className="h-4 w-4" />
-              Nouvelle commande
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (createdRef) {
     return (
@@ -1773,19 +1637,9 @@ export default function NouvelleCommandePage() {
           Réinitialiser
         </button>
         <button
-          type="button"
-          className="od-btn od-btn--ghost"
-          onClick={() => void handleSaveQuote()}
-          disabled={saving || quoteSaving || Boolean(sourceQuote)}
-          title={sourceQuote ? `Commande issue du devis ${sourceQuote.ref}` : "Enregistrer ces pièces et prix comme devis, sans commander"}
-        >
-          {quoteSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <FileSignature className="h-4 w-4" />}
-          {quoteSaving ? "Enregistrement…" : "Enregistrer en devis"}
-        </button>
-        <button
           type="submit"
           className="od-btn od-btn--primary nc-submit"
-          disabled={saving || quoteSaving}
+          disabled={saving}
         >
           {saving ? (
             <Loader2 className="h-4 w-4 nc-spin" />

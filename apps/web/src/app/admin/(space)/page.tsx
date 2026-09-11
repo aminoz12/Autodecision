@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Settings,
   ShieldCheck,
+  Store,
   Trash2,
   Truck,
   UserRound,
@@ -133,6 +134,14 @@ function AdminContent() {
   const [sInvite, setSInvite] = useState(true);
   const [sSaving, setSSaving] = useState(false);
   const [sError, setSError] = useState<string | null>(null);
+
+  /** Open the account modal for a caissier (espace magasin) or an admin. */
+  function openStaffModal(role: "CAISSIER" | "ADMIN") {
+    setSError(null);
+    setSForm((f) => ({ ...f, role, password: generatePassword() }));
+    setTab("equipe");
+    setStaffModal(true);
+  }
 
   async function submitStaff(e: React.FormEvent) {
     e.preventDefault();
@@ -268,6 +277,10 @@ function AdminContent() {
           </p>
         </div>
         <div className="rl-header-actions">
+          <button type="button" className="od-btn od-btn--primary" onClick={() => openStaffModal("CAISSIER")}>
+            <Store className="h-4 w-4" />
+            Créer un espace magasin
+          </button>
           <Link href="/dashboard/fournisseurs" className="od-btn od-btn--ghost">
             <Warehouse className="h-4 w-4" />
             Fournisseurs
@@ -327,7 +340,7 @@ function AdminContent() {
                   <p className="admin-card-title">Caissiers &amp; administrateurs</p>
                   <p className="admin-card-sub">Ils se connectent sur cet espace magasin avec leur email.</p>
                 </div>
-                <button type="button" className="od-btn od-btn--primary" onClick={() => { setSError(null); setSForm((f) => ({ ...f, password: generatePassword() })); setStaffModal(true); }}>
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => openStaffModal("CAISSIER")}>
                   <Plus className="h-4 w-4" />
                   Ajouter un membre
                 </button>
@@ -661,7 +674,10 @@ function AdminContent() {
         <div className="ga-modal-overlay" onClick={() => !sSaving && setStaffModal(false)}>
           <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="ga-modal-head">
-              <span className="ga-modal-title"><Users className="h-4 w-4" />Ajouter un membre de l&apos;équipe</span>
+              <span className="ga-modal-title">
+                {sForm.role === "ADMIN" ? <Users className="h-4 w-4" /> : <Store className="h-4 w-4" />}
+                {sForm.role === "ADMIN" ? "Ajouter un administrateur" : "Créer un espace magasin (caissier)"}
+              </span>
               <button type="button" className="ga-modal-close" onClick={() => setStaffModal(false)} aria-label="Fermer" disabled={sSaving}>
                 <X className="h-4 w-4" />
               </button>

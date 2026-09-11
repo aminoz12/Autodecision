@@ -74,8 +74,6 @@ export type CreateOrderPayload = {
   avoir_applique?: number;
   /** Order-level discount (remise en pied), capped by the parts subtotal. */
   remise_montant?: number;
-  /** Walk-in quote this order was created from (the quote becomes ACCEPTE). */
-  quote_id?: string;
   envoyer_au_livreur?: boolean;
   /** Stock replenishment order (no client). Staff only. */
   is_restock?: boolean;

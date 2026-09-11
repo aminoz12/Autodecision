@@ -1,12 +1,10 @@
 "use client";
 
 import {
-  Banknote,
   Boxes,
   ChartColumn,
   CircleDollarSign,
   ClipboardPlus,
-  FileSignature,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -43,9 +41,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
       { href: "/dashboard/nouvelle-commande", label: "Nouvelle commande", icon: ClipboardPlus },
-      { href: "/dashboard/devis", label: "Devis", icon: FileSignature },
       { href: "/dashboard/commandes", label: "Suivi des commandes", icon: PackageCheck },
-      { href: "/dashboard/caisse", label: "Caisse", icon: Banknote },
     ],
   },
   {
