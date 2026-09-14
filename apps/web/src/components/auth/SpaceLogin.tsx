@@ -157,7 +157,7 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
       setError(
         profileLoadError
           ? `Profil introuvable pour ce compte (${profileLoadError}).`
-          : "Profil introuvable pour ce compte. Exécutez supabase/schema.sql puis backfill_profiles.sql.",
+          : "Profil introuvable pour ce compte. Demandez à l'administrateur de votre magasin de recréer votre accès.",
       );
       return;
     }

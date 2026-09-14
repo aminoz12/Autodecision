@@ -3,11 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * Create (or reset) a login for a livreur. ADMIN-only.
+ * Create (or reset) THE login of a livreur. ADMIN-only.
  * Body: { livreurId, email, password }
- * The confirmed auth user carries app_metadata { organization_id,
- * staff_role: 'LIVREUR', livreur_id } — handle_new_user writes the profile,
- * and RLS scopes the session to the deliveries assigned to that livreur.
+ * One login per livreur (unique profiles.livreur_id): when the livreur
+ * already has one, it is updated in place — new password, and new email if
+ * it changed — never duplicated. The confirmed auth user carries
+ * app_metadata { organization_id, staff_role: 'LIVREUR', livreur_id };
+ * handle_new_user writes the profile, and the livreur_tour() RPC serves the
+ * session its deliveries.
  */
 export async function POST(request: Request) {
   try {
@@ -67,6 +70,55 @@ async function handle(request: Request) {
   }
 
   const appMeta = { organization_id: orgId, staff_role: "LIVREUR", livreur_id: livreurId };
+  const profileRow = { organization_id: orgId, livreur_id: livreurId, role: "LIVREUR", client_id: null };
+
+  const [{ data: current }, { data: emailOwnerId }] = await Promise.all([
+    admin.from("profiles").select("user_id").eq("livreur_id", livreurId).limit(1).maybeSingle(),
+    admin.rpc("find_user_id_by_email", { p_email: email }),
+  ]);
+  const emailOwner = emailOwnerId ? String(emailOwnerId) : null;
+
+  // The livreur already has a login: reset it in place.
+  if (current) {
+    const currentId = String(current.user_id);
+    if (emailOwner && emailOwner !== currentId) {
+      return NextResponse.json(
+        { error: "Cet email est déjà utilisé par un autre compte." },
+        { status: 400 },
+      );
+    }
+    const { error: updateError } = await admin.auth.admin.updateUserById(currentId, {
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { display_name: livreur.name },
+      app_metadata: appMeta,
+    });
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message ?? "Mise à jour impossible." }, { status: 400 });
+    }
+    await admin.from("profiles").update(profileRow).eq("user_id", currentId);
+    return NextResponse.json({ ok: true, email, reset: true });
+  }
+
+  // Never take over an existing account (another livreur, staff, garage, another magasin).
+  if (emailOwner) {
+    const { data: owner } = await admin
+      .from("profiles")
+      .select("organization_id, livreur_id")
+      .eq("user_id", emailOwner)
+      .maybeSingle();
+    const otherLivreur = owner && owner.organization_id === orgId && owner.livreur_id;
+    return NextResponse.json(
+      {
+        error: otherLivreur
+          ? "Cet email est déjà l'accès d'un autre livreur du magasin : supprimez cet accès d'abord."
+          : "Cet email est déjà utilisé par un autre compte.",
+      },
+      { status: 400 },
+    );
+  }
+
   const { data: created, error } = await admin.auth.admin.createUser({
     email,
     password,
@@ -74,46 +126,12 @@ async function handle(request: Request) {
     user_metadata: { display_name: livreur.name },
     app_metadata: appMeta,
   });
-
   if (error) {
-    const exists = error.message?.toLowerCase().includes("already");
-    if (exists) {
-      // Idempotent reset when the email already belongs to a livreur of THIS org.
-      const { data: existingId } = await admin.rpc("find_user_id_by_email", { p_email: email });
-      const existing = existingId ? { id: String(existingId) } : null;
-      if (existing) {
-        const { data: ep } = await admin
-          .from("profiles")
-          .select("organization_id, livreur_id")
-          .eq("user_id", existing.id)
-          .maybeSingle();
-        if (ep && ep.organization_id === orgId && ep.livreur_id) {
-          await admin.auth.admin.updateUserById(existing.id, {
-            password,
-            email_confirm: true,
-            user_metadata: { display_name: livreur.name },
-            app_metadata: appMeta,
-          });
-          await admin
-            .from("profiles")
-            .update({ organization_id: orgId, livreur_id: livreurId, role: "LIVREUR", client_id: null })
-            .eq("user_id", existing.id);
-          return NextResponse.json({ ok: true, email, reset: true });
-        }
-      }
-      return NextResponse.json(
-        { error: "Cet email est déjà utilisé par un autre compte." },
-        { status: 400 },
-      );
-    }
     return NextResponse.json({ error: error.message ?? "Création impossible." }, { status: 400 });
   }
 
   if (created.user) {
-    await admin
-      .from("profiles")
-      .update({ organization_id: orgId, livreur_id: livreurId, role: "LIVREUR", client_id: null })
-      .eq("user_id", created.user.id);
+    await admin.from("profiles").update(profileRow).eq("user_id", created.user.id);
   }
 
   return NextResponse.json({ ok: true, email });

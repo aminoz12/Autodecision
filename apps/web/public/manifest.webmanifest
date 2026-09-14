@@ -1,9 +1,10 @@
 {
+  "id": "/livreur",
   "name": "Autodecision — Livraisons",
   "short_name": "Livraisons",
   "description": "Tournée du livreur : adresses, appel client, preuve de livraison.",
   "start_url": "/livreur",
-  "scope": "/",
+  "scope": "/livreur",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F6F8FA",

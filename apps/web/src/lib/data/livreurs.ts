@@ -84,6 +84,15 @@ export async function updateLivreur(
   }
 }
 
+/** Asked before deactivating: the livreur loses the tour immediately. */
+export function deactivateLivreurConfirm(name: string, inTransit = 0): string {
+  const pending =
+    inTransit > 0
+      ? ` ${inTransit} livraison${inTransit > 1 ? "s" : ""} en cours ${inTransit > 1 ? "devront" : "devra"} être confiée${inTransit > 1 ? "s" : ""} à un autre livreur.`
+      : "";
+  return `Désactiver ${name} ? L'accès à la tournée est coupé immédiatement : plus de connexion ni de confirmation de livraison.${pending}`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Dispatch                                                          */
 /* ------------------------------------------------------------------ */

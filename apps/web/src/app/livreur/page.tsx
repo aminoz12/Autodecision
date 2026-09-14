@@ -5,6 +5,7 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  CloudOff,
   Loader2,
   LogOut,
   MapPin,
@@ -12,75 +13,113 @@ import {
   Package,
   Phone,
   RefreshCw,
+  Trash2,
   Truck,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
+  buildFailureReason,
   compressImage,
   DELIVERY_FAILURE_REASONS,
+  DeliveryNetworkError,
   deliverOrder,
+  isNetworkError,
+  LivreurDisabledError,
+  loadLivreurTour,
   mapsLink,
   reportDeliveryFailure,
+  splitTour,
   uploadProofOfDelivery,
+  type TourStop,
 } from "@/lib/data/delivery";
-import { toNumber } from "@/lib/data/saas";
+import {
+  clearTourCache,
+  flushOutbox,
+  listOutbox,
+  loadTourCache,
+  newOutboxId,
+  outboxAvailable,
+  putOutbox,
+  saveTourCache,
+  type FlushReport,
+  type OutboxItem,
+} from "@/lib/data/delivery-outbox";
 import { homeSpace } from "@/lib/spaces";
 
-type Embedded<T> = T | T[] | null | undefined;
-function first<T>(v: Embedded<T>): T | null {
-  if (!v) return null;
-  return Array.isArray(v) ? v[0] ?? null : v;
-}
-function arr<T>(v: Embedded<T>): T[] {
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
-}
+/** Background refresh while the app is in front (new assignments also arrive by Realtime). */
+const REFRESH_MS = 60_000;
 
-type Delivery = {
-  id: string;
-  ref: string;
-  client: string;
-  phone: string | null;
-  address: string | null;
-  city: string | null;
-  isGarage: boolean;
-  workflow: string;
-  dateEnvoi: string | null;
-  deliveredAt: string | null;
-  attempts: number;
-  failedReason: string | null;
-  note: string | null;
-  pieces: { name: string; reference: string; quantity: number }[];
-};
-
-function fmtTime(v: string | null): string {
-  if (!v) return "";
+function fmtTime(v: string | number | null): string {
+  if (v === null || v === "") return "";
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function subscribeOnline(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+
+function pieceCount(s: TourStop): number {
+  return s.pieces.reduce((n, p) => n + p.quantity, 0);
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n > 1 ? "s" : ""}`;
+}
+
+function flushSummary(report: FlushReport): { notice: string | null; error: string | null } {
+  const notices: string[] = [];
+  if (report.sent.length > 0) {
+    notices.push(`${plural(report.sent.length, "confirmation")} gardée${report.sent.length > 1 ? "s" : ""} hors connexion envoyée${report.sent.length > 1 ? "s" : ""} au magasin.`);
+  }
+  if (report.photoDropped.length > 0) {
+    notices.push(`Photo refusée pour ${report.photoDropped.map((i) => i.ref).join(", ")} : livraison confirmée sans photo.`);
+  }
+  return {
+    notice: notices.length > 0 ? notices.join(" ") : null,
+    error: report.rejected.length > 0 ? report.rejected.map((r) => `${r.item.ref} : ${r.message}`).join(" · ") : null,
+  };
+}
+
 /**
- * Mobile space for a LIVREUR: the deliveries assigned to them (RLS enforces
- * it server-side), in tour order, with the address, a call button, the
- * itinerary, and one clear outcome per stop: delivered (with proof) or not.
+ * Mobile space for a LIVREUR: the deliveries assigned to them (served by the
+ * livreur_tour() RPC — nothing else of the magasin is readable), in tour
+ * order, with the address, a call button, the itinerary, and one clear
+ * outcome per stop. Works through dead zones: the last tour stays on screen
+ * and outcomes recorded offline are sent when the network comes back.
  */
 export default function LivreurPage() {
   const { user, profile, ready, logout } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
 
-  const [rows, setRows] = useState<Delivery[]>([]);
+  const userId = user?.id ?? null;
+  const orgId = profile?.organization_id ?? null;
+  const livreurId = profile?.livreur_id ?? null;
+  const isLivreur = profile?.role === "LIVREUR";
+
+  const [stops, setStops] = useState<TourStop[]>([]);
+  const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [disabled, setDisabled] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [online, setOnline] = useState(true);
+  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  const [today, setToday] = useState(() => new Date());
+  const refreshing = useRef(false);
 
   // Only livreur sessions belong here — anonymous visitors get this
   // space's login page, other accounts go to their own space.
@@ -93,140 +132,267 @@ export default function LivreurPage() {
     if (profile?.role !== "LIVREUR") router.replace(homeSpace(profile, user.email));
   }, [ready, user, profile, router]);
 
-  // Installable app + offline shell.
+  // Installable app + offline shell, limited to /livreur. The first version
+  // registered the worker for the whole site: hand the site back.
   useEffect(() => {
-    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
-    const up = () => setOnline(true);
-    const down = () => setOnline(false);
-    setOnline(navigator.onLine);
-    window.addEventListener("online", up);
-    window.addEventListener("offline", down);
-    return () => {
-      window.removeEventListener("online", up);
-      window.removeEventListener("offline", down);
-    };
+    if (!("serviceWorker" in navigator)) return;
+    const sw = navigator.serviceWorker;
+    void sw
+      .getRegistrations()
+      .then(async (regs) => {
+        for (const r of regs) if (new URL(r.scope).pathname === "/") await r.unregister();
+        await sw.register("/sw.js", { scope: "/livreur" });
+      })
+      .catch(() => {});
   }, []);
 
-  const load = useCallback(async () => {
-    if (!profile?.organization_id || profile.role !== "LIVREUR") return;
+  const refresh = useCallback(async () => {
+    if (!userId || !orgId || !livreurId || !isLivreur || refreshing.current) return;
+    refreshing.current = true;
     setLoading(true);
-    setError(null);
+    let flushError: string | null = null;
     try {
-      const { data, error: err } = await supabase
-        .from("orders")
-        .select(
-          "id,ref_demande,workflow_status,date_envoi,delivered_at,delivery_attempts,delivery_failed_reason,consigne,client_phone," +
-            "clients(name,phone,address,city,is_garage),order_lines(nom_produit,reference,quantity)",
-        )
-        .eq("organization_id", profile.organization_id)
-        .eq("livreur_id", profile.livreur_id ?? "")
-        .in("workflow_status", ["IN_TRANSIT", "DELIVERED"])
-        .order("date_envoi", { ascending: true })
-        .limit(80);
-      if (err) throw new Error(err.message);
-      setRows(
-        (data ?? []).map((raw) => {
-          const row = raw as unknown as Record<string, unknown>;
-          const client = first(row.clients as Embedded<Record<string, unknown>>);
-          return {
-            id: String(row.id),
-            ref: String(row.ref_demande ?? ""),
-            client: String(client?.name ?? row.client_phone ?? "Client"),
-            phone: (client?.phone as string | null) ?? (row.client_phone as string | null) ?? null,
-            address: (client?.address as string | null) ?? null,
-            city: (client?.city as string | null) ?? null,
-            isGarage: client?.is_garage === true,
-            workflow: String(row.workflow_status ?? ""),
-            dateEnvoi: (row.date_envoi as string | null) ?? null,
-            deliveredAt: (row.delivered_at as string | null) ?? null,
-            attempts: toNumber(row.delivery_attempts),
-            failedReason: (row.delivery_failed_reason as string | null) ?? null,
-            note: (row.consigne as string | null) ?? null,
-            pieces: arr(row.order_lines as Embedded<Record<string, unknown>>).map((l) => ({
-              name: String(l.nom_produit ?? ""),
-              reference: String(l.reference ?? ""),
-              quantity: toNumber(l.quantity),
-            })),
-          };
-        }),
-      );
+      // Outcomes recorded offline go first, so the fresh tour reflects them.
+      if (outboxAvailable()) {
+        try {
+          const summary = flushSummary(await flushOutbox(supabase, userId));
+          if (summary.notice) setNotice(summary.notice);
+          flushError = summary.error;
+          setOutbox(await listOutbox(userId));
+        } catch {
+          /* IndexedDB blocked on this phone: nothing can be queued */
+        }
+      }
+      const fresh = await loadLivreurTour(supabase, { orgId, livreurId });
+      setStops(fresh);
+      setSyncedAt(Date.now());
+      setDisabled(false);
+      setError(flushError);
+      saveTourCache(userId, fresh);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof LivreurDisabledError) {
+        setDisabled(true);
+        setStops([]);
+        clearTourCache(userId);
+      } else if (isNetworkError(e)) {
+        // Dead zone: keep the tour on screen, the banner says it.
+        if (flushError) setError(flushError);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      refreshing.current = false;
       setLoading(false);
+      setToday(new Date());
     }
-  }, [supabase, profile]);
+  }, [supabase, userId, orgId, livreurId, isLivreur]);
 
+  // Last tour loaded on this phone + what is waiting to be sent.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!userId || !isLivreur) return;
+    const cached = loadTourCache(userId);
+    if (cached) {
+      setStops(cached.stops);
+      setSyncedAt(cached.savedAt);
+    }
+    void listOutbox(userId).then(setOutbox).catch(() => {});
+  }, [userId, isLivreur]);
 
-  // Tour order: departure slot first, then the oldest dispatch.
-  const inTransit = rows.filter((r) => r.workflow === "IN_TRANSIT");
-  const today = new Date().toDateString();
-  const deliveredToday = rows.filter(
-    (r) => r.workflow === "DELIVERED" && r.deliveredAt && new Date(r.deliveredAt).toDateString() === today,
-  );
+  // Stay current: on open, when the app comes back to the front or the
+  // network returns, every minute, and as soon as a delivery is assigned.
+  useEffect(() => {
+    if (!userId || !isLivreur) return;
+    void refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const onOnline = () => void refresh();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) void refresh();
+    }, REFRESH_MS);
+    const channel = supabase
+      .channel(`livreur-tour:${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        () => void refresh(),
+      )
+      .subscribe();
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+      window.clearInterval(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, userId, isLivreur, refresh]);
+
+  const { toDeliver, failedToday, deliveredToday } = useMemo(() => splitTour(stops, today), [stops, today]);
+  const queued = useMemo(() => new Map(outbox.map((i) => [i.orderId, i.kind] as const)), [outbox]);
+
+  const markLocally = (orderId: string, patch: Partial<TourStop>) =>
+    setStops((prev) => prev.map((s) => (s.id === orderId ? { ...s, ...patch } : s)));
+
+  const enqueue = async (
+    item: Pick<OutboxItem, "kind" | "orderId" | "ref" | "recipient" | "note" | "reason" | "photo" | "podPath">,
+  ) => {
+    if (!userId || !orgId || !outboxAvailable()) {
+      throw new Error("Pas de réseau, et ce téléphone ne peut pas garder la confirmation : réessayez dès que la connexion revient.");
+    }
+    await putOutbox({ ...item, id: newOutboxId(), userId, orgId, createdAt: Date.now() });
+    setOutbox(await listOutbox(userId));
+  };
+
+  const signOut = () => {
+    if (
+      outbox.length > 0 &&
+      !window.confirm(
+        `${plural(outbox.length, "confirmation")} pas encore envoyée${outbox.length > 1 ? "s" : ""} au magasin : elle${outbox.length > 1 ? "s" : ""} partira${outbox.length > 1 ? "ont" : ""} à votre prochaine connexion sur ce téléphone. Se déconnecter ?`,
+      )
+    ) {
+      return;
+    }
+    if (userId) clearTourCache(userId);
+    void logout().then(() => router.replace("/livreur/login"));
+  };
 
   /* ---- Livrée (avec preuve) ---- */
-  const [deliver, setDeliver] = useState<Delivery | null>(null);
+  const [deliver, setDeliver] = useState<TourStop | null>(null);
   const [recipient, setRecipient] = useState("");
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  /** The photo already reached Storage: a retry only re-sends the confirmation. */
+  const uploaded = useRef<{ file: File; path: string } | null>(null);
 
-  const openDeliver = (d: Delivery) => {
-    setDeliver(d);
-    setRecipient("");
-    setNote("");
-    setPhoto(null);
+  useEffect(
+    () => () => {
+      if (photoUrl) URL.revokeObjectURL(photoUrl);
+    },
+    [photoUrl],
+  );
+
+  const pickPhoto = (file: File | null) => {
+    setPhoto(file);
+    setPhotoUrl(file ? URL.createObjectURL(file) : null);
+    uploaded.current = null;
     setModalError(null);
   };
 
+  const openDeliver = (s: TourStop) => {
+    setDeliver(s);
+    setRecipient("");
+    setNote("");
+    pickPhoto(null);
+  };
+
+  const closeDeliver = () => {
+    setDeliver(null);
+    pickPhoto(null);
+  };
+
   const submitDeliver = async () => {
-    if (!deliver || !profile?.organization_id) return;
+    if (!deliver || !orgId) return;
+    const target = deliver;
     setBusy(true);
     setModalError(null);
+    let small: Blob | null = null;
+    let sendingPhoto = Boolean(photo);
     try {
+      if (photo) small = await compressImage(photo);
+      if (!navigator.onLine) throw new DeliveryNetworkError("offline");
       let podPath: string | null = null;
-      if (photo) {
-        const small = await compressImage(photo);
-        podPath = await uploadProofOfDelivery(supabase, profile.organization_id, deliver.id, small);
+      if (photo && small) {
+        if (uploaded.current?.file === photo) {
+          podPath = uploaded.current.path;
+        } else {
+          podPath = await uploadProofOfDelivery(supabase, orgId, target.id, small);
+          uploaded.current = { file: photo, path: podPath };
+        }
       }
-      await deliverOrder(supabase, { orderId: deliver.id, recipient, note, podPath });
-      setNotice(`${deliver.ref} livrée ✓`);
-      setDeliver(null);
-      await load();
+      sendingPhoto = false;
+      await deliverOrder(supabase, { orderId: target.id, recipient, note, podPath });
+      markLocally(target.id, { workflow: "DELIVERED", deliveredAt: new Date().toISOString() });
+      setNotice(`${target.ref} livrée ✓`);
+      closeDeliver();
+      void refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (isNetworkError(e)) {
+        const podPath = photo && uploaded.current?.file === photo ? uploaded.current.path : null;
+        try {
+          await enqueue({
+            kind: "deliver",
+            orderId: target.id,
+            ref: target.ref,
+            recipient,
+            note,
+            photo: podPath ? null : small,
+            podPath,
+          });
+          setNotice(`${target.ref} : livraison gardée sur le téléphone, envoyée au magasin dès le retour du réseau.`);
+          closeDeliver();
+        } catch (qe) {
+          setModalError(qe instanceof Error ? qe.message : String(qe));
+        }
+      } else if (sendingPhoto) {
+        setModalError(`La photo n'a pas pu être envoyée (${message}). Reprenez-la, ou retirez-la pour confirmer sans photo.`);
+      } else {
+        setModalError(message);
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  /* ---- Échec ---- */
-  const [fail, setFail] = useState<Delivery | null>(null);
+  /* ---- Non livrée ---- */
+  const [fail, setFail] = useState<TourStop | null>(null);
   const [failReason, setFailReason] = useState<string>(DELIVERY_FAILURE_REASONS[0]);
   const [failDetail, setFailDetail] = useState("");
 
+  const openFail = (s: TourStop) => {
+    setFail(s);
+    setFailReason(DELIVERY_FAILURE_REASONS[0]);
+    setFailDetail("");
+    setModalError(null);
+  };
+
   const submitFail = async () => {
     if (!fail) return;
+    const target = fail;
+    const reason = buildFailureReason(failReason, failDetail);
+    if (!reason) {
+      setModalError("Précisez le motif.");
+      return;
+    }
     setBusy(true);
     setModalError(null);
     try {
-      const reason = failReason === "Autre" ? failDetail.trim() : `${failReason}${failDetail.trim() ? ` — ${failDetail.trim()}` : ""}`;
-      if (!reason) {
-        setModalError("Précisez le motif.");
-        setBusy(false);
-        return;
-      }
-      await reportDeliveryFailure(supabase, { orderId: fail.id, reason });
-      setNotice(`${fail.ref} : livraison non effectuée, le magasin est prévenu.`);
+      if (!navigator.onLine) throw new DeliveryNetworkError("offline");
+      await reportDeliveryFailure(supabase, { orderId: target.id, reason });
+      markLocally(target.id, {
+        workflow: "TO_COLLECT",
+        failedAt: new Date().toISOString(),
+        failedReason: reason,
+        attempts: target.attempts + 1,
+      });
+      setNotice(`${target.ref} : non livrée, le magasin est prévenu.`);
       setFail(null);
-      await load();
+      void refresh();
     } catch (e) {
-      setModalError(e instanceof Error ? e.message : String(e));
+      if (isNetworkError(e)) {
+        try {
+          await enqueue({ kind: "fail", orderId: target.id, ref: target.ref, reason });
+          setNotice(`${target.ref} : signalement gardé sur le téléphone, envoyé au magasin dès le retour du réseau.`);
+          setFail(null);
+        } catch (qe) {
+          setModalError(qe instanceof Error ? qe.message : String(qe));
+        }
+      } else {
+        setModalError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -236,80 +402,114 @@ export default function LivreurPage() {
     return <div className="lp-page"><p className="lp-loading">Chargement…</p></div>;
   }
 
+  if (disabled || !livreurId) {
+    return (
+      <div className="lp-page">
+        <div className="lp-disabled">
+          <span className="lp-brand"><Truck className="h-5 w-5" /></span>
+          <p className="lp-title">{livreurId ? "Accès livreur désactivé" : "Compte livreur non relié"}</p>
+          <p className="lp-sub">
+            {livreurId
+              ? "Votre magasin a désactivé votre accès à la tournée. Contactez-le si c'est une erreur."
+              : "Ce compte n'est relié à aucun livreur. Demandez à votre magasin de recréer votre accès."}
+          </p>
+          <button type="button" className="od-btn od-btn--ghost" onClick={signOut}>
+            <LogOut className="h-4 w-4" /> Se déconnecter
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="lp-page">
       <header className="lp-header">
         <span className="lp-brand"><Truck className="h-5 w-5" /></span>
         <div className="lp-header-text">
           <p className="lp-title">Ma tournée</p>
-          <p className="lp-sub">{profile.display_name}</p>
+          <p className="lp-sub">
+            {profile.display_name}
+            {syncedAt ? ` · à jour à ${fmtTime(syncedAt)}` : ""}
+          </p>
         </div>
         <NotificationBell compact />
-        <button type="button" className="lp-iconbtn" onClick={() => void load()} aria-label="Actualiser" disabled={loading}>
+        <button type="button" className="lp-iconbtn" onClick={() => void refresh()} aria-label="Actualiser" disabled={loading || !online}>
           {loading ? <Loader2 className="h-5 w-5 nc-spin" /> : <RefreshCw className="h-5 w-5" />}
         </button>
-        <button
-          type="button"
-          className="lp-iconbtn"
-          aria-label="Se déconnecter"
-          onClick={() => {
-            void logout().then(() => router.replace("/livreur/login"));
-          }}
-        >
+        <button type="button" className="lp-iconbtn" aria-label="Se déconnecter" onClick={signOut}>
           <LogOut className="h-5 w-5" />
         </button>
       </header>
 
-      {!online && <div className="lp-offline">Hors connexion : les livraisons affichées sont celles du dernier chargement.</div>}
+      {!online && (
+        <div className="lp-offline">
+          <CloudOff className="h-4 w-4" />
+          Hors connexion{syncedAt ? ` — tournée de ${fmtTime(syncedAt)}` : ""}. Vos confirmations sont gardées et partent dès le retour du réseau.
+        </div>
+      )}
+      {online && outbox.length > 0 && (
+        <div className="lp-offline lp-offline--sync">
+          <Loader2 className="h-4 w-4 nc-spin" />
+          {plural(outbox.length, "confirmation")} en attente d&apos;envoi…
+        </div>
+      )}
       {error && <div className="nc-error lp-error">{error}</div>}
       <Toast message={notice} onClose={() => setNotice(null)} />
 
       <main className="lp-main">
         <p className="lp-section">
-          À livrer <span className="lp-count">{inTransit.length}</span>
+          À livrer <span className="lp-count">{toDeliver.length}</span>
         </p>
 
-        {loading && rows.length === 0 && <p className="lp-loading">Chargement des livraisons…</p>}
+        {loading && syncedAt === null && <p className="lp-loading">Chargement des livraisons…</p>}
 
-        {!loading && inTransit.length === 0 && (
+        {!loading && syncedAt === null && (
+          <div className="lp-empty lp-empty--offline">
+            <CloudOff className="h-8 w-8" />
+            <p>Tournée pas encore chargée : elle s&apos;affichera dès que le téléphone aura du réseau.</p>
+          </div>
+        )}
+
+        {syncedAt !== null && toDeliver.length === 0 && (
           <div className="lp-empty">
             <CheckCircle2 className="h-8 w-8" />
             <p>Aucune livraison en attente. 👍</p>
           </div>
         )}
 
-        {inTransit.map((d, idx) => {
-          const link = mapsLink(d.address, d.city);
+        {toDeliver.map((s, idx) => {
+          const link = mapsLink(s.address, s.city);
+          const outcome = queued.get(s.id);
           return (
-            <article key={d.id} className="lp-card">
+            <article key={s.id} className={`lp-card${outcome ? " lp-card--queued" : ""}`}>
               <div className="lp-card-head">
                 <span className="lp-stop">{idx + 1}</span>
                 <div>
                   <p className="lp-client">
-                    {d.client}
-                    {d.isGarage && <span className="lp-tag">Garage</span>}
+                    {s.client}
+                    {s.isGarage && <span className="lp-tag">Garage</span>}
                   </p>
                   <p className="lp-meta">
-                    {d.ref}
-                    {d.dateEnvoi ? ` · créneau ${fmtTime(d.dateEnvoi)}` : ""}
-                    {d.attempts > 0 ? ` · ${d.attempts + 1}ᵉ passage` : ""}
+                    {s.ref}
+                    {s.dateEnvoi ? ` · créneau ${fmtTime(s.dateEnvoi)}` : ""}
+                    {s.attempts > 0 ? ` · ${s.attempts + 1}ᵉ passage` : ""}
                   </p>
                 </div>
               </div>
-              {d.failedReason && d.attempts > 0 && (
-                <p className="lp-warn"><AlertTriangle className="h-4 w-4" /> Dernier passage : {d.failedReason}</p>
+              {s.failedReason && s.attempts > 0 && (
+                <p className="lp-warn"><AlertTriangle className="h-4 w-4" /> Dernier passage : {s.failedReason}</p>
               )}
               <div className="lp-address">
                 <MapPin className="h-4 w-4" />
                 <span>
-                  {d.address ? <strong>{d.address}</strong> : <em>Adresse non renseignée</em>}
-                  {d.city ? <> · {d.city}</> : null}
+                  {s.address ? <strong>{s.address}</strong> : <em>Adresse non renseignée : appelez le client</em>}
+                  {s.city ? <> · {s.city}</> : null}
                 </span>
               </div>
-              {d.note && <p className="lp-note">📝 {d.note}</p>}
+              {s.note && <p className="lp-note">📝 {s.note}</p>}
               <div className="lp-contact">
-                {d.phone && (
-                  <a href={`tel:${d.phone.replace(/\s/g, "")}`} className="lp-call">
+                {s.phone && (
+                  <a href={`tel:${s.phone.replace(/\s/g, "")}`} className="lp-call">
                     <Phone className="h-4 w-4" />
                     Appeler
                   </a>
@@ -324,37 +524,62 @@ export default function LivreurPage() {
               <div className="lp-pieces">
                 <p className="lp-pieces-title">
                   <Package className="h-4 w-4" />
-                  {d.pieces.reduce((s, p) => s + p.quantity, 0)} pièce(s)
+                  {pieceCount(s)} pièce(s)
                 </p>
-                {d.pieces.map((p, i) => (
-                  <p key={i} className="lp-piece">
-                    <strong>×{p.quantity}</strong> {p.name} <span>({p.reference})</span>
+                {s.pieces.map((p, i) => (
+                  <p key={i} className={`lp-piece${p.pending ? " lp-piece--pending" : ""}`}>
+                    <strong>×{p.quantity}</strong> {p.name} {p.reference && <span>({p.reference})</span>}
+                    {p.pending && <em className="lp-piece-tag">pas encore reçue</em>}
                   </p>
                 ))}
               </div>
-              <div className="lp-actions">
-                <button type="button" className="lp-fail" disabled={busy} onClick={() => { setFail(d); setFailReason(DELIVERY_FAILURE_REASONS[0]); setFailDetail(""); setModalError(null); }}>
-                  <X className="h-5 w-5" /> Non livrée
-                </button>
-                <button type="button" className="lp-deliver" disabled={busy} onClick={() => openDeliver(d)}>
-                  <Check className="h-5 w-5" /> Livrée
-                </button>
-              </div>
+              {outcome ? (
+                <p className="lp-queued">
+                  <CloudOff className="h-4 w-4" />
+                  {outcome === "deliver" ? "Livrée" : "Non livrée"} — le magasin sera prévenu dès le retour du réseau
+                </p>
+              ) : (
+                <div className="lp-actions">
+                  <button type="button" className="lp-fail" disabled={busy} onClick={() => openFail(s)}>
+                    <X className="h-5 w-5" /> Non livrée
+                  </button>
+                  <button type="button" className="lp-deliver" disabled={busy} onClick={() => openDeliver(s)}>
+                    <Check className="h-5 w-5" /> Livrée
+                  </button>
+                </div>
+              )}
             </article>
           );
         })}
+
+        {failedToday.length > 0 && (
+          <>
+            <p className="lp-section lp-section--failed">
+              Non livrées aujourd&apos;hui <span className="lp-count lp-count--failed">{failedToday.length}</span>
+            </p>
+            {failedToday.map((s) => (
+              <article key={s.id} className="lp-card lp-card--done lp-card--failed">
+                <AlertTriangle className="h-5 w-5" />
+                <div>
+                  <p className="lp-client">{s.client}</p>
+                  <p className="lp-meta">{s.ref} · {fmtTime(s.failedAt)} · {s.failedReason ?? "Non livrée"}</p>
+                </div>
+              </article>
+            ))}
+          </>
+        )}
 
         {deliveredToday.length > 0 && (
           <>
             <p className="lp-section lp-section--done">
               Livrées aujourd&apos;hui <span className="lp-count lp-count--done">{deliveredToday.length}</span>
             </p>
-            {deliveredToday.map((d) => (
-              <article key={d.id} className="lp-card lp-card--done">
+            {deliveredToday.map((s) => (
+              <article key={s.id} className="lp-card lp-card--done">
                 <CheckCircle2 className="h-5 w-5" />
                 <div>
-                  <p className="lp-client">{d.client}</p>
-                  <p className="lp-meta">{d.ref} · {fmtTime(d.deliveredAt)} · {d.pieces.reduce((s, p) => s + p.quantity, 0)} pièce(s)</p>
+                  <p className="lp-client">{s.client}</p>
+                  <p className="lp-meta">{s.ref} · {fmtTime(s.deliveredAt)} · {pieceCount(s)} pièce(s)</p>
                 </div>
               </article>
             ))}
@@ -363,11 +588,11 @@ export default function LivreurPage() {
       </main>
 
       {deliver && (
-        <div className="ga-modal-overlay" onClick={() => !busy && setDeliver(null)}>
+        <div className="ga-modal-overlay" onClick={() => !busy && closeDeliver()}>
           <div className="ga-modal lp-modal" role="dialog" aria-modal="true" aria-labelledby="deliver-title" onClick={(e) => e.stopPropagation()}>
             <div className="ga-modal-head">
               <span className="ga-modal-title" id="deliver-title"><Check className="h-4 w-4" /> Livrée — {deliver.client}</span>
-              <button type="button" className="ga-modal-close" onClick={() => setDeliver(null)} aria-label="Fermer" disabled={busy}><X className="h-4 w-4" /></button>
+              <button type="button" className="ga-modal-close" onClick={closeDeliver} aria-label="Fermer" disabled={busy}><X className="h-4 w-4" /></button>
             </div>
             <div className="ga-modal-form">
               {modalError && <div className="nc-error">{modalError}</div>}
@@ -377,18 +602,34 @@ export default function LivreurPage() {
               </div>
               <div className="od-field">
                 <span className="od-label">Photo (preuve de livraison)</span>
-                <label className="lp-photo">
-                  <Camera className="h-5 w-5" />
-                  <span>{photo ? photo.name : "Prendre une photo"}</span>
-                  <input type="file" accept="image/*" capture="environment" hidden onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
-                </label>
+                {photo && photoUrl ? (
+                  <div className="lp-photo-row">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- blob: preview of the camera photo, next/image cannot load it */}
+                    <img src={photoUrl} alt="Photo de la livraison" className="lp-photo-preview" />
+                    <label className="lp-photo lp-photo--small">
+                      <Camera className="h-4 w-4" />
+                      Reprendre
+                      <input type="file" accept="image/*" capture="environment" hidden disabled={busy} onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)} />
+                    </label>
+                    <button type="button" className="lp-photo lp-photo--small" onClick={() => pickPhoto(null)} disabled={busy}>
+                      <Trash2 className="h-4 w-4" />
+                      Retirer
+                    </button>
+                  </div>
+                ) : (
+                  <label className="lp-photo">
+                    <Camera className="h-5 w-5" />
+                    <span>Prendre une photo</span>
+                    <input type="file" accept="image/*" capture="environment" hidden disabled={busy} onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)} />
+                  </label>
+                )}
               </div>
               <div className="od-field">
                 <span className="od-label">Remarque</span>
                 <input className="od-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Déposé au comptoir, colis ouvert…" />
               </div>
               <div className="ga-modal-actions">
-                <button type="button" className="od-btn od-btn--ghost" onClick={() => setDeliver(null)} disabled={busy}>Annuler</button>
+                <button type="button" className="od-btn od-btn--ghost" onClick={closeDeliver} disabled={busy}>Annuler</button>
                 <button type="button" className="od-btn od-btn--primary" onClick={() => void submitDeliver()} disabled={busy}>
                   {busy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />} Confirmer la livraison
                 </button>

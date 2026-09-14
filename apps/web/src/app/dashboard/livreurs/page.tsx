@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fmtDateTime } from "@/lib/data/saas";
 import {
   createLivreur,
+  deactivateLivreurConfirm,
   loadDeliveriesInProgress,
   loadLivreurs,
   markOrderDelivered,
@@ -264,7 +265,15 @@ export default function LivreursPage() {
                       className={`rc-act rc-act--quiet${l.active ? " rc-act--nonrecu" : " rc-act--recu"}`}
                       title={l.active ? "Désactiver" : "Réactiver"}
                       disabled={busy === `toggle-${l.id}`}
-                      onClick={() => orgId && run(`toggle-${l.id}`, () => updateLivreur(supabase, orgId, l.id, { active: !l.active }))}
+                      onClick={() => {
+                        if (!orgId) return;
+                        if (l.active && !window.confirm(deactivateLivreurConfirm(l.name, mine.length))) return;
+                        void run(
+                          `toggle-${l.id}`,
+                          () => updateLivreur(supabase, orgId, l.id, { active: !l.active }),
+                          l.active ? `${l.name} désactivé : accès à la tournée coupé.` : `${l.name} réactivé.`,
+                        );
+                      }}
                     >
                       <Power className="h-3.5 w-3.5" />
                     </button>
@@ -318,7 +327,7 @@ export default function LivreursPage() {
             <span className="lv-card-titles">
               <span className="lv-card-name">En livraison sans livreur assigné</span>
               <span className="lv-card-sub">
-                Assignez-les depuis <Link href="/dashboard/commandes" className="rc-cmd">Suivi des commandes → Commande à livrer</Link>.
+                Assignez-les ou clôturez-les depuis <Link href="/dashboard/commandes?tab=alivrer" className="rc-cmd">Suivi des commandes → Commande à livrer</Link>.
               </span>
             </span>
           </div>

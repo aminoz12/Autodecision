@@ -6569,6 +6569,26 @@ a.gp-stat:hover { border-color: var(--clr-primary-border); box-shadow: var(--sha
 .lp-photo { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1.5px dashed var(--border-strong); border-radius: 10px; cursor: pointer; font-size: 14px; color: var(--text-secondary); }
 .lp-photo:hover { border-color: var(--clr-primary); color: var(--clr-primary); }
 .lp-reasons { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 2026-09-14 : hors connexion, envois en attente, échecs du jour, photo, accès coupé */
+.lp-offline { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.lp-offline--sync { background: var(--clr-info-bg); color: var(--clr-info-text); }
+.lp-empty--offline { color: var(--text-secondary); text-align: center; }
+.lp-card--queued { border-color: var(--clr-warning-border); }
+.lp-queued { display: flex; gap: 8px; align-items: center; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--clr-warning-bg); color: var(--clr-warning-text); font-size: 13.5px; font-weight: 600; }
+.lp-piece--pending { color: var(--text-muted); }
+.lp-piece-tag { margin-left: 6px; font-size: 12px; font-style: normal; font-weight: 700; color: var(--clr-warning-text); }
+.lp-section--failed { margin-top: 18px; color: var(--clr-danger-text); }
+.lp-count--failed { background: var(--clr-danger-bg); color: var(--clr-danger-text); }
+.lp-card--failed svg { color: var(--clr-danger-text); }
+.lp-photo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lp-photo-preview { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border-card); }
+.lp-photo--small { padding: 10px 12px; background: #fff; font: inherit; font-size: 13.5px; }
+.lp-disabled { margin: 18vh 16px 0; padding: 28px 20px; background: #fff; border: 1px solid var(--border-card); border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.rc-addr-missing { display: inline-block; margin-top: 2px; padding: 1px 6px; border-radius: 4px; font-size: 12px; font-weight: 700; color: var(--clr-warning-text); background: var(--clr-warning-bg); }
+.rc-fail-note { display: flex; gap: 4px; align-items: center; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--clr-danger-text); }
+.rc-addr-hint { color: var(--clr-warning-text); }
+.od-kv-danger { color: var(--clr-danger-text); }
+.od-pod-img { display: block; width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-card); }
 
 /* ---- Comptoir 2026-09 : remises, devis, annulation, réception partielle ---- */
 .inv-muted { color: #666; font-size: 11px; }

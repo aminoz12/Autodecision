@@ -51,6 +51,7 @@ import { fmtDateTime, loadGarages, type GarageSummary } from "@/lib/data/saas";
 import {
   createLivreur,
   loadLivreurs,
+  deactivateLivreurConfirm,
   updateLivreur,
   type Livreur,
 } from "@/lib/data/livreurs";
@@ -300,7 +301,7 @@ function AdminContent() {
     try {
       const res = await createLivreurAccess({ livreurId: lvAccess.id, email: lvEmail, password: lvPwd });
       setNotice(
-        `${res.reset ? "Accès réinitialisé" : "Accès créé"} pour ${lvAccess.name} — identifiants : ${lvEmail} / ${lvPwd}. Le livreur se connecte sur la page de connexion habituelle.`,
+        `${res.reset ? "Accès réinitialisé" : "Accès créé"} pour ${lvAccess.name} — identifiants : ${lvEmail} / ${lvPwd}. Lien de connexion du livreur : ${window.location.origin}/livreur/login`,
       );
       setLvAccess(null);
       await load();
@@ -720,10 +721,15 @@ function AdminContent() {
                                   type="button"
                                   className={`rc-act rc-act--quiet${l.active ? " rc-act--nonrecu" : " rc-act--recu"}`}
                                   disabled={busy !== null}
-                                  onClick={() =>
-                                    orgId &&
-                                    run(`lv-toggle-${l.id}`, () => updateLivreur(supabase, orgId, l.id, { active: !l.active }), l.active ? "Livreur désactivé." : "Livreur réactivé.")
-                                  }
+                                  onClick={() => {
+                                    if (!orgId) return;
+                                    if (l.active && !window.confirm(deactivateLivreurConfirm(l.name))) return;
+                                    void run(
+                                      `lv-toggle-${l.id}`,
+                                      () => updateLivreur(supabase, orgId, l.id, { active: !l.active }),
+                                      l.active ? "Livreur désactivé : son accès à la tournée est coupé." : "Livreur réactivé.",
+                                    );
+                                  }}
                                 >
                                   <Power className="h-3.5 w-3.5" />
                                   {l.active ? "Désactiver" : "Réactiver"}
@@ -976,6 +982,9 @@ function AdminContent() {
                 <div className="od-field">
                   <span className="od-label">Email de connexion <span className="od-req">*</span></span>
                   <input className="od-input" type="email" value={lvEmail} onChange={(e) => setLvEmail(e.target.value)} placeholder="livreur1@monmagasin.fr" autoFocus />
+                  {accountByLivreur.get(lvAccess.id) && (
+                    <span className="st-cmd-hint">Un seul accès par livreur : changer l&apos;email remplace l&apos;identifiant actuel.</span>
+                  )}
                 </div>
                 <div className="od-field">
                   <span className="od-label">Mot de passe <span className="od-req">*</span></span>
@@ -998,13 +1007,14 @@ function AdminContent() {
               <div className="od-note">
                 <Truck className="h-4 w-4" />
                 <p>
-                  Le livreur se connecte avec ces identifiants sur la page de connexion habituelle et arrive
-                  directement sur <strong>sa tournée mobile</strong> : uniquement ses livraisons, bouton « Livrée » — rien d&apos;autre.
+                  Le livreur se connecte avec ces identifiants sur <strong>{window.location.origin}/livreur/login</strong> (les
+                  autres pages de connexion refusent les comptes livreur) et arrive sur <strong>sa tournée mobile</strong> :
+                  uniquement ses livraisons, rien d&apos;autre. Depuis son téléphone, il peut l&apos;ajouter à l&apos;écran d&apos;accueil.
                 </p>
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setLvAccess(null)} disabled={lvAccSaving}>Annuler</button>
-                <button type="submit" className="od-btn od-btn--primary" disabled={lvAccSaving || !lvEmail.trim() || lvPwd.length < 6}>
+                <button type="submit" className="od-btn od-btn--primary" disabled={lvAccSaving || !lvEmail.trim() || lvPwd.length < 8}>
                   {lvAccSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
                   {accountByLivreur.get(lvAccess.id) ? "Réinitialiser l'accès" : "Créer l'accès"}
                 </button>

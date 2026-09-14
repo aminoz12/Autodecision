@@ -45,6 +45,7 @@ import {
 import { Ban, Banknote, HandCoins, Loader2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { emitInvoice, loadOrderInvoice, type Invoice } from "@/lib/data/invoices";
+import { proofUrl } from "@/lib/data/delivery";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -297,6 +298,25 @@ export default function OrderDetailPage() {
       cancelled = true;
     };
   }, [supabase, profile?.organization_id, orderId, reloadKey]);
+
+  /* ---- Preuve de livraison (photo privée, URL signée 1 h) ---- */
+  const podPath = order?.delivery.podPath ?? null;
+  /** undefined = loading, null = unavailable. */
+  const [podUrl, setPodUrl] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!podPath) return;
+    let cancelled = false;
+    proofUrl(supabase, podPath)
+      .then((u) => {
+        if (!cancelled) setPodUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setPodUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, podPath]);
 
   /* ---- Loading / error / not found ---- */
   if (loading) {
@@ -906,6 +926,59 @@ export default function OrderDetailPage() {
                     <dd>{fmtDateTime(order.dateEnvoi)}</dd>
                   </div>
                 </>
+              )}
+              {order.delivery.deliveredAt && (
+                <>
+                  <div className="od-kv-row">
+                    <dt>Livrée le</dt>
+                    <dd>
+                      {fmtDateTime(order.delivery.deliveredAt)}
+                      {order.delivery.deliveredBy ? ` — par ${order.delivery.deliveredBy}` : ""}
+                    </dd>
+                  </div>
+                  <div className="od-kv-row">
+                    <dt>Remis à</dt>
+                    <dd>{order.delivery.recipient ?? "—"}</dd>
+                  </div>
+                  {order.delivery.note && (
+                    <div className="od-kv-row">
+                      <dt>Remarque livreur</dt>
+                      <dd>{order.delivery.note}</dd>
+                    </div>
+                  )}
+                </>
+              )}
+              {order.delivery.podPath && (
+                <div className="od-kv-row">
+                  <dt>Preuve de livraison</dt>
+                  <dd>
+                    {podUrl ? (
+                      <a href={podUrl} target="_blank" rel="noreferrer" title="Ouvrir la photo">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL of a private bucket, not optimisable */}
+                        <img src={podUrl} alt={`Preuve de livraison ${order.ref}`} className="od-pod-img" />
+                      </a>
+                    ) : podUrl === null ? (
+                      "Photo indisponible"
+                    ) : (
+                      "Chargement de la photo…"
+                    )}
+                  </dd>
+                </div>
+              )}
+              {order.delivery.attempts > 0 && (
+                <div className="od-kv-row">
+                  <dt>Passages du livreur</dt>
+                  <dd>{order.delivery.attempts}</dd>
+                </div>
+              )}
+              {order.delivery.failedReason && (
+                <div className="od-kv-row">
+                  <dt>Dernier échec</dt>
+                  <dd className="od-kv-danger">
+                    {order.delivery.failedReason}
+                    {order.delivery.failedAt ? ` — ${fmtDateTime(order.delivery.failedAt)}` : ""}
+                  </dd>
+                </div>
               )}
               <div className="od-kv-row">
                 <dt>Bon de livraison</dt>

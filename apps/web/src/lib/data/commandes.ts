@@ -69,6 +69,13 @@ export type BoardLine = {
   livreurId: string | null;
   livreurName: string | null;
   dateEnvoi: string | null;
+  /** Client address the livreur navigates to. */
+  clientAddress: string | null;
+  clientCity: string | null;
+  /** Last « non livrée » report and how many passages so far. */
+  deliveryFailedReason: string | null;
+  deliveryFailedAt: string | null;
+  deliveryAttempts: number;
 };
 
 export async function loadReceptionBoard(
@@ -81,7 +88,7 @@ export async function loadReceptionBoard(
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
-          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,clients(id,name,phone,is_garage),livreurs(name))," +
+          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,clients(id,name,phone,is_garage,address,city),livreurs(name))," +
           "suppliers(name,own_delivery,lead_days),delivery_tours(name)",
       )
       .eq("organization_id", orgId)
@@ -180,6 +187,11 @@ export async function loadReceptionBoard(
       livreurId: (order?.livreur_id as string | null) ?? null,
       livreurName: livreur ? String(livreur.name ?? "") : null,
       dateEnvoi: (order?.date_envoi as string | null) ?? null,
+      clientAddress: (client?.address as string | null) || null,
+      clientCity: (client?.city as string | null) || null,
+      deliveryFailedReason: (order?.delivery_failed_reason as string | null) ?? null,
+      deliveryFailedAt: (order?.delivery_failed_at as string | null) ?? null,
+      deliveryAttempts: toNumber(order?.delivery_attempts),
     };
   });
 
@@ -350,6 +362,18 @@ export type OrderDetail = {
   remiseMontant: number;
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** What happened at the door: livreur's proof, or the failed passages. */
+  delivery: {
+    deliveredAt: string | null;
+    deliveredBy: string | null;
+    recipient: string | null;
+    note: string | null;
+    /** Photo in the private `pod` bucket (signed URL via proofUrl). */
+    podPath: string | null;
+    failedReason: string | null;
+    failedAt: string | null;
+    attempts: number;
+  };
   lines: OrderDetailLine[];
 };
 
@@ -369,7 +393,9 @@ export async function loadOrderDetail(
       "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
         "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
-        "is_restock,livreur_id,avoir_applique,mode_paiement,echeance,remise_montant,cancelled_at,cancel_reason,clients(name,phone,email,is_garage),livreurs(name)",
+        "is_restock,livreur_id,avoir_applique,mode_paiement,echeance,remise_montant,cancelled_at,cancel_reason," +
+        "delivered_at,delivered_by,delivery_recipient,delivery_note,pod_path,delivery_failed_reason,delivery_failed_at,delivery_attempts," +
+        "clients(name,phone,email,is_garage),livreurs(name)",
     )
     .eq("id", orderId)
     .eq("organization_id", orgId)
@@ -381,7 +407,7 @@ export async function loadOrderDetail(
   const order = orderRaw as unknown as Record<string, unknown>;
   const client = first(order.clients as Embedded<Record<string, unknown>>);
 
-  const [linesRes, vendeurRes] = await Promise.all([
+  const [linesRes, vendeurRes, deliveredByRes] = await Promise.all([
     supabase
       .from("order_lines")
       .select(
@@ -395,6 +421,9 @@ export async function loadOrderDetail(
       .select("display_name")
       .eq("user_id", String(order.vendeur_id ?? ""))
       .maybeSingle(),
+    order.delivered_by
+      ? supabase.from("profiles").select("display_name").eq("user_id", String(order.delivered_by)).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   if (linesRes.error) throw new Error(linesRes.error.message);
@@ -470,6 +499,17 @@ export async function loadOrderDetail(
     remiseMontant: toNumber(order.remise_montant),
     cancelledAt: (order.cancelled_at as string | null) ?? null,
     cancelReason: (order.cancel_reason as string | null) ?? null,
+    delivery: {
+      deliveredAt: (order.delivered_at as string | null) ?? null,
+      deliveredBy:
+        ((deliveredByRes.data as Record<string, unknown> | null)?.display_name as string | undefined) ?? null,
+      recipient: (order.delivery_recipient as string | null) ?? null,
+      note: (order.delivery_note as string | null) ?? null,
+      podPath: (order.pod_path as string | null) ?? null,
+      failedReason: (order.delivery_failed_reason as string | null) ?? null,
+      failedAt: (order.delivery_failed_at as string | null) ?? null,
+      attempts: toNumber(order.delivery_attempts),
+    },
     livreurName: (() => {
       const l = first(order.livreurs as Embedded<Record<string, unknown>>);
       return l ? String(l.name ?? "") : null;

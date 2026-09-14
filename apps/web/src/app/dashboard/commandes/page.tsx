@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   Ban,
   Banknote,
   Box,
@@ -33,6 +34,7 @@ import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
+import { updateClientAddress } from "@/lib/data/delivery";
 import {
   dispatchOrderToLivreur,
   loadLivreurs,
@@ -138,8 +140,14 @@ export default function ReceptionCommandesPage() {
     ref: string;
     clientName: string;
     livreurId: string | null;
+    clientId: string | null;
+    address: string | null;
+    city: string | null;
   } | null>(null);
   const [dispatchLivreur, setDispatchLivreur] = useState("");
+  /** Delivery address, editable in the dispatch modal (saved on the client). */
+  const [dispatchAddress, setDispatchAddress] = useState("");
+  const [dispatchCity, setDispatchCity] = useState("");
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -348,7 +356,9 @@ export default function ReceptionCommandesPage() {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
       if (l.isRestock) continue;
-      if (!l.isGarage) continue; // garages only — clients are prepared in "Commande à préparer"
+      // Garages are delivered; clients are prepared in « Commande à préparer » —
+      // unless the order is already out with a livreur: it must stay closable.
+      if (!l.isGarage && l.workflow !== "IN_TRANSIT") continue;
       if (l.workflow === "DELIVERED") continue;
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
@@ -379,6 +389,11 @@ export default function ReceptionCommandesPage() {
           dateEnvoi: first.dateEnvoi,
           livreurId: first.livreurId,
           livreurName: first.livreurName,
+          clientId: first.clientId,
+          address: first.clientAddress,
+          city: first.clientCity,
+          failedReason: first.deliveryFailedReason,
+          attempts: first.deliveryAttempts,
           pieces: lines.reduce((s, l) => s + l.quantity, 0),
           total: lines.length,
           received,
@@ -411,7 +426,8 @@ export default function ReceptionCommandesPage() {
   const smsOrders = useMemo(() => {
     const byOrder = new Map<string, BoardLine[]>();
     for (const l of board) {
-      if (l.fromStock || l.isRestock || l.isGarage) continue;
+      // Out with a livreur: nothing left to prepare at the counter.
+      if (l.fromStock || l.isRestock || l.isGarage || l.workflow === "IN_TRANSIT") continue;
       const arr = byOrder.get(l.orderId);
       if (arr) arr.push(l);
       else byOrder.set(l.orderId, [l]);
@@ -628,8 +644,13 @@ export default function ReceptionCommandesPage() {
       ref: o.ref,
       clientName: o.clientName,
       livreurId: o.livreurId,
+      clientId: o.clientId,
+      address: o.address,
+      city: o.city,
     });
     setDispatchLivreur(o.livreurId ?? livreurs[0]?.id ?? "");
+    setDispatchAddress(o.address ?? "");
+    setDispatchCity(o.city ?? "");
     setDispatchError(null);
   };
 
@@ -642,6 +663,14 @@ export default function ReceptionCommandesPage() {
     setDispatchBusy(true);
     setDispatchError(null);
     try {
+      const { clientId, address, city } = dispatchOrder;
+      if (
+        orgId &&
+        clientId &&
+        (dispatchAddress.trim() !== (address ?? "") || dispatchCity.trim() !== (city ?? ""))
+      ) {
+        await updateClientAddress(supabase, orgId, clientId, { address: dispatchAddress, city: dispatchCity });
+      }
       await dispatchOrderToLivreur(supabase, dispatchOrder.orderId, dispatchLivreur);
       const name = livreurs.find((l) => l.id === dispatchLivreur)?.name ?? "livreur";
       setNotice(`${dispatchOrder.ref} envoyée à ${name} — en cours de livraison.`);
@@ -1418,6 +1447,11 @@ export default function ReceptionCommandesPage() {
                                 )}
                               </p>
                               <p className="rl-muted">{o.clientPhone ?? "—"}</p>
+                              {o.address || o.city ? (
+                                <p className="rl-muted">{[o.address, o.city].filter(Boolean).join(", ")}</p>
+                              ) : (
+                                <span className="rc-addr-missing">Adresse manquante</span>
+                              )}
                             </td>
                             <td>
                               <p className="rc-vehicle">{o.vehicle ?? "—"}</p>
@@ -1456,6 +1490,12 @@ export default function ReceptionCommandesPage() {
                                       ? "Le garagiste voit « en préparation »"
                                       : `Départ ${fmtDayTime(o.dateEnvoi)}`}
                                 </span>
+                                {o.failedReason && o.attempts > 0 && (
+                                  <span className="rc-fail-note">
+                                    <AlertTriangle className="h-3.5 w-3.5" />
+                                    {o.stage === "TRANSIT" ? `${o.attempts + 1}ᵉ passage — dernier échec` : "Non livrée"} : {o.failedReason}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td>
@@ -1618,6 +1658,34 @@ export default function ReceptionCommandesPage() {
                   <p className="rt-order-client">{dispatchOrder.clientName}</p>
                 </div>
               </div>
+              <div className="ga-modal-row">
+                <div className="od-field">
+                  <span className="od-label">Adresse de livraison</span>
+                  <input
+                    className="od-input"
+                    value={dispatchAddress}
+                    onChange={(e) => setDispatchAddress(e.target.value)}
+                    placeholder="12 rue des Garages"
+                    disabled={!dispatchOrder.clientId || dispatchBusy}
+                  />
+                </div>
+                <div className="od-field">
+                  <span className="od-label">Ville</span>
+                  <input
+                    className="od-input"
+                    value={dispatchCity}
+                    onChange={(e) => setDispatchCity(e.target.value)}
+                    placeholder="Nanterre"
+                    disabled={!dispatchOrder.clientId || dispatchBusy}
+                  />
+                </div>
+              </div>
+              {!dispatchAddress.trim() && (
+                <p className="st-cmd-hint rc-addr-hint">
+                  Sans adresse, le livreur n&apos;aura pas d&apos;itinéraire et devra appeler le client.
+                  {dispatchOrder.clientId ? " Saisissez-la ici : elle est enregistrée sur la fiche." : ""}
+                </p>
+              )}
               <div className="od-field">
                 <span className="od-label">Livreur <span className="od-req">*</span></span>
                 <div className="rc-livreur-pick">

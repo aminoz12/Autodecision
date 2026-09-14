@@ -21,9 +21,7 @@ export const metadata: Metadata = {
   // Tell translators not to translate the app: Google Translate rewrites text
   // nodes and breaks React's DOM reconciliation (insertBefore NotFoundError).
   other: { google: "notranslate" },
-  manifest: "/manifest.webmanifest",
   icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "Livraisons" },
 };
 
 export const viewport: Viewport = {

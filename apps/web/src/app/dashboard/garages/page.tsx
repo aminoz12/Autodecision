@@ -135,6 +135,10 @@ export default function GaragesPage() {
       setFormError("Le nom du garage est obligatoire.");
       return;
     }
+    if (!form.address.trim() || !form.city.trim()) {
+      setFormError("L'adresse de livraison et la ville sont obligatoires : le livreur en a besoin pour son itinéraire.");
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {
@@ -293,12 +297,12 @@ export default function GaragesPage() {
                   <input className="od-input" placeholder="01 23 45 67 89" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
                 </div>
                 <div className="od-field">
-                  <span className="od-label">Ville</span>
+                  <span className="od-label">Ville *</span>
                   <input className="od-input" placeholder="Nanterre" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} />
                 </div>
               </div>
               <div className="od-field">
-                <span className="od-label">Adresse de livraison</span>
+                <span className="od-label">Adresse de livraison *</span>
                 <input className="od-input" placeholder="12 rue des Garages" value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
               </div>
               <div className="od-field">
