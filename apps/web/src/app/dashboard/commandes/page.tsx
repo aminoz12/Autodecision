@@ -389,6 +389,8 @@ export default function ReceptionCommandesPage() {
           dateEnvoi: first.dateEnvoi,
           livreurId: first.livreurId,
           livreurName: first.livreurName,
+          // The livreur who collected the parts at the suppliers delivers them too.
+          tourLivreurId: lines.find((l) => l.tourLivreurId)?.tourLivreurId ?? null,
           clientId: first.clientId,
           address: first.clientAddress,
           city: first.clientCity,
@@ -648,7 +650,8 @@ export default function ReceptionCommandesPage() {
       address: o.address,
       city: o.city,
     });
-    setDispatchLivreur(o.livreurId ?? livreurs[0]?.id ?? "");
+    const active = (id: string | null) => (id && livreurs.some((l) => l.id === id) ? id : null);
+    setDispatchLivreur(active(o.livreurId) ?? active(o.tourLivreurId) ?? livreurs[0]?.id ?? "");
     setDispatchAddress(o.address ?? "");
     setDispatchCity(o.city ?? "");
     setDispatchError(null);

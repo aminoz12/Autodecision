@@ -15,14 +15,28 @@ import {
   RefreshCw,
   Trash2,
   Truck,
+  Warehouse,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
+import { SupplierPickups } from "@/components/livreur/SupplierPickups";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
+import {
+  addDays,
+  applyQueuedTourActions,
+  loadSupplierTourBoard,
+  parisDate,
+  TourBoardUnavailableError,
+  type PickupStatus,
+  type SupplierTour,
+  type SupplierTourBoard,
+  type TourLine,
+  type TourStatus,
+} from "@/lib/data/tournees";
 import {
   buildFailureReason,
   compressImage,
@@ -38,14 +52,17 @@ import {
   uploadProofOfDelivery,
   type TourStop,
 } from "@/lib/data/delivery";
+import { setLinePickup, setSupplierTourStatus } from "@/lib/data/tournees";
 import {
   clearTourCache,
   flushOutbox,
   listOutbox,
+  loadPickupsCache,
   loadTourCache,
   newOutboxId,
   outboxAvailable,
   putOutbox,
+  savePickupsCache,
   saveTourCache,
   type FlushReport,
   type OutboxItem,
@@ -83,6 +100,8 @@ function flushSummary(report: FlushReport): { notice: string | null; error: stri
   if (report.sent.length > 0) {
     notices.push(`${plural(report.sent.length, "confirmation")} gardée${report.sent.length > 1 ? "s" : ""} hors connexion envoyée${report.sent.length > 1 ? "s" : ""} au magasin.`);
   }
+  // A pickup refused because the tour moved on is not worth an error banner.
+  report.rejected = report.rejected.filter((r) => r.item.kind !== "pickup" && r.item.kind !== "tour");
   if (report.photoDropped.length > 0) {
     notices.push(`Photo refusée pour ${report.photoDropped.map((i) => i.ref).join(", ")} : livraison confirmée sans photo.`);
   }
@@ -120,6 +139,14 @@ export default function LivreurPage() {
   const [outbox, setOutbox] = useState<OutboxItem[]>([]);
   const [today, setToday] = useState(() => new Date());
   const refreshing = useRef(false);
+
+  /* ---- Tournée fournisseurs (onglet) ---- */
+  const [tab, setTab] = useState<"livraisons" | "fournisseurs">("livraisons");
+  const [pickupDay, setPickupDay] = useState(() => parisDate());
+  const [pickups, setPickups] = useState<SupplierTourBoard | null>(null);
+  const [pickupsLoading, setPickupsLoading] = useState(false);
+  const [pickupsError, setPickupsError] = useState<string | null>(null);
+  const pickupsSeq = useRef(0);
 
   // Only livreur sessions belong here — anonymous visitors get this
   // space's login page, other accounts go to their own space.
@@ -187,6 +214,32 @@ export default function LivreurPage() {
     }
   }, [supabase, userId, orgId, livreurId, isLivreur]);
 
+  const refreshPickups = useCallback(async () => {
+    if (!userId || !livreurId || !isLivreur) return;
+    const mine = ++pickupsSeq.current;
+    setPickupsLoading(true);
+    try {
+      const fresh = await loadSupplierTourBoard(supabase, pickupDay);
+      if (pickupsSeq.current !== mine) return;
+      setPickups(fresh);
+      setPickupsError(null);
+      savePickupsCache(userId, fresh);
+    } catch (e) {
+      if (pickupsSeq.current !== mine) return;
+      if (e instanceof LivreurDisabledError) {
+        setDisabled(true);
+      } else if (isNetworkError(e)) {
+        // Dead zone: the cached board stays on screen.
+      } else if (e instanceof TourBoardUnavailableError) {
+        setPickupsError("La tournée fournisseurs n'est pas encore activée par votre magasin.");
+      } else {
+        setPickupsError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (pickupsSeq.current === mine) setPickupsLoading(false);
+    }
+  }, [supabase, userId, livreurId, isLivreur, pickupDay]);
+
   // Last tour loaded on this phone + what is waiting to be sent.
   useEffect(() => {
     if (!userId || !isLivreur) return;
@@ -198,26 +251,37 @@ export default function LivreurPage() {
     void listOutbox(userId).then(setOutbox).catch(() => {});
   }, [userId, isLivreur]);
 
+  // Supplier tours of the chosen day: cache first, then the server.
+  useEffect(() => {
+    if (!userId || !isLivreur) return;
+    setPickups(loadPickupsCache(userId, pickupDay)?.board ?? null);
+    void refreshPickups();
+  }, [userId, isLivreur, pickupDay, refreshPickups]);
+
   // Stay current: on open, when the app comes back to the front or the
   // network returns, every minute, and as soon as a delivery is assigned.
   useEffect(() => {
     if (!userId || !isLivreur) return;
     void refresh();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+    const both = () => {
+      void refresh();
+      void refreshPickups();
     };
-    const onOnline = () => void refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") both();
+    };
+    const onOnline = () => both();
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", onOnline);
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) void refresh();
+      if (document.visibilityState === "visible" && navigator.onLine) both();
     }, REFRESH_MS);
     const channel = supabase
       .channel(`livreur-tour:${userId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
-        () => void refresh(),
+        () => both(),
       )
       .subscribe();
     return () => {
@@ -226,22 +290,105 @@ export default function LivreurPage() {
       window.clearInterval(timer);
       void supabase.removeChannel(channel);
     };
-  }, [supabase, userId, isLivreur, refresh]);
+  }, [supabase, userId, isLivreur, refresh, refreshPickups]);
 
   const { toDeliver, failedToday, deliveredToday } = useMemo(() => splitTour(stops, today), [stops, today]);
-  const queued = useMemo(() => new Map(outbox.map((i) => [i.orderId, i.kind] as const)), [outbox]);
+  const queued = useMemo(
+    () => new Map(outbox.filter((i) => i.kind === "deliver" || i.kind === "fail").map((i) => [i.orderId, i.kind] as const)),
+    [outbox],
+  );
+  const queuedLines = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "pickup" && i.lineId ? [i.lineId] : []))), [outbox]);
+  const queuedTours = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "tour" && i.tourId ? [i.tourId] : []))), [outbox]);
+  const shownPickups = useMemo(() => (pickups ? applyQueuedTourActions(pickups, outbox) : null), [pickups, outbox]);
+  const pickupToday = parisDate(today);
+  const pickupTomorrow = addDays(pickupToday, 1);
+  const pickupsLeft = useMemo(() => {
+    if (!shownPickups || pickupDay !== pickupToday) return 0;
+    return shownPickups.lines.filter((l) => l.receptionStatus !== "RECEIVED" && l.receptionStatus !== "NOT_RECEIVED" && !l.pickupStatus).length;
+  }, [shownPickups, pickupDay, pickupToday]);
 
   const markLocally = (orderId: string, patch: Partial<TourStop>) =>
     setStops((prev) => prev.map((s) => (s.id === orderId ? { ...s, ...patch } : s)));
 
   const enqueue = async (
-    item: Pick<OutboxItem, "kind" | "orderId" | "ref" | "recipient" | "note" | "reason" | "photo" | "podPath">,
+    item: Pick<
+      OutboxItem,
+      "kind" | "orderId" | "ref" | "recipient" | "note" | "reason" | "photo" | "podPath" | "lineId" | "pickupStatus" | "tourId" | "tourStatus"
+    >,
   ) => {
     if (!userId || !orgId || !outboxAvailable()) {
       throw new Error("Pas de réseau, et ce téléphone ne peut pas garder la confirmation : réessayez dès que la connexion revient.");
     }
     await putOutbox({ ...item, id: newOutboxId(), userId, orgId, createdAt: Date.now() });
     setOutbox(await listOutbox(userId));
+  };
+
+  /* ---- Fournisseurs : pièce récupérée / indispo, tournée partie / terminée ---- */
+  const patchPickupLine = (lineId: string, status: PickupStatus | null) =>
+    setPickups((b) =>
+      b
+        ? {
+            ...b,
+            lines: b.lines.map((l) =>
+              l.id === lineId ? { ...l, pickupStatus: status, pickupAt: status ? new Date().toISOString() : null } : l,
+            ),
+          }
+        : b,
+    );
+
+  const pickupPart = async (line: TourLine, status: PickupStatus | null) => {
+    if (!userId || !orgId) return;
+    const before = line.pickupStatus;
+    patchPickupLine(line.id, status);
+    try {
+      if (!navigator.onLine) throw new DeliveryNetworkError("offline");
+      await setLinePickup(supabase, line.id, status);
+      void refreshPickups();
+    } catch (e) {
+      if (isNetworkError(e)) {
+        try {
+          await enqueue({ kind: "pickup", orderId: line.orderId, ref: line.reference, lineId: line.id, pickupStatus: status });
+        } catch (qe) {
+          patchPickupLine(line.id, before);
+          setPickupsError(qe instanceof Error ? qe.message : String(qe));
+        }
+      } else {
+        patchPickupLine(line.id, before);
+        setPickupsError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+
+  const changeTourStatus = async (tour: SupplierTour, status: TourStatus, left: number) => {
+    if (!userId || !orgId) return;
+    if (
+      status === "TERMINEE" &&
+      left > 0 &&
+      !window.confirm(`${plural(left, "pièce")} pas encore récupérée${left > 1 ? "s" : ""}. Terminer ${tour.name} quand même ?`)
+    ) {
+      return;
+    }
+    const before = tour.status;
+    setPickups((b) => (b ? { ...b, tours: b.tours.map((t) => (t.id === tour.id ? { ...t, status } : t)) } : b));
+    try {
+      if (!navigator.onLine) throw new DeliveryNetworkError("offline");
+      await setSupplierTourStatus(supabase, tour.id, status);
+      setNotice(status === "TERMINEE" ? `${tour.name} terminée : le magasin est prévenu.` : `${tour.name} ${status === "EN_COURS" ? "démarrée" : "mise à jour"}.`);
+      void refreshPickups();
+    } catch (e) {
+      if (isNetworkError(e)) {
+        try {
+          await enqueue({ kind: "tour", orderId: "", ref: tour.name, tourId: tour.id, tourStatus: status });
+          setNotice(`${tour.name} : gardé sur le téléphone, envoyé au magasin dès le retour du réseau.`);
+        } catch (qe) {
+          setPickups((b) => (b ? { ...b, tours: b.tours.map((t) => (t.id === tour.id ? { ...t, status: before } : t)) } : b));
+          setPickupsError(qe instanceof Error ? qe.message : String(qe));
+        }
+      } else {
+        setPickups((b) => (b ? { ...b, tours: b.tours.map((t) => (t.id === tour.id ? { ...t, status: before } : t)) } : b));
+        setPickupsError(e instanceof Error ? e.message : String(e));
+      }
+    }
   };
 
   const signOut = () => {
@@ -456,7 +603,51 @@ export default function LivreurPage() {
       {error && <div className="nc-error lp-error">{error}</div>}
       <Toast message={notice} onClose={() => setNotice(null)} />
 
-      <main className="lp-main">
+      <div className="lpt-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "livraisons"}
+          className={`lpt-tab${tab === "livraisons" ? " lpt-tab--on" : ""}`}
+          onClick={() => setTab("livraisons")}
+        >
+          <Truck className="h-5 w-5" />
+          Livraisons
+          {toDeliver.length > 0 && <span className="lp-count">{toDeliver.length}</span>}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "fournisseurs"}
+          className={`lpt-tab${tab === "fournisseurs" ? " lpt-tab--on" : ""}`}
+          onClick={() => setTab("fournisseurs")}
+        >
+          <Warehouse className="h-5 w-5" />
+          Fournisseurs
+          {pickupsLeft > 0 && <span className="lp-count">{pickupsLeft}</span>}
+        </button>
+      </div>
+
+      {tab === "fournisseurs" && (
+        <main className="lp-main">
+          <SupplierPickups
+            board={shownPickups}
+            day={pickupDay}
+            today={pickupToday}
+            tomorrow={pickupTomorrow}
+            onDay={setPickupDay}
+            loading={pickupsLoading}
+            error={pickupsError}
+            livreurId={livreurId}
+            queuedLines={queuedLines}
+            queuedTours={queuedTours}
+            onPickup={(l, s) => void pickupPart(l, s)}
+            onTourStatus={(t, s, left) => void changeTourStatus(t, s, left)}
+          />
+        </main>
+      )}
+
+      <main className="lp-main" hidden={tab !== "livraisons"}>
         <p className="lp-section">
           À livrer <span className="lp-count">{toDeliver.length}</span>
         </p>

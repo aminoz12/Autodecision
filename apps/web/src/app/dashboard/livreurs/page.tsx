@@ -9,6 +9,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Route,
   Truck,
   UserRound,
   X,
@@ -165,6 +166,10 @@ export default function LivreursPage() {
           </p>
         </div>
         <div className="rl-header-actions">
+          <Link href="/dashboard/tournees" className="od-btn od-btn--ghost">
+            <Route className="h-4 w-4" />
+            Tournée fournisseurs
+          </Link>
           <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualiser

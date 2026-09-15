@@ -43,6 +43,13 @@ jobs:
           bad=$(ls supabase/migrations | grep -vE '^[0-9]{14}_[a-z0-9_]+\.sql$' || true)
           if [ -n "$bad" ]; then echo "Bad migration names: $bad"; exit 1; fi
       - name: Never write \d in migrations (use [0-9])
+        # The rule dates from 20260829030000 (public.ref_seq). Older migrations are
+        # already applied and superseded by it — they are history, never edited.
+        # Comment lines don't count (grep -n prefixes "<line>:").
         run: |
-          if grep -rn '\\d' supabase/migrations --include=*.sql | grep -v '^\s*--' | grep -q 'regexp'; then
-            echo "Use [0-9] instead of \\d in migration regexes"; exit 1; fi
+          hits=""
+          for f in supabase/migrations/*.sql; do
+            [[ "$(basename "$f")" > "20260829030000" ]] || continue
+            if grep -n '\\d' "$f" | grep -v '^[0-9]*:[[:space:]]*--' | grep -q 'regexp'; then hits="$hits $f"; fi
+          done
+          if [ -n "$hits" ]; then echo "Use [0-9] instead of \\d in migration regexes:$hits"; exit 1; fi

@@ -53,6 +53,8 @@ export type BoardLine = {
   expectedAt: string | null;
   tourId: string | null;
   tourName: string | null;
+  /** Livreur running the tournée the parts come in on (pre-selected at dispatch). */
+  tourLivreurId: string | null;
   putAway: boolean;
   /** Prix de vente unitaire (for walk-in returns from the history). */
   unitPrice: number;
@@ -89,7 +91,7 @@ export async function loadReceptionBoard(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
           "prix_vente_unitaire,retour_impossible,supplier_id," +
           "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,clients(id,name,phone,is_garage,address,city),livreurs(name))," +
-          "suppliers(name,own_delivery,lead_days),delivery_tours(name)",
+          "suppliers(name,own_delivery,lead_days),delivery_tours(name,livreur_id)",
       )
       .eq("organization_id", orgId)
       .limit(500),
@@ -177,6 +179,7 @@ export async function loadReceptionBoard(
       expectedAt: (row.prevue_le as string | null) ?? null,
       tourId: (row.tour_id as string | null) ?? null,
       tourName,
+      tourLivreurId: (tour?.livreur_id as string | null) ?? null,
       putAway: Boolean(row.retour_stock_fait),
       unitPrice: toNumber(row.prix_vente_unitaire),
       retourImpossible: Boolean(row.retour_impossible),

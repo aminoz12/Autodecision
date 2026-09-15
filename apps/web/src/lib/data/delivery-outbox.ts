@@ -6,6 +6,13 @@ import {
   uploadProofOfDelivery,
   type TourStop,
 } from "@/lib/data/delivery";
+import {
+  setLinePickup,
+  setSupplierTourStatus,
+  type PickupStatus,
+  type SupplierTourBoard,
+  type TourStatus,
+} from "@/lib/data/tournees";
 
 /* ------------------------------------------------------------------ */
 /*  Offline support for the livreur space (browser only): the last     */
@@ -18,15 +25,22 @@ export type OutboxItem = {
   id: string;
   userId: string;
   orgId: string;
+  /** The order delivered / failed / picked up; empty for a tour action. */
   orderId: string;
   ref: string;
-  kind: "deliver" | "fail";
+  kind: "deliver" | "fail" | "pickup" | "tour";
   recipient?: string;
   note?: string;
   reason?: string;
   photo?: Blob | null;
   /** Set once the photo is uploaded, so a retry never uploads it twice. */
   podPath?: string | null;
+  /** Supplier pickup: the part and its new state (null = à récupérer). */
+  lineId?: string;
+  pickupStatus?: PickupStatus | null;
+  /** Supplier tour started / finished. */
+  tourId?: string;
+  tourStatus?: TourStatus;
   createdAt: number;
 };
 
@@ -105,7 +119,11 @@ export async function flushOutbox(supabase: SupabaseClient, userId: string): Pro
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     try {
-      if (item.kind === "deliver") {
+      if (item.kind === "pickup") {
+        if (item.lineId) await setLinePickup(supabase, item.lineId, item.pickupStatus ?? null);
+      } else if (item.kind === "tour") {
+        if (item.tourId && item.tourStatus) await setSupplierTourStatus(supabase, item.tourId, item.tourStatus);
+      } else if (item.kind === "deliver") {
         let podPath = item.podPath ?? null;
         if (item.photo && !podPath) {
           try {
@@ -167,7 +185,44 @@ export function loadTourCache(userId: string): { savedAt: number; stops: TourSto
 export function clearTourCache(userId: string): void {
   try {
     localStorage.removeItem(cacheKey(userId));
+    localStorage.removeItem(pickupsKey(userId));
   } catch {
     /* nothing to clear */
   }
+}
+
+/* ---- Last supplier tours loaded (today / tomorrow) ---- */
+
+const pickupsKey = (userId: string) => `livreur-pickups:${userId}`;
+
+type PickupsCache = Record<string, { savedAt: number; board: SupplierTourBoard }>;
+
+function readPickups(userId: string): PickupsCache {
+  try {
+    const raw = localStorage.getItem(pickupsKey(userId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return parsed && typeof parsed === "object" ? (parsed as PickupsCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function savePickupsCache(userId: string, board: SupplierTourBoard): void {
+  try {
+    const all = readPickups(userId);
+    all[board.date] = { savedAt: Date.now(), board };
+    // Only the most recent days matter offline.
+    const keep = Object.keys(all).sort().slice(-3);
+    const trimmed: PickupsCache = {};
+    for (const k of keep) trimmed[k] = all[k];
+    localStorage.setItem(pickupsKey(userId), JSON.stringify(trimmed));
+  } catch {
+    /* storage full or blocked */
+  }
+}
+
+export function loadPickupsCache(userId: string, date: string): { savedAt: number; board: SupplierTourBoard } | null {
+  const entry = readPickups(userId)[date];
+  if (!entry || !entry.board || !Array.isArray(entry.board.lines) || !Array.isArray(entry.board.tours)) return null;
+  return { savedAt: Number(entry.savedAt) || 0, board: entry.board };
 }

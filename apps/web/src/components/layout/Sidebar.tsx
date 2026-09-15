@@ -11,6 +11,7 @@ import {
   Menu,
   PackageCheck,
   Receipt,
+  Route,
   Search,
   Settings,
   ShieldCheck,
@@ -43,6 +44,7 @@ const navGroups: NavGroup[] = [
       { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
       { href: "/dashboard/nouvelle-commande", label: "Nouvelle commande", icon: ClipboardPlus },
       { href: "/dashboard/commandes", label: "Suivi des commandes", icon: PackageCheck },
+      { href: "/dashboard/tournees", label: "Tournée fournisseurs", icon: Route },
     ],
   },
   {

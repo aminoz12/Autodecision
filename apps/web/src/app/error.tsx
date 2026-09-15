@@ -32,6 +32,7 @@ export default function ErrorPage({
           <button type="button" className="od-btn od-btn--primary" onClick={reset}>
             <RotateCcw className="h-4 w-4" /> Réessayer
           </button>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full reload is the point: it clears the broken client state */}
           <a href="/" className="od-btn od-btn--ghost">Retour à l&apos;accueil</a>
         </div>
         {error.digest && <p className="err-digest">Référence : {error.digest}</p>}
