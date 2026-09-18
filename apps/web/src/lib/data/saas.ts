@@ -753,21 +753,31 @@ export type ReturnRow = {
   amount: number;
   /** Value of the returned line (qty × unit price) to prefill a refund. */
   lineValue: number;
+  /** Handed to the livreur: collect at the garage, or drop at the supplier (migration 20260919010000). */
+  leg: "GARAGE_TO_STORE" | "STORE_TO_SUPPLIER" | null;
+  legDone: boolean;
+  legDoneAt: string | null;
+  legSlip: string | null;
+  legNote: string | null;
+  legTourName: string | null;
+  legTourDate: string | null;
 };
 
 export async function loadReturns(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<ReturnRow[]> {
-  const { data, error } = await supabase
-    .from("sales_returns")
-    .select(
-      "id,ref,created_at,order_id,client_id,supplier_id,reason,motif,designation,type_retour,statut_traitement,decote_pct,montant,clients(name,is_garage),suppliers(name)," +
-        "orders(ref_demande,clients(name,is_garage)),order_lines(depuis_magasin,quantity,prix_vente_unitaire,nom_produit,reference,suppliers(name))",
-    )
-    .eq("organization_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const BASE =
+    "id,ref,created_at,order_id,client_id,supplier_id,reason,motif,designation,type_retour,statut_traitement,decote_pct,montant,clients(name,is_garage),suppliers(name)," +
+    "orders(ref_demande,clients(name,is_garage)),order_lines(depuis_magasin,quantity,prix_vente_unitaire,nom_produit,reference,suppliers(name))";
+  // The livreur legs (migration 20260919010000); a database without them still lists the returns.
+  const LEGS = ",livreur_leg,leg_status,leg_done_at,leg_slip,leg_note,leg_tour:delivery_tours!sales_returns_leg_tour_id_fkey(name,tour_date,slot_start)";
+  const query = (select: string) =>
+    supabase.from("sales_returns").select(select).eq("organization_id", orgId).order("created_at", { ascending: false }).limit(200);
+  let { data, error } = await query(BASE + LEGS);
+  if (error && /livreur_leg|leg_tour|delivery_tours|leg_status/i.test(error.message)) {
+    ({ data, error } = await query(BASE));
+  }
 
   if (error) throw new Error(error.message);
 
@@ -781,6 +791,7 @@ export async function loadReturns(
     // show where the returned part came from: its line's supplier or the shelf.
     const line = first(row.order_lines as Embedded<Record<string, unknown>>);
     const lineSupplier = first(line?.suppliers as Embedded<Record<string, unknown>>);
+    const legTour = first(row.leg_tour as Embedded<Record<string, unknown>>);
     const supplierName =
       (supplier?.name as string | undefined) ??
       (lineSupplier?.name as string | undefined) ??
@@ -802,6 +813,13 @@ export async function loadReturns(
       treatment: String(row.statut_traitement ?? "A_TRAITER"),
       decotePct: toNumber(row.decote_pct),
       amount: toNumber(row.montant),
+      leg: row.livreur_leg === "GARAGE_TO_STORE" || row.livreur_leg === "STORE_TO_SUPPLIER" ? row.livreur_leg : null,
+      legDone: row.leg_status === "FAIT",
+      legDoneAt: (row.leg_done_at as string | null) ?? null,
+      legSlip: (row.leg_slip as string | null) ?? null,
+      legNote: (row.leg_note as string | null) ?? null,
+      legTourName: (legTour?.name as string | undefined) ?? null,
+      legTourDate: (legTour?.tour_date as string | undefined) ?? null,
     };
   });
 }

@@ -12,6 +12,7 @@ import {
   type PickupStatus,
   type SupplierTourBoard,
   type TourStatus,
+  completeReturnLeg,
 } from "@/lib/data/tournees";
 
 /* ------------------------------------------------------------------ */
@@ -28,7 +29,7 @@ export type OutboxItem = {
   /** The order delivered / failed / picked up; empty for a tour action. */
   orderId: string;
   ref: string;
-  kind: "deliver" | "fail" | "pickup" | "tour";
+  kind: "deliver" | "fail" | "pickup" | "tour" | "return";
   recipient?: string;
   note?: string;
   reason?: string;
@@ -41,6 +42,9 @@ export type OutboxItem = {
   /** Supplier tour started / finished. */
   tourId?: string;
   tourStatus?: TourStatus;
+  /** Return leg done at the garage / supplier (or back to à faire). */
+  returnId?: string;
+  returnDone?: boolean;
   createdAt: number;
 };
 
@@ -123,6 +127,8 @@ export async function flushOutbox(supabase: SupabaseClient, userId: string): Pro
         if (item.lineId) await setLinePickup(supabase, item.lineId, item.pickupStatus ?? null);
       } else if (item.kind === "tour") {
         if (item.tourId && item.tourStatus) await setSupplierTourStatus(supabase, item.tourId, item.tourStatus);
+      } else if (item.kind === "return") {
+        if (item.returnId) await completeReturnLeg(supabase, item.returnId, item.returnDone !== false);
       } else if (item.kind === "deliver") {
         let podPath = item.podPath ?? null;
         if (item.photo && !podPath) {

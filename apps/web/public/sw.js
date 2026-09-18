@@ -6,7 +6,7 @@
    v1 was registered for the whole site ("/"): when that old registration
    updates to this file it clears the old cache and unregisters itself, so
    the dashboard is no longer served by the driver's worker. */
-const CACHE = "autodecision-livreur-v2";
+const CACHE = "autodecision-livreur-v3";
 const SHELL = ["/livreur", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 const MAX_STATIC = 80;
 const ROOT_SCOPE = new URL(self.registration.scope).pathname === "/";

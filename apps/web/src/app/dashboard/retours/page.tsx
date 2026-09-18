@@ -11,6 +11,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Truck,
   Wallet,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import {
   type ReturnRow,
   type ReturnTreatment,
 } from "@/lib/data/saas";
+import { addDays, assignReturnLeg, ensureSupplierTour, parisDate, STANDARD_TOURS, type ReturnLeg } from "@/lib/data/tournees";
 
 const TREATMENT_LABEL: Record<string, string> = {
   A_TRAITER: "À traiter",
@@ -74,6 +76,32 @@ function treatmentTone(status: string) {
   if (status === "DEMANDE_ENVOYEE") return "blue";
   if (status === "A_RECUPERER") return "violet";
   return "amber";
+}
+
+type TourChoice = { key: string; label: string; date: string; name: string; slot: string };
+
+/** Today's and tomorrow's standard tournées, the next departure first (today's gone tours last). */
+function tourChoicesFrom(now: Date): TourChoice[] {
+  const today = parisDate(now);
+  const tomorrow = addDays(today, 1);
+  const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+  const all = [today, tomorrow].flatMap((date) =>
+    STANDARD_TOURS.map((t) => ({
+      key: `${date}|${t.name}`,
+      date,
+      name: t.name,
+      slot: t.slot,
+      label: `${date === today ? "Aujourd'hui" : "Demain"} · ${t.name} (${t.slot.replace(":", "h")})`,
+    })),
+  );
+  const upcoming = all.filter((c) => c.date !== today || c.slot > hhmm);
+  const gone = all.filter((c) => c.date === today && c.slot <= hhmm);
+  return [...upcoming, ...gone];
+}
+
+/** A return the livreur can handle: collect at a garage, or drop at the supplier. */
+function canHandToLivreur(row: ReturnRow): boolean {
+  return Boolean((row.isGarage && row.clientId) || row.hasSupplier);
 }
 
 export default function RetoursPage() {
@@ -152,6 +180,51 @@ export default function RetoursPage() {
     },
     [profile?.organization_id],
   );
+
+  /* ---- Confier un retour au livreur : un trajet sur une tournée ---- */
+  const [legModal, setLegModal] = useState<ReturnRow | null>(null);
+  const [legLeg, setLegLeg] = useState<ReturnLeg | null>(null);
+  const [legTour, setLegTour] = useState("");
+  const [legSlip, setLegSlip] = useState("");
+  const [legNote, setLegNote] = useState("");
+  const [legBusy, setLegBusy] = useState(false);
+  const [legError, setLegError] = useState<string | null>(null);
+  const tourChoices = useMemo(() => tourChoicesFrom(new Date()), []);
+
+  const openLeg = (row: ReturnRow) => {
+    setLegModal(row);
+    setLegLeg(row.leg ?? (row.isGarage && row.clientId ? "GARAGE_TO_STORE" : row.hasSupplier ? "STORE_TO_SUPPLIER" : null));
+    const current = row.legTourDate && row.legTourName ? `${row.legTourDate}|${row.legTourName}` : "";
+    setLegTour(tourChoices.some((c) => c.key === current) ? current : (tourChoices[0]?.key ?? ""));
+    setLegSlip(row.legSlip ?? "");
+    setLegNote(row.legNote ?? "");
+    setLegError(null);
+  };
+
+  const submitLeg = async (remove = false) => {
+    if (!legModal) return;
+    setLegBusy(true);
+    setLegError(null);
+    try {
+      const sb = createClient();
+      if (remove) {
+        await assignReturnLeg(sb, { returnId: legModal.id, leg: null, tourId: null });
+        setNotice(`${legModal.ref} retiré de la tournée du livreur.`);
+      } else {
+        const choice = tourChoices.find((c) => c.key === legTour);
+        if (!legLeg || !choice) throw new Error("Choisissez le trajet et la tournée.");
+        const tourId = await ensureSupplierTour(sb, { date: choice.date, name: choice.name, slot: choice.slot });
+        await assignReturnLeg(sb, { returnId: legModal.id, leg: legLeg, tourId, slip: legSlip, note: legNote });
+        setNotice(`${legModal.ref} confié au livreur : ${choice.label}.`);
+      }
+      setLegModal(null);
+      await load();
+    } catch (e) {
+      setLegError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLegBusy(false);
+    }
+  };
 
   const submitSettle = useCallback(async () => {
     if (!settle) return;
@@ -411,6 +484,14 @@ export default function RetoursPage() {
                         )}
                         {row.isGarage && <span className="rc-type rc-type--garage rc-type--inline">Garage</span>}
                         {row.hasSupplier && <p className="rl-muted">Retour fournisseur · {row.supplier}</p>}
+                        {row.leg && (
+                          <p className={`rl-muted rt-leg${row.legDone ? " rt-leg--done" : ""}`}>
+                            <Truck className="h-3.5 w-3.5" />
+                            {row.legDone
+                              ? `${row.leg === "GARAGE_TO_STORE" ? "Récupéré par le livreur" : "Déposé par le livreur"}${row.legDoneAt ? ` le ${fmtDate(row.legDoneAt)}` : ""}`
+                              : `Livreur · ${row.legTourName ?? "tournée"}${row.legTourDate ? ` du ${fmtDate(row.legTourDate)}` : ""} · ${row.leg === "GARAGE_TO_STORE" ? "à récupérer" : "à déposer"}${row.legSlip ? ` · bon ${row.legSlip}` : ""}`}
+                          </p>
+                        )}
                       </td>
                       <td className="rt-cell-motif" title={row.reference}>{row.reference}</td>
                       <td className="rt-cell-motif" title={row.reason}>{row.reason}</td>
@@ -418,34 +499,51 @@ export default function RetoursPage() {
                       <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{TREATMENT_LABEL[row.treatment] ?? row.treatment}</span></td>
                       <td className="rt-decote">{row.amount > 0 ? fmtMoney(row.amount) : <span className="rl-muted">—</span>}</td>
                       <td>
-                        {!row.hasSupplier && !["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment) ? (
-                          <div className="rt-acts">
-                            <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
-                              <Banknote className="h-3.5 w-3.5" /> Rembourser
-                            </button>
-                            <button type="button" className="rc-act rc-act--retour" onClick={() => openSettle(row, "AVOIR")}>
-                              <FileText className="h-3.5 w-3.5" /> Avoir
-                            </button>
-                          </div>
-                        ) : steps.length === 0 || !row.hasSupplier ? (
-                          <span className="rt-dash">—</span>
-                        ) : busy ? (
-                          <Loader2 className="h-4 w-4 nc-spin" />
-                        ) : (
-                          <div className="rt-acts">
-                            {steps.map((step) => (
-                              <button
-                                key={step.to}
-                                type="button"
-                                className={`rt-act rt-act--${step.cls}`}
-                                disabled={actingId !== null}
-                                onClick={() => void act(row, step.to)}
-                              >
-                                {step.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        {(() => {
+                          const settled = ["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment);
+                          const money = !row.hasSupplier && !settled;
+                          const pipeline = row.hasSupplier && steps.length > 0;
+                          const livreur = canHandToLivreur(row);
+                          if (!money && !pipeline && !livreur) return <span className="rt-dash">—</span>;
+                          return (
+                            <div className="rt-acts">
+                              {money && (
+                                <>
+                                  <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
+                                    <Banknote className="h-3.5 w-3.5" /> Rembourser
+                                  </button>
+                                  <button type="button" className="rc-act rc-act--retour" onClick={() => openSettle(row, "AVOIR")}>
+                                    <FileText className="h-3.5 w-3.5" /> Avoir
+                                  </button>
+                                </>
+                              )}
+                              {pipeline && busy && <Loader2 className="h-4 w-4 nc-spin" />}
+                              {pipeline &&
+                                !busy &&
+                                steps.map((step) => (
+                                  <button
+                                    key={step.to}
+                                    type="button"
+                                    className={`rt-act rt-act--${step.cls}`}
+                                    disabled={actingId !== null}
+                                    onClick={() => void act(row, step.to)}
+                                  >
+                                    {step.label}
+                                  </button>
+                                ))}
+                              {livreur && (
+                                <button
+                                  type="button"
+                                  className={`rc-act ${row.leg ? "rc-act--quiet" : "rc-act--retour"}`}
+                                  title={row.leg ? "Modifier le trajet confié au livreur" : "Confier ce retour au livreur"}
+                                  onClick={() => openLeg(row)}
+                                >
+                                  <Truck className="h-3.5 w-3.5" /> {row.leg ? "Livreur ✓" : "Livreur"}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );
@@ -467,6 +565,92 @@ export default function RetoursPage() {
 
       </div>
     </div>
+
+      {legModal && (
+        <div className="ga-modal-overlay" onClick={() => !legBusy && setLegModal(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><Truck className="h-4 w-4" /> Confier au livreur — {legModal.ref}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setLegModal(null)} aria-label="Fermer" disabled={legBusy}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form
+              className="ga-modal-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitLeg();
+              }}
+            >
+              {legError && <div className="nc-error">{legError}</div>}
+              <p className="st-cmd-hint">
+                {legModal.reference} · {legModal.client}
+                {legModal.hasSupplier ? ` · retour fournisseur ${legModal.supplier}` : ""}
+              </p>
+              <div className="od-field">
+                <span className="od-label">Trajet</span>
+                <div className="lp-reasons" role="radiogroup">
+                  {legModal.isGarage && legModal.clientId && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={legLeg === "GARAGE_TO_STORE"}
+                      className={`nc-chip${legLeg === "GARAGE_TO_STORE" ? " nc-chip--on" : ""}`}
+                      onClick={() => setLegLeg("GARAGE_TO_STORE")}
+                    >
+                      Récupérer chez {legModal.client}
+                    </button>
+                  )}
+                  {legModal.hasSupplier && (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={legLeg === "STORE_TO_SUPPLIER"}
+                      className={`nc-chip${legLeg === "STORE_TO_SUPPLIER" ? " nc-chip--on" : ""}`}
+                      onClick={() => setLegLeg("STORE_TO_SUPPLIER")}
+                    >
+                      Déposer chez {legModal.supplier}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="od-field">
+                <span className="od-label">Tournée</span>
+                <select className="od-input" value={legTour} onChange={(e) => setLegTour(e.target.value)}>
+                  {tourChoices.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {legLeg === "STORE_TO_SUPPLIER" && (
+                <div className="od-field">
+                  <span className="od-label">N° de bon de retour</span>
+                  <input className="od-input" value={legSlip} onChange={(e) => setLegSlip(e.target.value)} placeholder="BR-1842" />
+                </div>
+              )}
+              <div className="od-field">
+                <span className="od-label">Consigne pour le livreur</span>
+                <input className="od-input" value={legNote} onChange={(e) => setLegNote(e.target.value)} placeholder="Demander le bon au chef d'atelier…" />
+              </div>
+              <div className="ga-modal-actions">
+                {legModal.leg && (
+                  <button type="button" className="od-btn od-btn--ghost" onClick={() => void submitLeg(true)} disabled={legBusy}>
+                    Retirer du livreur
+                  </button>
+                )}
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setLegModal(null)} disabled={legBusy}>
+                  Annuler
+                </button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={legBusy || !legLeg || !legTour}>
+                  {legBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Truck className="h-4 w-4" />} Confier
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     {settle && (
       <div className="ga-modal-overlay" onClick={() => !settleBusy && setSettle(null)}>

@@ -8,11 +8,13 @@ import {
   filterTourLines,
   fmtRelativeDay,
   focusSlot,
+  nextStandardTour,
   parisDate,
   parisDateTime,
   overviewCellKind,
   parseSupplierTourBoard,
   pickupState,
+  returnStats,
   scheduleSlots,
   shortSupplierLabels,
   supplierStops,
@@ -56,6 +58,7 @@ function line(p: Partial<TourLine> & { id: string }): TourLine {
     pickupAt: null,
     pickupBy: null,
     isRestock: false,
+    kind: null,
     client: null,
     ...p,
   };
@@ -98,7 +101,7 @@ describe("parseSupplierTourBoard", () => {
     expect(board.lines[0]).toMatchObject({ reference: "K1125", quantity: 2, pickupStatus: "PICKED_UP", supplier: "AZ" });
     expect(board.lines[1].pickupStatus).toBeNull();
     expect(board.defaults).toEqual({ "Tournée 1": { livreurId: "lv1", livreurName: "Rachid" } });
-    expect(parseSupplierTourBoard(null)).toEqual({ date: "", tours: [], lines: [], defaults: {}, upcoming: [] });
+    expect(parseSupplierTourBoard(null)).toEqual({ date: "", tours: [], lines: [], defaults: {}, upcoming: [], returns: [] });
   });
 
   it("keeps the upcoming days with parts, in date order", () => {
@@ -300,11 +303,55 @@ describe("livreur view", () => {
     ]);
   });
 
+  it("reads the kind of each part and the returns handed to the livreur", () => {
+    const board = parseSupplierTourBoard({
+      date: "2026-09-19",
+      tours: [{ id: "t1", name: "Tournée 1", slot: "10:00", status: "PLANIFIEE" }],
+      lines: [
+        { id: "l1", tour_id: "t1", order_id: "o1", supplier_id: "s1", supplier: "AZ", reference: "A", kind: "GARAGE" },
+        { id: "l2", tour_id: "t1", order_id: "o2", supplier_id: "s1", supplier: "AZ", reference: "B", kind: "weird" },
+      ],
+      returns: [
+        { id: "r1", tour_id: "t1", leg: "GARAGE_TO_STORE", status: "A_FAIRE", ref: "RET-1", designation: "Étrier", destination: "Garage Meca", address: "12 rue X", city: "Nanterre", phone: "06" },
+        { id: "r2", tour_id: "t1", leg: "STORE_TO_SUPPLIER", status: "FAIT", designation: "Alternateur", destination: "ACR", slip: "BR-1842", done_at: "2026-09-19T10:00:00Z", done_by: "Rachid" },
+        { id: "r3", tour_id: "t1", leg: "SIDEWAYS", status: "A_FAIRE" },
+      ],
+    });
+    expect(board.lines.map((l) => l.kind)).toEqual(["GARAGE", null]);
+    expect(board.returns.map((r) => [r.leg, r.done, r.destination, r.slip ?? r.address])).toEqual([
+      ["GARAGE_TO_STORE", false, "Garage Meca", "12 rue X"],
+      ["STORE_TO_SUPPLIER", true, "ACR", "BR-1842"],
+    ]);
+    expect(returnStats(board.returns)).toEqual({ total: 2, done: 1, left: 1 });
+    expect(returnStats(board.returns, "GARAGE_TO_STORE")).toEqual({ total: 1, done: 0, left: 1 });
+  });
+
+  it("names the tournée a part is deferred to, like the database does", () => {
+    expect(nextStandardTour("10:00")).toEqual({ name: "Tournée 2", slot: "13:00", nextDay: false });
+    expect(nextStandardTour("13:00")).toEqual({ name: "Tournée 3", slot: "15:00", nextDay: false });
+    expect(nextStandardTour("15:00")).toEqual({ name: "Tournée 4", slot: "17:30", nextDay: false });
+    expect(nextStandardTour("17:30")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true });
+    expect(nextStandardTour(null)).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true });
+  });
+
+  it("shows a return done offline on top of the last board", () => {
+    const board = parseSupplierTourBoard({
+      date: "2026-09-19",
+      tours: [{ id: "t1", name: "Tournée 1", slot: "10:00", status: "PLANIFIEE" }],
+      lines: [],
+      returns: [{ id: "r1", tour_id: "t1", leg: "GARAGE_TO_STORE", status: "A_FAIRE", designation: "Étrier", destination: "Garage" }],
+    });
+    const shown = applyQueuedTourActions(board, [{ kind: "return", returnId: "r1", returnDone: true }]);
+    expect(shown.returns[0].done).toBe(true);
+    expect(applyQueuedTourActions(board, [{ kind: "return", returnId: "zz", returnDone: true }])).toBe(board);
+  });
+
   it("shows what was ticked offline on top of the last board", () => {
     const board = {
       date: "2026-09-15",
       defaults: {},
       upcoming: [],
+      returns: [],
       tours: [tour({ id: "t1", name: "Tournée 1" })],
       lines: [line({ id: "a" }), line({ id: "b" })],
     };

@@ -75,8 +75,46 @@ export type TourLine = {
   /** Who ticked it (display name). */
   pickupBy: string | null;
   isRestock: boolean;
+  /** The crate the part goes to; null when the database RPC predates it. */
+  kind: PartKind | null;
   /** Counter staff only — never sent to a livreur. */
   client: string | null;
+};
+
+/** The crate a picked part goes to: a garage order, a counter client, or the stock. */
+export type PartKind = "GARAGE" | "COMPTOIR" | "STOCK";
+
+export const KIND_LABEL: Record<PartKind, string> = {
+  GARAGE: "Garage",
+  COMPTOIR: "Comptoir",
+  STOCK: "Stock",
+};
+
+/** A return the counter handed to the livreur: collect at the garage, or drop at the supplier. */
+export type ReturnLeg = "GARAGE_TO_STORE" | "STORE_TO_SUPPLIER";
+
+export type TourReturn = {
+  id: string;
+  tourId: string;
+  leg: ReturnLeg;
+  done: boolean;
+  /** Return reference (RET-…). */
+  ref: string | null;
+  designation: string;
+  /** Part reference, when the return is tied to an order line. */
+  reference: string | null;
+  orderRef: string | null;
+  /** The garage (collect) or the supplier (drop). */
+  destination: string;
+  address: string | null;
+  city: string | null;
+  phone: string | null;
+  /** Bon de retour number handed to the supplier. */
+  slip: string | null;
+  /** Instruction from the counter. */
+  note: string | null;
+  doneAt: string | null;
+  doneBy: string | null;
 };
 
 export type SupplierTourBoard = {
@@ -87,6 +125,8 @@ export type SupplierTourBoard = {
   defaults: Record<string, { livreurId: string; livreurName: string }>;
   /** Parts to collect on the following days (orders after 17:00 go to the next day's Tournée 1). */
   upcoming: Array<{ date: string; count: number }>;
+  /** Returns the counter handed to the day's tournées. */
+  returns: TourReturn[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -108,6 +148,37 @@ function parseTourStatus(v: unknown): TourStatus {
 
 function parsePickupStatus(v: unknown): PickupStatus | null {
   return v === "PICKED_UP" || v === "UNAVAILABLE" ? v : null;
+}
+
+function parseKind(v: unknown): PartKind | null {
+  return v === "GARAGE" || v === "COMPTOIR" || v === "STOCK" ? v : null;
+}
+
+function parseReturns(v: unknown): TourReturn[] {
+  return (Array.isArray(v) ? v : [])
+    .map((raw) => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const leg = r.leg === "GARAGE_TO_STORE" || r.leg === "STORE_TO_SUPPLIER" ? r.leg : null;
+      return {
+        id: String(r.id ?? ""),
+        tourId: String(r.tour_id ?? ""),
+        leg: leg as ReturnLeg,
+        done: r.status === "FAIT",
+        ref: text(r.ref),
+        designation: text(r.designation) ?? text(r.reference) ?? "Pièce",
+        reference: text(r.reference),
+        orderRef: text(r.order_ref),
+        destination: text(r.destination) ?? (leg === "GARAGE_TO_STORE" ? "Garage" : "Fournisseur"),
+        address: text(r.address),
+        city: text(r.city),
+        phone: text(r.phone),
+        slip: text(r.slip),
+        note: text(r.note),
+        doneAt: text(r.done_at),
+        doneBy: text(r.done_by),
+      };
+    })
+    .filter((r) => r.id && r.tourId && r.leg);
 }
 
 /** supplier_tour_board() JSON → board; malformed rows are dropped. */
@@ -133,6 +204,7 @@ export function parseSupplierTourBoard(json: unknown): SupplierTourBoard {
     date: text(r.date) ?? "",
     defaults,
     upcoming,
+    returns: parseReturns(r.returns),
     tours: tours
       .map((raw) => {
         const t = (raw ?? {}) as Record<string, unknown>;
@@ -171,6 +243,7 @@ export function parseSupplierTourBoard(json: unknown): SupplierTourBoard {
           pickupAt: text(l.pickup_at),
           pickupBy: text(l.pickup_by),
           isRestock: l.is_restock === true,
+          kind: parseKind(l.kind),
           client: text(l.client),
         };
       })
@@ -336,6 +409,26 @@ export function scheduleSlots(tours: SupplierTour[], withStandard: boolean): Tou
 
 export function tourColor(index: number): string {
   return TOUR_COLORS[index % TOUR_COLORS.length];
+}
+
+/**
+ * The standard tournée that follows one leaving at `slot` — the same rule as
+ * next_standard_tour() in the database: 10h → 13h → 15h → 17h30 → 10h the
+ * next day. A tour without a slot goes to the next morning.
+ */
+export function nextStandardTour(slot: string | null): { name: string; slot: string; nextDay: boolean } {
+  if (slot && slot < "13:00") return { name: "Tournée 2", slot: "13:00", nextDay: false };
+  if (slot && slot < "15:00") return { name: "Tournée 3", slot: "15:00", nextDay: false };
+  if (slot && slot < "17:30") return { name: "Tournée 4", slot: "17:30", nextDay: false };
+  return { name: "Tournée 1", slot: "10:00", nextDay: true };
+}
+
+export type ReturnStats = { total: number; done: number; left: number };
+
+export function returnStats(returns: TourReturn[], leg?: ReturnLeg): ReturnStats {
+  const list = leg ? returns.filter((r) => r.leg === leg) : returns;
+  const done = list.filter((r) => r.done).length;
+  return { total: list.length, done, left: list.length - done };
 }
 
 /**
@@ -611,21 +704,26 @@ type QueuedTourAction = {
   pickupStatus?: PickupStatus | null;
   tourId?: string;
   tourStatus?: TourStatus;
+  returnId?: string;
+  returnDone?: boolean;
 };
 
 /** Show what the livreur ticked offline on top of the last board loaded. */
 export function applyQueuedTourActions(board: SupplierTourBoard, items: QueuedTourAction[]): SupplierTourBoard {
-  let { lines, tours } = board;
+  let { lines, tours, returns } = board;
   for (const item of items) {
-    const { lineId, tourId, tourStatus } = item;
+    const { lineId, tourId, tourStatus, returnId } = item;
     if (item.kind === "pickup" && lineId) {
       const status = item.pickupStatus ?? null;
       lines = lines.map((l) => (l.id === lineId ? { ...l, pickupStatus: status } : l));
     } else if (item.kind === "tour" && tourId && tourStatus) {
       tours = tours.map((t) => (t.id === tourId ? { ...t, status: tourStatus } : t));
+    } else if (item.kind === "return" && returnId && returns.some((r) => r.id === returnId)) {
+      const done = item.returnDone !== false;
+      returns = returns.map((r) => (r.id === returnId ? { ...r, done, doneAt: done ? new Date().toISOString() : null } : r));
     }
   }
-  return lines === board.lines && tours === board.tours ? board : { ...board, lines, tours };
+  return lines === board.lines && tours === board.tours && returns === board.returns ? board : { ...board, lines, tours, returns };
 }
 
 /* ------------------------------------------------------------------ */
@@ -643,6 +741,12 @@ const SERVER_MESSAGES: Array<[RegExp, string]> = [
   [/order line not found/i, "Pièce introuvable."],
   [/livreur not found or inactive/i, "Ce livreur n'existe pas ou est désactivé."],
   [/staff access is required/i, "Accès refusé : reconnectez-vous."],
+  [/no later tour to defer to/i, "Pas de tournée suivante pour reporter cette pièce."],
+  [/return not found/i, "Retour introuvable."],
+  [/return is not on a tour/i, "Ce retour n'est pas sur une tournée."],
+  [/no client to collect from/i, "Ce retour n'a pas de garage où le récupérer."],
+  [/no supplier to deliver to/i, "Ce retour n'a pas de fournisseur où le déposer."],
+  [/unknown return leg/i, "Trajet de retour inconnu."],
 ];
 
 /** Server (English) error → French message the counter or the livreur can act on. */
@@ -654,7 +758,7 @@ export function tourErrorMessage(raw: string): string {
 /** The database does not have the tournée fournisseurs functions yet. */
 export class TourBoardUnavailableError extends Error {
   constructor() {
-    super("La tournée fournisseurs n'est pas encore activée sur la base de données (migration 20260915010000 à appliquer).");
+    super("Cette fonction de la tournée n'est pas encore activée sur la base de données (migration à appliquer).");
     this.name = "TourBoardUnavailableError";
   }
 }
@@ -688,6 +792,43 @@ export async function setSupplierTourStatus(
   status: TourStatus,
 ): Promise<void> {
   const { error } = await supabase.rpc("set_supplier_tour_status", { p_tour_id: tourId, p_status: status });
+  if (error) throw toTourError(error.message, error.code);
+}
+
+/** The part moves to the following standard tournée (created if needed), back to « à récupérer ». */
+export async function deferLineToNextTour(
+  supabase: SupabaseClient,
+  lineId: string,
+): Promise<{ tourId: string; tourName: string; slot: string | null; date: string }> {
+  const { data, error } = await supabase.rpc("defer_line_to_next_tour", { p_line_id: lineId });
+  if (error) throw toTourError(error.message, error.code);
+  const r = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+  return {
+    tourId: String(r.tour_id ?? ""),
+    tourName: String(r.tour_name ?? "Tournée"),
+    slot: typeof r.slot === "string" ? r.slot : null,
+    date: String(r.date ?? ""),
+  };
+}
+
+/** Livreur or counter: the return leg is done (collected at the garage / dropped at the supplier), or back to « à faire ». */
+export async function completeReturnLeg(supabase: SupabaseClient, returnId: string, done = true): Promise<void> {
+  const { error } = await supabase.rpc("complete_return_leg", { p_return_id: returnId, p_done: done });
+  if (error) throw toTourError(error.message, error.code);
+}
+
+/** Counter only: hand a return to a tournée (leg null = take it back from the livreur). */
+export async function assignReturnLeg(
+  supabase: SupabaseClient,
+  input: { returnId: string; leg: ReturnLeg | null; tourId: string | null; slip?: string; note?: string },
+): Promise<void> {
+  const { error } = await supabase.rpc("assign_return_leg", {
+    p_return_id: input.returnId,
+    p_leg: input.leg,
+    p_tour_id: input.tourId,
+    p_slip: input.slip ?? null,
+    p_note: input.note ?? null,
+  });
   if (error) throw toTourError(error.message, error.code);
 }
 

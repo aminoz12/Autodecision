@@ -14,6 +14,7 @@ import {
   Package,
   Phone,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Truck,
   Warehouse,
@@ -23,7 +24,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
-import { SupplierPickups } from "@/components/livreur/SupplierPickups";
+import { ReturnsTab } from "@/components/livreur/ReturnsTab";
+import { TourTab, type NextTour } from "@/components/livreur/TourTab";
 import { Toast } from "@/components/ui/Toast";
 import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
 import { createClient } from "@/lib/supabase/client";
@@ -54,7 +56,7 @@ import {
   uploadProofOfDelivery,
   type TourStop,
 } from "@/lib/data/delivery";
-import { setLinePickup, setSupplierTourStatus } from "@/lib/data/tournees";
+import { completeReturnLeg, deferLineToNextTour, setLinePickup, setSupplierTourStatus, type TourReturn } from "@/lib/data/tournees";
 import {
   clearTourCache,
   flushOutbox,
@@ -80,6 +82,11 @@ function fmtTime(v: string | number | null): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function fmtDay(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? isoDate : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+}
+
 function subscribeOnline(onChange: () => void) {
   window.addEventListener("online", onChange);
   window.addEventListener("offline", onChange);
@@ -103,7 +110,7 @@ function flushSummary(report: FlushReport): { notice: string | null; error: stri
     notices.push(`${plural(report.sent.length, "confirmation")} gardée${report.sent.length > 1 ? "s" : ""} hors connexion envoyée${report.sent.length > 1 ? "s" : ""} au magasin.`);
   }
   // A pickup refused because the tour moved on is not worth an error banner.
-  report.rejected = report.rejected.filter((r) => r.item.kind !== "pickup" && r.item.kind !== "tour");
+  report.rejected = report.rejected.filter((r) => r.item.kind !== "pickup" && r.item.kind !== "tour" && r.item.kind !== "return");
   if (report.photoDropped.length > 0) {
     notices.push(`Photo refusée pour ${report.photoDropped.map((i) => i.ref).join(", ")} : livraison confirmée sans photo.`);
   }
@@ -143,7 +150,7 @@ export default function LivreurPage() {
   const refreshing = useRef(false);
 
   /* ---- Tournée fournisseurs (onglet) ---- */
-  const [tab, setTab] = useState<"livraisons" | "fournisseurs">("livraisons");
+  const [tab, setTab] = useState<"tournee" | "livraisons" | "retours">("tournee");
   const [pickupDay, setPickupDay] = useState(() => parisDate());
   const [pickups, setPickups] = useState<SupplierTourBoard | null>(null);
   const [pickupsLoading, setPickupsLoading] = useState(false);
@@ -301,6 +308,7 @@ export default function LivreurPage() {
   );
   const queuedLines = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "pickup" && i.lineId ? [i.lineId] : []))), [outbox]);
   const queuedTours = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "tour" && i.tourId ? [i.tourId] : []))), [outbox]);
+  const queuedReturns = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "return" && i.returnId ? [i.returnId] : []))), [outbox]);
   const shownPickups = useMemo(() => (pickups ? applyQueuedTourActions(pickups, outbox) : null), [pickups, outbox]);
   const pickupToday = parisDate(today);
   const pickupTomorrow = addDays(pickupToday, 1);
@@ -308,6 +316,11 @@ export default function LivreurPage() {
     if (!shownPickups || pickupDay !== pickupToday) return 0;
     return shownPickups.lines.filter((l) => l.receptionStatus !== "RECEIVED" && l.receptionStatus !== "NOT_RECEIVED" && !l.pickupStatus).length;
   }, [shownPickups, pickupDay, pickupToday]);
+  const returnsLeft = useMemo(
+    () => (shownPickups && pickupDay === pickupToday ? shownPickups.returns.filter((r) => !r.done).length : 0),
+    [shownPickups, pickupDay, pickupToday],
+  );
+  const dayLabel = useMemo(() => new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "short" }).format(today), [today]);
 
   const markLocally = (orderId: string, patch: Partial<TourStop>) =>
     setStops((prev) => prev.map((s) => (s.id === orderId ? { ...s, ...patch } : s)));
@@ -315,7 +328,7 @@ export default function LivreurPage() {
   const enqueue = async (
     item: Pick<
       OutboxItem,
-      "kind" | "orderId" | "ref" | "recipient" | "note" | "reason" | "photo" | "podPath" | "lineId" | "pickupStatus" | "tourId" | "tourStatus"
+      "kind" | "orderId" | "ref" | "recipient" | "note" | "reason" | "photo" | "podPath" | "lineId" | "pickupStatus" | "tourId" | "tourStatus" | "returnId" | "returnDone"
     >,
   ) => {
     if (!userId || !orgId || !outboxAvailable()) {
@@ -388,6 +401,65 @@ export default function LivreurPage() {
         }
       } else {
         setPickups((b) => (b ? { ...b, tours: b.tours.map((t) => (t.id === tour.id ? { ...t, status: before } : t)) } : b));
+        setPickupsError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+
+  /* ---- Reporter une pièce à la tournée suivante (un déplacement : réseau requis) ---- */
+  const [deferring, setDeferring] = useState<ReadonlySet<string>>(() => new Set());
+  const deferPart = async (line: TourLine, next: NextTour) => {
+    if (!navigator.onLine) {
+      setPickupsError("Il faut du réseau pour reporter une pièce à la tournée suivante.");
+      return;
+    }
+    setDeferring((s) => new Set(s).add(line.id));
+    try {
+      const moved = await deferLineToNextTour(supabase, line.id);
+      const slot = (moved.slot ?? next.slot).replace(":", "h");
+      setNotice(`${line.reference} reportée à ${moved.tourName} (${slot})${moved.date && moved.date !== pickupDay ? ` du ${fmtDay(moved.date)}` : ""}.`);
+      await refreshPickups();
+    } catch (e) {
+      setPickupsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeferring((s) => {
+        const n = new Set(s);
+        n.delete(line.id);
+        return n;
+      });
+    }
+  };
+
+  /* ---- Retours : récupéré chez le garage / déposé chez le fournisseur ---- */
+  const patchReturn = (id: string, done: boolean) =>
+    setPickups((b) =>
+      b ? { ...b, returns: b.returns.map((r) => (r.id === id ? { ...r, done, doneAt: done ? new Date().toISOString() : null } : r)) } : b,
+    );
+
+  const completeReturn = async (ret: TourReturn, done: boolean) => {
+    if (!userId || !orgId) return;
+    const before = ret.done;
+    patchReturn(ret.id, done);
+    try {
+      if (!navigator.onLine) throw new DeliveryNetworkError("offline");
+      await completeReturnLeg(supabase, ret.id, done);
+      setNotice(
+        done
+          ? `${ret.designation} : ${ret.leg === "GARAGE_TO_STORE" ? "récupéré" : "déposé"}, le magasin est prévenu.`
+          : `${ret.designation} : remis à faire.`,
+      );
+      void refreshPickups();
+    } catch (e) {
+      if (isNetworkError(e)) {
+        try {
+          await enqueue({ kind: "return", orderId: "", ref: ret.designation, returnId: ret.id, returnDone: done });
+          setNotice(`${ret.designation} : gardé sur le téléphone, envoyé au magasin dès le retour du réseau.`);
+        } catch (qe) {
+          patchReturn(ret.id, before);
+          setPickupsError(qe instanceof Error ? qe.message : String(qe));
+        }
+      } else {
+        patchReturn(ret.id, before);
         setPickupsError(e instanceof Error ? e.message : String(e));
       }
     }
@@ -578,8 +650,8 @@ export default function LivreurPage() {
         <div className="lp-header-text">
           <p className="lp-title">Ma tournée</p>
           <p className="lp-sub">
-            {profile.display_name}
-            {syncedAt ? ` · à jour à ${fmtTime(syncedAt)}` : ""}
+            {profile.display_name} · {dayLabel}
+            {syncedAt ? ` · à jour ${fmtTime(syncedAt)}` : ""}
           </p>
         </div>
         <NotificationBell compact />
@@ -610,7 +682,18 @@ export default function LivreurPage() {
       <Toast message={notice} onClose={() => setNotice(null)} />
       <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />
 
-      <div className="lpt-tabs" role="tablist">
+      <div className="lpt-tabs lpt-tabs--3" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "tournee"}
+          className={`lpt-tab${tab === "tournee" ? " lpt-tab--on" : ""}`}
+          onClick={() => setTab("tournee")}
+        >
+          <Warehouse className="h-5 w-5" />
+          Tournée
+          {pickupsLeft > 0 && <span className="lp-count">{pickupsLeft}</span>}
+        </button>
         <button
           type="button"
           role="tab"
@@ -625,19 +708,19 @@ export default function LivreurPage() {
         <button
           type="button"
           role="tab"
-          aria-selected={tab === "fournisseurs"}
-          className={`lpt-tab${tab === "fournisseurs" ? " lpt-tab--on" : ""}`}
-          onClick={() => setTab("fournisseurs")}
+          aria-selected={tab === "retours"}
+          className={`lpt-tab${tab === "retours" ? " lpt-tab--on" : ""}`}
+          onClick={() => setTab("retours")}
         >
-          <Warehouse className="h-5 w-5" />
-          Fournisseurs
-          {pickupsLeft > 0 && <span className="lp-count">{pickupsLeft}</span>}
+          <RotateCcw className="h-5 w-5" />
+          Retours
+          {returnsLeft > 0 && <span className="lp-count">{returnsLeft}</span>}
         </button>
       </div>
 
-      {tab === "fournisseurs" && (
+      {tab === "tournee" && (
         <main className="lp-main">
-          <SupplierPickups
+          <TourTab
             board={shownPickups}
             day={pickupDay}
             today={pickupToday}
@@ -650,6 +733,25 @@ export default function LivreurPage() {
             queuedTours={queuedTours}
             onPickup={(l, s) => void pickupPart(l, s)}
             onTourStatus={(t, s, left) => void changeTourStatus(t, s, left)}
+            onDefer={(l, next) => void deferPart(l, next)}
+            deferring={deferring}
+            online={online}
+          />
+        </main>
+      )}
+
+      {tab === "retours" && (
+        <main className="lp-main">
+          <ReturnsTab
+            board={shownPickups}
+            day={pickupDay}
+            today={pickupToday}
+            tomorrow={pickupTomorrow}
+            onDay={setPickupDay}
+            loading={pickupsLoading}
+            error={pickupsError}
+            queued={queuedReturns}
+            onComplete={(r, done) => void completeReturn(r, done)}
           />
         </main>
       )}
