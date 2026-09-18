@@ -6,6 +6,7 @@ import {
   CircleDollarSign,
   ClipboardPlus,
   FileText,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -28,6 +29,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
+import { Toast } from "@/components/ui/Toast";
 import { loginFor } from "@/lib/spaces";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -105,6 +108,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile, logout } = useAuth();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdNotice, setPwdNotice] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
 
@@ -227,6 +232,15 @@ export function Sidebar() {
           <button
             type="button"
             className="sidebar-logout-btn"
+            onClick={() => setPwdOpen(true)}
+            aria-label="Changer mon mot de passe"
+            title="Changer mon mot de passe"
+          >
+            <KeyRound className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="sidebar-logout-btn"
             onClick={() => void onLogout()}
             aria-label="Se déconnecter"
             title="Se déconnecter"
@@ -235,6 +249,9 @@ export function Sidebar() {
           </button>
         </div>
       </aside>
+
+      <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setPwdNotice} />
+      <Toast message={pwdNotice} onClose={() => setPwdNotice(null)} />
 
       {/* Mobile overlay */}
       {mobileOpen && (

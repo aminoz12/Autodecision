@@ -6,8 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * Create (or reset) THE login of a livreur. ADMIN-only.
  * Body: { livreurId, email, password }
  * One login per livreur (unique profiles.livreur_id): when the livreur
- * already has one, it is updated in place — new password, and new email if
- * it changed — never duplicated. The confirmed auth user carries
+ * already has one, it is updated in place — new email if it changed, new
+ * password only when one is given — never duplicated, never reset by accident. The confirmed auth user carries
  * app_metadata { organization_id, staff_role: 'LIVREUR', livreur_id };
  * handle_new_user writes the profile, and the livreur_tour() RPC serves the
  * session its deliveries.
@@ -53,11 +53,11 @@ async function handle(request: Request) {
   const livreurId = (body.livreurId ?? "").trim();
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  if (!livreurId || !email || password.length < 8) {
-    return NextResponse.json(
-      { error: "Email et mot de passe (≥ 8 caractères) requis." },
-      { status: 400 },
-    );
+  if (!livreurId || !email) {
+    return NextResponse.json({ error: "Email de connexion requis." }, { status: 400 });
+  }
+  if (password && password.length < 8) {
+    return NextResponse.json({ error: "Mot de passe : 8 caractères minimum." }, { status: 400 });
   }
 
   const { data: livreur } = await admin
@@ -89,7 +89,7 @@ async function handle(request: Request) {
     }
     const { error: updateError } = await admin.auth.admin.updateUserById(currentId, {
       email,
-      password,
+      ...(password ? { password } : {}),
       email_confirm: true,
       user_metadata: { display_name: livreur.name },
       app_metadata: appMeta,
@@ -98,7 +98,14 @@ async function handle(request: Request) {
       return NextResponse.json({ error: updateError.message ?? "Mise à jour impossible." }, { status: 400 });
     }
     await admin.from("profiles").update(profileRow).eq("user_id", currentId);
-    return NextResponse.json({ ok: true, email, reset: true });
+    return NextResponse.json({ ok: true, email, reset: true, passwordChanged: Boolean(password) });
+  }
+
+  if (!password) {
+    return NextResponse.json(
+      { error: "Un mot de passe (8 caractères minimum) est requis pour créer l'accès." },
+      { status: 400 },
+    );
   }
 
   // Never take over an existing account (another livreur, staff, garage, another magasin).

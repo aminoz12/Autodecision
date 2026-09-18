@@ -66,16 +66,22 @@ export function changeStaffRole(userId: string, role: "ADMIN" | "CAISSIER"): Pro
   return call("PATCH", { userId, role });
 }
 
+/** A new permanent password for a caissier / admin who forgot theirs (they can change it afterwards from their space). */
+export function setStaffPassword(userId: string, password: string): Promise<{ ok: true }> {
+  return call("PATCH", { userId, password });
+}
+
 export function deleteAccess(userId: string): Promise<{ ok: true }> {
   return call("DELETE", { userId });
 }
 
-/** Create (or reset) a garagiste login — existing server route. */
+/** Create (or update) a garagiste login — server-only route. */
 export async function createGarageAccess(input: {
   garageId: string;
   email: string;
-  password: string;
-}): Promise<{ ok: true; email: string; reset?: boolean }> {
+  /** Required to create the login; omitted = an existing login keeps its password. */
+  password?: string;
+}): Promise<{ ok: true; email: string; reset?: boolean; passwordChanged?: boolean }> {
   const res = await fetch("/api/garage-access", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -85,18 +91,20 @@ export async function createGarageAccess(input: {
     ok?: true;
     email?: string;
     reset?: boolean;
+    passwordChanged?: boolean;
     error?: string;
   };
   if (!res.ok) throw new Error(json.error ?? "Erreur serveur.");
-  return json as { ok: true; email: string; reset?: boolean };
+  return json as { ok: true; email: string; reset?: boolean; passwordChanged?: boolean };
 }
 
-/** Create (or reset) a livreur login — server-only route. */
+/** Create (or update) a livreur login — server-only route. */
 export async function createLivreurAccess(input: {
   livreurId: string;
   email: string;
-  password: string;
-}): Promise<{ ok: true; email: string; reset?: boolean }> {
+  /** Required to create the login; omitted = an existing login keeps its password. */
+  password?: string;
+}): Promise<{ ok: true; email: string; reset?: boolean; passwordChanged?: boolean }> {
   const res = await fetch("/api/livreur-access", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

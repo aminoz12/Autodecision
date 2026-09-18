@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   CloudOff,
+  KeyRound,
   Loader2,
   LogOut,
   MapPin,
@@ -24,6 +25,7 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SupplierPickups } from "@/components/livreur/SupplierPickups";
 import { Toast } from "@/components/ui/Toast";
+import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
 import { createClient } from "@/lib/supabase/client";
 import {
   addDays,
@@ -391,6 +393,7 @@ export default function LivreurPage() {
     }
   };
 
+  const [pwdOpen, setPwdOpen] = useState(false);
   const signOut = () => {
     if (
       outbox.length > 0 &&
@@ -583,6 +586,9 @@ export default function LivreurPage() {
         <button type="button" className="lp-iconbtn" onClick={() => void refresh()} aria-label="Actualiser" disabled={loading || !online}>
           {loading ? <Loader2 className="h-5 w-5 nc-spin" /> : <RefreshCw className="h-5 w-5" />}
         </button>
+        <button type="button" className="lp-iconbtn" aria-label="Changer mon mot de passe" title="Changer mon mot de passe" onClick={() => setPwdOpen(true)}>
+          <KeyRound className="h-5 w-5" />
+        </button>
         <button type="button" className="lp-iconbtn" aria-label="Se déconnecter" onClick={signOut}>
           <LogOut className="h-5 w-5" />
         </button>
@@ -602,6 +608,7 @@ export default function LivreurPage() {
       )}
       {error && <div className="nc-error lp-error">{error}</div>}
       <Toast message={notice} onClose={() => setNotice(null)} />
+      <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />
 
       <div className="lpt-tabs" role="tablist">
         <button

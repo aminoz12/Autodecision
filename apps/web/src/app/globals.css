@@ -6932,3 +6932,7 @@ button.tf-check:hover:not(:disabled) { border-color: var(--clr-success); box-sha
 @media (max-width: 900px) {
   .sms-settings-grid { grid-template-columns: 1fr; }
 }
+
+/* Garagiste portal — « Mon mot de passe » + déconnexion, ensemble en bas du menu */
+.gp-nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.gp-nav-foot .gp-logout { margin-top: 0; }

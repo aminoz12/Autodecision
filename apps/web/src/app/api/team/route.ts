@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * Team management for the magasin ADMIN (server-only, service role).
  *   GET    → org members (staff with emails) + garage accounts
  *   POST   → create a staff account { name, email, password, role }
- *   PATCH  → change a staff role { userId, role }
+ *   PATCH  → change a staff role { userId, role } or set a new password { userId, password }
  *   DELETE → remove an access { userId } (staff or garagiste)
  * Every method requires the caller to be an ADMIN of their organization.
  */
@@ -247,7 +247,7 @@ export async function PATCH(request: Request) {
     if (ctx instanceof NextResponse) return ctx;
     const { admin, orgId, callerId } = ctx;
 
-    let body: { userId?: string; role?: string };
+    let body: { userId?: string; role?: string; password?: string };
     try {
       body = await request.json();
     } catch {
@@ -255,8 +255,12 @@ export async function PATCH(request: Request) {
     }
     const userId = (body.userId ?? "").trim();
     const role = body.role === "ADMIN" ? "ADMIN" : body.role === "CAISSIER" ? "CAISSIER" : null;
-    if (!userId || !role) {
-      return NextResponse.json({ error: "Utilisateur et rôle requis." }, { status: 400 });
+    const password = typeof body.password === "string" ? body.password : null;
+    if (!userId || (!role && password === null)) {
+      return NextResponse.json({ error: "Utilisateur et rôle ou mot de passe requis." }, { status: 400 });
+    }
+    if (password !== null && password.length < 8) {
+      return NextResponse.json({ error: "Mot de passe : 8 caractères minimum." }, { status: 400 });
     }
 
     const { data: target } = await admin
@@ -266,6 +270,18 @@ export async function PATCH(request: Request) {
       .maybeSingle();
     if (!target || target.organization_id !== orgId || target.client_id || target.livreur_id) {
       return NextResponse.json({ error: "Membre introuvable." }, { status: 404 });
+    }
+
+    // A permanent password chosen by the admin (the member forgot theirs):
+    // the old one stops working at once; the member can change it later
+    // from their own space.
+    if (password !== null) {
+      const { error } = await admin.auth.admin.updateUserById(userId, { password });
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ ok: true });
+    }
+    if (!role) {
+      return NextResponse.json({ error: "Rôle requis." }, { status: 400 });
     }
     if (userId === callerId && role !== "ADMIN") {
       return NextResponse.json(

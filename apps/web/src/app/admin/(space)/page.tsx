@@ -46,6 +46,7 @@ import {
   type LivreurAccount,
   type MagasinRow,
   type StaffMember,
+  setStaffPassword,
 } from "@/lib/data/admin";
 import { fmtDateTime, loadGarages, type GarageSummary } from "@/lib/data/saas";
 import {
@@ -152,14 +153,14 @@ function AdminContent() {
   /* ---- Create staff modal ---- */
   const [staffModal, setStaffModal] = useState(false);
   const [sForm, setSForm] = useState({ name: "", email: "", password: "", role: "CAISSIER" as "CAISSIER" | "ADMIN" });
-  const [sInvite, setSInvite] = useState(true);
+  const [sInvite, setSInvite] = useState(false);
   const [sSaving, setSSaving] = useState(false);
   const [sError, setSError] = useState<string | null>(null);
 
   /** Open the account modal for a caissier (espace magasin) or an admin. */
   function openStaffModal(role: "CAISSIER" | "ADMIN") {
     setSError(null);
-    setSForm((f) => ({ ...f, role, password: generatePassword() }));
+    setSForm((f) => ({ ...f, role, password: "" }));
     setTab("equipe");
     setStaffModal(true);
   }
@@ -182,6 +183,36 @@ function AdminContent() {
       setSError(err instanceof Error ? err.message : String(err));
     } finally {
       setSSaving(false);
+    }
+  }
+
+  /* ---- Staff password modal: a caissier / admin who forgot theirs ---- */
+  const [pwdTarget, setPwdTarget] = useState<{ userId: string; name: string; email: string | null } | null>(null);
+  const [pwdValue, setPwdValue] = useState("");
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+
+  function openStaffPassword(m: { userId: string; name: string; email: string | null }) {
+    setPwdTarget(m);
+    setPwdValue("");
+    setPwdError(null);
+  }
+
+  async function submitStaffPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pwdTarget) return;
+    setPwdSaving(true);
+    setPwdError(null);
+    try {
+      await setStaffPassword(pwdTarget.userId, pwdValue);
+      setNotice(
+        `Nouveau mot de passe enregistré pour ${pwdTarget.name}${pwdTarget.email ? ` (${pwdTarget.email})` : ""} : ${pwdValue}`,
+      );
+      setPwdTarget(null);
+    } catch (err) {
+      setPwdError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPwdSaving(false);
     }
   }
 
@@ -251,7 +282,7 @@ function AdminContent() {
     const existing = accountByGarage.get(g.id);
     setAccessModal(g);
     setGEmail(existing?.email ?? g.email ?? "");
-    setGPwd(generatePassword());
+    setGPwd("");
     setGError(null);
   }
 
@@ -261,9 +292,13 @@ function AdminContent() {
     setGSaving(true);
     setGError(null);
     try {
-      const res = await createGarageAccess({ garageId: accessModal.id, email: gEmail, password: gPwd });
+      const res = await createGarageAccess({ garageId: accessModal.id, email: gEmail, password: gPwd || undefined });
       setNotice(
-        `${res.reset ? "Accès réinitialisé" : "Accès créé"} pour ${accessModal.name} — identifiants : ${gEmail} / ${gPwd}`,
+        res.reset
+          ? gPwd
+            ? `Accès de ${accessModal.name} mis à jour — nouveaux identifiants : ${gEmail} / ${gPwd}`
+            : `Accès de ${accessModal.name} mis à jour : ${gEmail}, mot de passe inchangé.`
+          : `Accès créé pour ${accessModal.name} — identifiants : ${gEmail} / ${gPwd}`,
       );
       setAccessModal(null);
       await load();
@@ -289,7 +324,7 @@ function AdminContent() {
     const existing = accountByLivreur.get(l.id);
     setLvAccess(l);
     setLvEmail(existing?.email ?? "");
-    setLvPwd(generatePassword());
+    setLvPwd("");
     setLvAccError(null);
   }
 
@@ -299,9 +334,14 @@ function AdminContent() {
     setLvAccSaving(true);
     setLvAccError(null);
     try {
-      const res = await createLivreurAccess({ livreurId: lvAccess.id, email: lvEmail, password: lvPwd });
+      const res = await createLivreurAccess({ livreurId: lvAccess.id, email: lvEmail, password: lvPwd || undefined });
+      const link = `${window.location.origin}/livreur/login`;
       setNotice(
-        `${res.reset ? "Accès réinitialisé" : "Accès créé"} pour ${lvAccess.name} — identifiants : ${lvEmail} / ${lvPwd}. Lien de connexion du livreur : ${window.location.origin}/livreur/login`,
+        res.reset
+          ? lvPwd
+            ? `Accès de ${lvAccess.name} mis à jour — nouveaux identifiants : ${lvEmail} / ${lvPwd}. Lien de connexion : ${link}`
+            : `Accès de ${lvAccess.name} mis à jour : ${lvEmail}, mot de passe inchangé.`
+          : `Accès créé pour ${lvAccess.name} — identifiants : ${lvEmail} / ${lvPwd}. Lien de connexion du livreur : ${link}`,
       );
       setLvAccess(null);
       await load();
@@ -453,6 +493,15 @@ function AdminContent() {
                             <div className="rc-actions" style={{ justifyContent: "center" }}>
                               {!m.isSelf && (
                                 <>
+                                  <button
+                                    type="button"
+                                    className="rc-act rc-act--quiet"
+                                    disabled={busy !== null}
+                                    onClick={() => openStaffPassword(m)}
+                                  >
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                    Mot de passe
+                                  </button>
                                   <button
                                     type="button"
                                     className="rc-act rc-act--quiet"
@@ -923,7 +972,7 @@ function AdminContent() {
                   <span className="od-label">Accès</span>
                   <label className="admin-toggle">
                     <input type="checkbox" checked={sInvite} onChange={(e) => setSInvite(e.target.checked)} />
-                    <span>Envoyer une invitation par email (la personne choisit son mot de passe)</span>
+                    <span>Plutôt envoyer une invitation par email (la personne choisit son mot de passe)</span>
                   </label>
                 </div>
               </div>
@@ -931,7 +980,7 @@ function AdminContent() {
                 <div className="od-field">
                   <span className="od-label">Mot de passe <span className="od-req">*</span></span>
                   <div className="admin-pwd">
-                    <input className="od-input" value={sForm.password} onChange={(e) => setSForm({ ...sForm, password: e.target.value })} />
+                    <input className="od-input" value={sForm.password} onChange={(e) => setSForm({ ...sForm, password: e.target.value })} placeholder="Au moins 8 caractères, à transmettre" autoComplete="off" />
                     <button type="button" className="rc-act rc-act--quiet" title="Générer" onClick={() => setSForm({ ...sForm, password: generatePassword() })}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
@@ -966,6 +1015,61 @@ function AdminContent() {
         </div>
       )}
 
+      {/* ================= Staff password modal ================= */}
+      {pwdTarget && (
+        <div className="ga-modal-overlay" onClick={() => !pwdSaving && setPwdTarget(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><KeyRound className="h-4 w-4" />Nouveau mot de passe — {pwdTarget.name}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setPwdTarget(null)} aria-label="Fermer" disabled={pwdSaving}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitStaffPassword}>
+              {pwdError && <div className="nc-error">{pwdError}</div>}
+              <div className="od-field">
+                <span className="od-label">Mot de passe <span className="od-req">*</span></span>
+                <div className="admin-pwd">
+                  <input
+                    className="od-input"
+                    value={pwdValue}
+                    onChange={(e) => setPwdValue(e.target.value)}
+                    placeholder="Au moins 8 caractères"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                  <button type="button" className="rc-act rc-act--quiet" title="Proposer un mot de passe" onClick={() => setPwdValue(generatePassword())}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="rc-act rc-act--quiet"
+                    title="Copier"
+                    onClick={() => { void navigator.clipboard?.writeText(pwdValue); setNotice("Mot de passe copié."); }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="od-note">
+                <ShieldCheck className="h-4 w-4" />
+                <p>
+                  L&apos;ancien mot de passe de {pwdTarget.name} cesse de fonctionner immédiatement. Transmettez-lui le nouveau :
+                  il pourra ensuite le changer lui-même depuis son espace (bouton clé, en bas du menu).
+                </p>
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setPwdTarget(null)} disabled={pwdSaving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={pwdSaving || pwdValue.length < 8}>
+                  {pwdSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
+                  Enregistrer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ================= Livreur access modal ================= */}
       {lvAccess && (
         <div className="ga-modal-overlay" onClick={() => !lvAccSaving && setLvAccess(null)}>
@@ -983,13 +1087,21 @@ function AdminContent() {
                   <span className="od-label">Email de connexion <span className="od-req">*</span></span>
                   <input className="od-input" type="email" value={lvEmail} onChange={(e) => setLvEmail(e.target.value)} placeholder="livreur1@monmagasin.fr" autoFocus />
                   {accountByLivreur.get(lvAccess.id) && (
-                    <span className="st-cmd-hint">Un seul accès par livreur : changer l&apos;email remplace l&apos;identifiant actuel.</span>
+                    <span className="st-cmd-hint">Un seul accès par livreur : changer l&apos;email remplace l&apos;identifiant actuel. Le mot de passe reste le sien tant que vous n&apos;en saisissez pas un nouveau.</span>
                   )}
                 </div>
                 <div className="od-field">
-                  <span className="od-label">Mot de passe <span className="od-req">*</span></span>
+                  <span className="od-label">
+                    {accountByLivreur.get(lvAccess.id) ? "Nouveau mot de passe (facultatif)" : <>Mot de passe <span className="od-req">*</span></>}
+                  </span>
                   <div className="admin-pwd">
-                    <input className="od-input" value={lvPwd} onChange={(e) => setLvPwd(e.target.value)} />
+                    <input
+                      className="od-input"
+                      value={lvPwd}
+                      onChange={(e) => setLvPwd(e.target.value)}
+                      placeholder={accountByLivreur.get(lvAccess.id) ? "Vide = mot de passe conservé" : "Au moins 8 caractères"}
+                      autoComplete="off"
+                    />
                     <button type="button" className="rc-act rc-act--quiet" title="Générer" onClick={() => setLvPwd(generatePassword())}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
@@ -1014,9 +1126,9 @@ function AdminContent() {
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setLvAccess(null)} disabled={lvAccSaving}>Annuler</button>
-                <button type="submit" className="od-btn od-btn--primary" disabled={lvAccSaving || !lvEmail.trim() || lvPwd.length < 8}>
+                <button type="submit" className="od-btn od-btn--primary" disabled={lvAccSaving || !lvEmail.trim() || (accountByLivreur.get(lvAccess.id) ? lvPwd.length > 0 && lvPwd.length < 8 : lvPwd.length < 8)}>
                   {lvAccSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
-                  {accountByLivreur.get(lvAccess.id) ? "Réinitialiser l'accès" : "Créer l'accès"}
+                  {accountByLivreur.get(lvAccess.id) ? "Enregistrer" : "Créer l'accès"}
                 </button>
               </div>
             </form>
@@ -1042,9 +1154,17 @@ function AdminContent() {
                   <input className="od-input" type="email" value={gEmail} onChange={(e) => setGEmail(e.target.value)} placeholder="contact@garage.fr" autoFocus />
                 </div>
                 <div className="od-field">
-                  <span className="od-label">Mot de passe <span className="od-req">*</span></span>
+                  <span className="od-label">
+                    {accountByGarage.get(accessModal.id) ? "Nouveau mot de passe (facultatif)" : <>Mot de passe <span className="od-req">*</span></>}
+                  </span>
                   <div className="admin-pwd">
-                    <input className="od-input" value={gPwd} onChange={(e) => setGPwd(e.target.value)} />
+                    <input
+                      className="od-input"
+                      value={gPwd}
+                      onChange={(e) => setGPwd(e.target.value)}
+                      placeholder={accountByGarage.get(accessModal.id) ? "Vide = mot de passe conservé" : "Au moins 8 caractères"}
+                      autoComplete="off"
+                    />
                     <button type="button" className="rc-act rc-act--quiet" title="Générer" onClick={() => setGPwd(generatePassword())}>
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
@@ -1061,13 +1181,13 @@ function AdminContent() {
               </div>
               <div className="od-note">
                 <Building2 className="h-4 w-4" />
-                <p>Le garage se connecte sur la page d&apos;accueil garagiste avec ces identifiants. Si un accès existe déjà, le mot de passe est réinitialisé.</p>
+                <p>Le garage se connecte sur la page d&apos;accueil garagiste avec ces identifiants, puis peut changer son mot de passe lui-même. Si un accès existe déjà, seul ce que vous modifiez change : l&apos;email, ou le mot de passe si vous en saisissez un nouveau.</p>
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setAccessModal(null)} disabled={gSaving}>Annuler</button>
-                <button type="submit" className="od-btn od-btn--primary" disabled={gSaving || !gEmail.trim() || gPwd.length < 6}>
+                <button type="submit" className="od-btn od-btn--primary" disabled={gSaving || !gEmail.trim() || (accountByGarage.get(accessModal.id) ? gPwd.length > 0 && gPwd.length < 8 : gPwd.length < 8)}>
                   {gSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <KeyRound className="h-4 w-4" />}
-                  {accountByGarage.get(accessModal.id) ? "Réinitialiser l'accès" : "Créer l'accès"}
+                  {accountByGarage.get(accessModal.id) ? "Enregistrer" : "Créer l'accès"}
                 </button>
               </div>
             </form>

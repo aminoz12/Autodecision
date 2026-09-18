@@ -2,6 +2,7 @@
 
 import {
   CreditCard,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -11,8 +12,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
+import { Toast } from "@/components/ui/Toast";
 
 const NAV = [
   { href: "/garagiste/dashboard", label: "Accueil", icon: LayoutDashboard, exact: true },
@@ -26,6 +30,8 @@ export function GarageNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { profile, logout } = useAuth();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function onLogout() {
     await logout();
@@ -64,10 +70,18 @@ export function GarageNav() {
         })}
       </nav>
 
-      <button type="button" className="gp-logout" onClick={onLogout}>
-        <LogOut className="h-[18px] w-[18px]" />
-        Se déconnecter
-      </button>
+      <div className="gp-nav-foot">
+        <button type="button" className="gp-logout" onClick={() => setPwdOpen(true)}>
+          <KeyRound className="h-[18px] w-[18px]" />
+          Mon mot de passe
+        </button>
+        <button type="button" className="gp-logout" onClick={onLogout}>
+          <LogOut className="h-[18px] w-[18px]" />
+          Se déconnecter
+        </button>
+      </div>
+      <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />
+      <Toast message={notice} onClose={() => setNotice(null)} />
     </aside>
   );
 }
