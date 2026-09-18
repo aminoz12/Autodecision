@@ -512,6 +512,99 @@ export function supplierStops(lines: TourLine[]): SupplierStop[] {
     .sort((a, b) => a.supplier.localeCompare(b.supplier, "fr"));
 }
 
+/* ------------------------------------------------------------------ */
+/*  Livreur day overview: tournées down, suppliers across, a count/cell */
+/* ------------------------------------------------------------------ */
+
+export type OverviewCell = TourStats & { tourId: string; supplierId: string };
+
+export type OverviewColumn = {
+  id: string;
+  name: string;
+  /** Column head that fits a phone cell: « AZ », « OTTO », « CODI »… */
+  short: string;
+  count: number;
+};
+
+export type OverviewRow = {
+  slot: TourSlot;
+  /** supplierId → the parts of this tournée at this supplier. */
+  cells: Map<string, OverviewCell>;
+  stats: TourStats;
+};
+
+export type DayOverview = {
+  suppliers: OverviewColumn[];
+  rows: OverviewRow[];
+  total: number;
+};
+
+/** What a cell says at a glance. */
+export type OverviewCellKind = "empty" | "todo" | "partial" | "done" | "unavailable";
+
+export function overviewCellKind(
+  cell: Pick<TourStats, "total" | "pending" | "done" | "unavailable"> | undefined,
+): OverviewCellKind {
+  if (!cell || cell.total === 0) return "empty";
+  if (cell.pending > 0) return cell.done > 0 || cell.unavailable > 0 ? "partial" : "todo";
+  return cell.unavailable > 0 ? "unavailable" : "done";
+}
+
+/**
+ * Column heads short enough for a phone: the first 4 letters of each name,
+ * lengthened only when two suppliers would otherwise read the same.
+ */
+export function shortSupplierLabels(names: string[]): string[] {
+  const compact = names.map((n) => normalize(n).replace(/[^a-z0-9]/g, "").toUpperCase() || "?");
+  const labels = compact.map((c) => c.slice(0, 4));
+  for (let len = 5; ; len += 1) {
+    const seen = new Map<string, number>();
+    for (const l of labels) seen.set(l, (seen.get(l) ?? 0) + 1);
+    let grew = false;
+    labels.forEach((l, i) => {
+      if ((seen.get(l) ?? 0) > 1 && compact[i].length >= len) {
+        labels[i] = compact[i].slice(0, len);
+        grew = true;
+      }
+    });
+    if (!grew) break;
+  }
+  return labels;
+}
+
+/** The day as the legacy sheet showed it, with a count per cell instead of the references. */
+export function buildDayOverview(slots: TourSlot[], lines: TourLine[]): DayOverview {
+  const rows: OverviewRow[] = slots.map((slot) => ({ slot, cells: new Map(), stats: tourStats([]) }));
+  const rowByTour = new Map<string, OverviewRow>();
+  for (const r of rows) if (r.slot.tour) rowByTour.set(r.slot.tour.id, r);
+  const suppliers = new Map<string, OverviewColumn>();
+  let total = 0;
+  for (const l of lines) {
+    const row = rowByTour.get(l.tourId);
+    if (!row) continue;
+    total += 1;
+    const sup = suppliers.get(l.supplierId);
+    if (sup) sup.count += 1;
+    else suppliers.set(l.supplierId, { id: l.supplierId, name: l.supplier, short: "", count: 1 });
+    let cell = row.cells.get(l.supplierId);
+    if (!cell) {
+      cell = { ...tourStats([]), tourId: l.tourId, supplierId: l.supplierId };
+      row.cells.set(l.supplierId, cell);
+    }
+    const state = pickupState(l);
+    for (const s of [cell, row.stats]) {
+      s.total += 1;
+      s[state] += 1;
+      s.done = s.picked + s.received;
+    }
+  }
+  const columns = [...suppliers.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  shortSupplierLabels(columns.map((c) => c.name)).forEach((short, i) => {
+    columns[i].short = short;
+  });
+  return { suppliers: columns, rows, total };
+}
+
 type QueuedTourAction = {
   kind: string;
   lineId?: string;

@@ -1,8 +1,9 @@
 "use client";
 
 import { Ban, Check, CheckCircle2, CloudOff, Flag, Loader2, Play, RotateCcw, Store, Warehouse } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import {
+  buildDayOverview,
   pct,
   pickupState,
   PICKUP_STATE_LABEL,
@@ -19,6 +20,7 @@ import {
   type TourLine,
   type TourStatus,
 } from "@/lib/data/tournees";
+import { cellKey, DayOverviewGrid } from "./DayOverviewGrid";
 
 type Props = {
   board: SupplierTourBoard | null;
@@ -36,6 +38,11 @@ type Props = {
   /** `left`: parts still to collect on the tour (asked before finishing). */
   onTourStatus: (tour: SupplierTour, status: TourStatus, left: number) => void;
 };
+
+/** DOM id of a supplier block — where a tap on the overview grid lands. */
+function stopDomId(key: string): string {
+  return `lpt-stop-${key}`;
+}
 
 function Box({ state }: { state: PickupState }) {
   return (
@@ -64,22 +71,37 @@ export function SupplierPickups({
   onTourStatus,
 }: Props) {
   const slots = board ? scheduleSlots(board.tours, false) : [];
+  const overview = board ? buildDayOverview(slots, board.lines) : null;
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const changeDay = (d: string) => {
+    setActiveKey(null);
+    onDay(d);
+  };
+  /** A tap on a cell of the grid opens that supplier's block of that tournée. */
+  const openStop = (tourId: string, supplierId: string) => {
+    const key = cellKey(tourId, supplierId);
+    setActiveKey(key);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById(stopDomId(key))?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  };
   const isToday = day === today;
   const tomorrowCount = isToday ? board?.upcoming.find((u) => u.date === tomorrow)?.count ?? 0 : 0;
 
   return (
     <>
       <div className="lpt-days" role="group" aria-label="Jour">
-        <button type="button" className={`nc-chip${isToday ? " nc-chip--on" : ""}`} onClick={() => onDay(today)}>
+        <button type="button" className={`nc-chip${isToday ? " nc-chip--on" : ""}`} onClick={() => changeDay(today)}>
           Aujourd&apos;hui
         </button>
-        <button type="button" className={`nc-chip${day === tomorrow ? " nc-chip--on" : ""}`} onClick={() => onDay(tomorrow)}>
+        <button type="button" className={`nc-chip${day === tomorrow ? " nc-chip--on" : ""}`} onClick={() => changeDay(tomorrow)}>
           Demain{tomorrowCount > 0 ? ` (${tomorrowCount})` : ""}
         </button>
         {loading && <Loader2 className="h-4 w-4 nc-spin lpt-days-spin" />}
       </div>
 
       {error && <div className="nc-error">{error}</div>}
+
+      {overview && overview.total > 0 && <DayOverviewGrid overview={overview} activeKey={activeKey} onCell={openStop} />}
 
       {!board && !error && (
         <div className="lp-empty lp-empty--offline">
@@ -141,7 +163,11 @@ export function SupplierPickups({
               {tour.note && <p className="lp-note">📝 {tour.note}</p>}
 
               {stops.map((stop) => (
-                <div key={stop.supplierId} className="lpt-stop">
+                <div
+                  key={stop.supplierId}
+                  id={stopDomId(cellKey(tour.id, stop.supplierId))}
+                  className={`lpt-stop${activeKey === cellKey(tour.id, stop.supplierId) ? " lpt-stop--active" : ""}`}
+                >
                   <p className="lpt-stop-head">
                     <Warehouse className="h-4 w-4" />
                     <strong>{stop.supplier}</strong>

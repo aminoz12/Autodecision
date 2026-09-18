@@ -6869,3 +6869,31 @@ button.tf-check:hover:not(:disabled) { border-color: var(--clr-success); box-sha
 .lpt-tour-actions { display: flex; flex-direction: column; }
 .lpt-reopen { height: 48px; border: 1.5px solid var(--border-strong); border-radius: 10px; background: #fff; color: var(--text-secondary); font: inherit; font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
 .lp-main[hidden] { display: none; }
+
+/* Livreur — grille de synthèse « Journée » (tournée × fournisseur), au-dessus de la liste */
+.lpo { background: #fff; border: 1px solid var(--border-card); border-radius: 12px; box-shadow: 0 1px 2px rgba(60, 66, 87, 0.05); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.lpo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.lpo-head em { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 600; }
+.lpo-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -3px; }
+.lpo-grid { border-collapse: separate; border-spacing: 3px; table-layout: fixed; width: 100%; }
+.lpo-grid th, .lpo-grid td { padding: 0; }
+.lpo-grid thead th { height: 18px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.02em; color: var(--text-secondary); text-align: center; white-space: nowrap; overflow: hidden; }
+.lpo-grid thead th abbr { text-decoration: none; }
+.lpo-corner, .lpo-slot { width: 46px; }
+.lpo-slot { height: 34px; border-radius: 6px; background: var(--tc); color: #fff; font-size: 12px; font-weight: 800; text-align: center; position: sticky; left: 0; z-index: 1; }
+.lpo-row--EN_COURS .lpo-slot { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--tc); }
+.lpo-row--TERMINEE .lpo-cell { opacity: 0.55; }
+.lpo-cell { width: 100%; height: 34px; padding: 0; border-radius: 6px; border: 1.5px solid transparent; background: var(--bg-subtle); color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 2px; cursor: pointer; }
+.lpo-cell svg { width: 15px; height: 15px; stroke-width: 3; }
+.lpo-cell--empty { background: transparent; border-color: var(--border-light); color: var(--border-strong); font-weight: 600; cursor: default; }
+.lpo-cell--todo { background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.lpo-cell--partial { background: linear-gradient(135deg, var(--clr-success-bg) 50%, var(--clr-warning-bg) 50%); color: var(--clr-warning-text); }
+.lpo-cell--done { background: var(--clr-success-bg); color: var(--clr-success-text); }
+.lpo-cell--unavailable { background: var(--clr-danger-bg); color: var(--clr-danger-text); }
+.lpo-cell--active, .lpo-cell:focus-visible { outline: 3px solid var(--clr-primary); outline-offset: 1px; }
+.lpo-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.lpo-legend li { display: inline-flex; align-items: center; gap: 5px; }
+.lpo-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.lpo-legend-here { outline: 2px solid var(--clr-primary); outline-offset: -2px; }
+.lpt-stop { scroll-margin-top: 84px; }
+.lpt-stop--active { border-color: var(--clr-primary); box-shadow: 0 0 0 2px var(--clr-primary-soft); }

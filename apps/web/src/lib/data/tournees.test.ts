@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   applyQueuedTourActions,
+  buildDayOverview,
   buildTourGrid,
   departureText,
   filterTourLines,
@@ -9,9 +10,11 @@ import {
   focusSlot,
   parisDate,
   parisDateTime,
+  overviewCellKind,
   parseSupplierTourBoard,
   pickupState,
   scheduleSlots,
+  shortSupplierLabels,
   supplierStops,
   tourErrorMessage,
   tourStats,
@@ -253,6 +256,47 @@ describe("livreur view", () => {
     expect(stops.map((s) => [s.supplier, s.left, s.lines.map((l) => l.reference)])).toEqual([
       ["AZ", 1, ["A300", "K1125"]],
       ["CAL", 1, ["PG10210"]],
+    ]);
+  });
+
+  it("sums the day per tournée and supplier for the overview grid", () => {
+    const slots = scheduleSlots(
+      [tour({ id: "t1", name: "Tournée 1", slot: "10:00" }), tour({ id: "t2", name: "Tournée 2", slot: "13:00" })],
+      false,
+    );
+    const ov = buildDayOverview(slots, [
+      line({ id: "1" }),
+      line({ id: "2", pickupStatus: "PICKED_UP" }),
+      line({ id: "3", supplierId: "s-cal", supplier: "CAL", pickupStatus: "UNAVAILABLE" }),
+      line({ id: "4", tourId: "t2", supplierId: "s-cal", supplier: "CAL", receptionStatus: "RECEIVED" }),
+      line({ id: "5", tourId: "elsewhere" }),
+    ]);
+    expect(ov.total).toBe(4);
+    expect(ov.suppliers.map((s) => [s.short, s.count])).toEqual([
+      ["AZ", 2],
+      ["CAL", 2],
+    ]);
+    expect(ov.rows.map((r) => [r.slot.name, r.stats.total, r.stats.done])).toEqual([
+      ["Tournée 1", 3, 1],
+      ["Tournée 2", 1, 1],
+    ]);
+    const [t1, t2] = ov.rows;
+    expect(t1.cells.get("s-az")).toMatchObject({ total: 2, pending: 1, picked: 1, done: 1 });
+    expect(overviewCellKind(t1.cells.get("s-az"))).toBe("partial");
+    expect(overviewCellKind(t1.cells.get("s-cal"))).toBe("unavailable");
+    expect(overviewCellKind(t2.cells.get("s-cal"))).toBe("done");
+    expect(overviewCellKind(t2.cells.get("s-az"))).toBe("empty");
+    expect(overviewCellKind({ total: 2, pending: 2, done: 0, unavailable: 0 })).toBe("todo");
+  });
+
+  it("shortens supplier names into column heads that stay unique", () => {
+    expect(shortSupplierLabels(["AZ", "Ottogo", "Codifa", "Auto Plus", "Autodistribution", "Éts Codi"])).toEqual([
+      "AZ",
+      "OTTO",
+      "CODI",
+      "AUTOP",
+      "AUTOD",
+      "ETSC",
     ]);
   });
 
