@@ -6936,3 +6936,43 @@ button.tf-check:hover:not(:disabled) { border-color: var(--clr-success); box-sha
 /* Garagiste portal — « Mon mot de passe » + déconnexion, ensemble en bas du menu */
 .gp-nav-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
 .gp-nav-foot .gp-logout { margin-top: 0; }
+
+/* ==================================================================== */
+/*  SIDEBAR — réduite en barre d'icônes (bouton sur la tranche, ≥ 1024px) */
+/*  L'état vit sur <html data-sidebar="collapsed">, posé avant le premier  */
+/*  rendu par un script du layout racine et mémorisé dans localStorage.    */
+/* ==================================================================== */
+:root { --sidebar-width-collapsed: 68px; }
+.sidebar-collapse-btn {
+  display: none;
+  position: absolute; top: 24px; right: -13px; z-index: 2;
+  width: 26px; height: 26px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--border-card); background: #fff; color: var(--text-secondary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12); cursor: pointer;
+  align-items: center; justify-content: center;
+}
+.sidebar-collapse-btn:hover { color: var(--clr-primary); border-color: var(--clr-primary-border); }
+.sidebar-collapse-btn:focus-visible { outline: 2px solid var(--clr-primary); outline-offset: 2px; }
+@media (min-width: 1024px) {
+  .sidebar-collapse-btn { display: inline-flex; }
+  .sidebar { transition: width 0.2s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  .dashboard-main { transition: margin-left 0.2s ease; }
+  :root[data-sidebar="collapsed"] .sidebar { width: var(--sidebar-width-collapsed); }
+  :root[data-sidebar="collapsed"] .dashboard-main { margin-left: var(--sidebar-width-collapsed); }
+  :root[data-sidebar="collapsed"] .sidebar-brand { flex-direction: column; align-items: center; gap: 10px; padding: 14px 8px 12px; }
+  :root[data-sidebar="collapsed"] .sidebar-bell-slot { padding: 0; }
+  :root[data-sidebar="collapsed"] .sidebar-brand-text,
+  :root[data-sidebar="collapsed"] .sidebar-switch,
+  :root[data-sidebar="collapsed"] .sidebar-group-label,
+  :root[data-sidebar="collapsed"] .sidebar-nav-label,
+  :root[data-sidebar="collapsed"] .sidebar-nav-badge,
+  :root[data-sidebar="collapsed"] .sidebar-user-info { display: none; }
+  :root[data-sidebar="collapsed"] .sidebar-nav { padding: 8px 8px 12px; }
+  :root[data-sidebar="collapsed"] .sidebar-group + .sidebar-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light); }
+  :root[data-sidebar="collapsed"] .sidebar-nav-item { justify-content: center; gap: 0; padding: 10px 0; }
+  :root[data-sidebar="collapsed"] .sidebar-user { flex-direction: column; gap: 6px; padding: 12px 8px; }
+  :root[data-sidebar="collapsed"] .sidebar-user-avatar { width: 36px; height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .dashboard-main { transition: none; }
+}

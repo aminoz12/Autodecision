@@ -43,6 +43,13 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body>
+        {/* The remembered sidebar state, applied before the first paint so it never flashes open. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{if(localStorage.getItem('sidebar')==='collapsed')document.documentElement.setAttribute('data-sidebar','collapsed')}catch(e){}",
+          }}
+        />
         <ThemeInitializer />
         <AuthProvider>{children}</AuthProvider>
       </body>

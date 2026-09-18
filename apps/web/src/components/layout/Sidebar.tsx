@@ -3,6 +3,8 @@
 import {
   Boxes,
   ChartColumn,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   ClipboardPlus,
   FileText,
@@ -27,7 +29,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
 import { Toast } from "@/components/ui/Toast";
@@ -93,6 +95,20 @@ const ROLE_LABEL: Record<string, string> = {
   LIVREUR: "Livreur",
 };
 
+/*
+ * The folded / open state lives on <html data-sidebar>: an inline script in
+ * the root layout applies the remembered choice before the first paint, and
+ * the CSS reads the attribute. React only mirrors it, through an observer.
+ */
+function readSidebarState(): boolean {
+  return document.documentElement.getAttribute("data-sidebar") === "collapsed";
+}
+function subscribeSidebarState(onChange: () => void): () => void {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-sidebar"] });
+  return () => observer.disconnect();
+}
+
 function initials(name: string): string {
   return (
     name
@@ -112,6 +128,18 @@ export function Sidebar() {
   const [pwdNotice, setPwdNotice] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
+  /** Desktop only: the menu folds to an icon rail so the page gets the room. */
+  const collapsed = useSyncExternalStore(subscribeSidebarState, readSidebarState, () => false);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    document.documentElement.setAttribute("data-sidebar", next ? "collapsed" : "expanded");
+    try {
+      localStorage.setItem("sidebar", next ? "collapsed" : "expanded");
+    } catch {
+      /* private mode: the choice just isn't remembered */
+    }
+  }
 
   useEffect(() => {
     if (!profile?.organization_id) return;
@@ -166,6 +194,18 @@ export function Sidebar() {
 
       {/* Sidebar */}
       <aside className={cn("sidebar", mobileOpen ? "sidebar--open" : "")}>
+        {/* Desktop: fold the menu into an icon rail (the choice is remembered) */}
+        <button
+          type="button"
+          className="sidebar-collapse-btn"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Afficher le menu" : "Réduire le menu"}
+          title={collapsed ? "Afficher le menu" : "Réduire le menu"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </button>
+
         {/* Brand */}
         <div className="sidebar-brand">
           <div className="sidebar-bell-slot"><NotificationBell /></div>
@@ -173,7 +213,7 @@ export function Sidebar() {
             <div className="sidebar-brand-icon-new">
               <Store className="h-5 w-5 text-white" />
             </div>
-            <div>
+            <div className="sidebar-brand-text">
               <h1 className="sidebar-brand-name">{brand}</h1>
               <p className="sidebar-brand-sub">Comptoir</p>
             </div>
@@ -208,9 +248,10 @@ export function Sidebar() {
                       onClick={() => setMobileOpen(false)}
                       className={cn("sidebar-nav-item", active && "sidebar-nav-item--active")}
                       aria-current={active ? "page" : undefined}
+                      title={collapsed ? item.label : undefined}
                     >
                       <Icon className="sidebar-nav-icon" />
-                      <span className="flex-1">{item.label}</span>
+                      <span className="sidebar-nav-label flex-1">{item.label}</span>
                     </Link>
                   );
                 })}
