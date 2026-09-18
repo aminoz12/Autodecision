@@ -26,6 +26,9 @@ const SETTINGS_TO_COPY = [
   "invoice_footer",
   "payment_terms_text",
   "sms_sender",
+  "sms_horaires",
+  "sms_ready_template",
+  "sms_partial_template",
 ] as const;
 
 const ORG_COLUMNS = "id, name, city, phone, plan, subscription_status, trial_ends_at, created_at";

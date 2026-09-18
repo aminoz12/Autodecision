@@ -33,7 +33,8 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
-import { createWalkInReturn, markLineReceived } from "@/lib/data/saas";
+import { createWalkInReturn, loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
+import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
 import { updateClientAddress } from "@/lib/data/delivery";
 import {
   dispatchOrderToLivreur,
@@ -107,6 +108,21 @@ const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
   { id: "STOCK", label: "Retour en stock", icon: Box },
 ];
 
+/** One row of « Commande à préparer », as handed to the SMS modal. */
+type SmsOrderRow = {
+  orderId: string;
+  ref: string;
+  clientId: string | null;
+  clientName: string;
+  clientPhone: string | null;
+  complet: boolean;
+  received: number;
+  total: number;
+  state: SmsState;
+};
+
+const NO_SMS_SETTINGS: SmsSettings = { magasin: "", horaires: null, readyTemplate: null, partialTemplate: null };
+
 export default function ReceptionCommandesPage() {
   const { profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
@@ -152,19 +168,35 @@ export default function ReceptionCommandesPage() {
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  /* ---- SMS « commande prête » modal ---- */
+  const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
+  const [smsOrder, setSmsOrder] = useState<SmsOrderRow | null>(null);
+  const [smsBusy, setSmsBusy] = useState(false);
+  const [smsError, setSmsError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
-      const [b, s, l] = await Promise.all([
+      const [b, s, l, org] = await Promise.all([
         loadReceptionBoard(supabase, orgId),
         loadSmsStates(supabase, orgId),
         loadLivreurs(supabase, orgId, { activeOnly: true }),
+        // Wording of the client SMS; the defaults apply if the profile can't be read.
+        loadOrganizationSettings(supabase, orgId).catch(() => null),
       ]);
       setBoard(b);
       setSms(s);
       setLivreurs(l);
+      if (org) {
+        setSmsSettings({
+          magasin: org.name,
+          horaires: org.smsHoraires,
+          readyTemplate: org.smsReadyTemplate,
+          partialTemplate: org.smsPartialTemplate,
+        });
+      }
       setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -561,38 +593,62 @@ export default function ReceptionCommandesPage() {
       );
     });
 
-  const actSms = (o: (typeof smsOrders)[number]) =>
-    withBusy(`sms-${o.orderId}`, async () => {
-      if (!orgId) return;
-      if (!o.clientPhone) {
-        setError("Ce client n'a pas de numéro de téléphone.");
-        return;
-      }
-      // Real send through the server (Twilio env) — simulated when no
-      // provider is configured, so the workflow still moves forward.
-      // The server resolves the phone number from the order and records the send.
+  /** Opens the confirmation modal: recipient, exact text, cost in SMS. */
+  const openSms = (o: SmsOrderRow) => {
+    setSmsError(null);
+    setSmsOrder(o);
+  };
+
+  const smsPreview = useMemo(() => {
+    if (!smsOrder) return null;
+    const built = buildClientSms(
+      smsOrder.complet ? "READY" : "PARTIAL",
+      // "Client comptoir" is a placeholder, not a name.
+      { client: smsOrder.clientId ? smsOrder.clientName : "", commande: smsOrder.ref },
+      smsSettings,
+    );
+    return { to: toE164(smsOrder.clientPhone), ...built };
+  }, [smsOrder, smsSettings]);
+
+  const sendSms = async () => {
+    if (!smsOrder || !orgId) return;
+    setSmsBusy(true);
+    setSmsError(null);
+    try {
+      // The server resolves the number from the order, builds the same text
+      // from the magasin settings, sends through Twilio (or simulates when no
+      // provider is configured) and records the send.
       const res = await fetch("/api/send-sms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: o.orderId,
-          message: `Bonjour, vos pièces (${o.received}/${o.total}) sont disponibles en magasin. À bientôt !`,
-        }),
+        body: JSON.stringify({ orderId: smsOrder.orderId, kind: smsOrder.complet ? "READY" : "PARTIAL" }),
       });
-      const sent = (await res.json().catch(() => ({}))) as { ok?: boolean; simulated?: boolean; error?: string };
+      const sent = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        simulated?: boolean;
+        to?: string;
+        error?: string;
+      };
       if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
       setNotice(
         sent.simulated
-          ? `SMS enregistré pour ${o.clientName} (mode simulation — configurez un fournisseur SMS dans les variables TWILIO_* pour l'envoi réel).`
-          : `SMS envoyé à ${o.clientName} (${o.clientPhone}).`,
+          ? `SMS enregistré pour ${smsOrder.clientName} (mode simulation : renseignez TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN et TWILIO_FROM pour l'envoi réel).`
+          : `SMS envoyé à ${smsOrder.clientName} (${formatE164(sent.to ?? "")}).`,
       );
+      const orderId = smsOrder.orderId;
       setSms((prev) => {
         const next = new Map(prev);
-        const cur = next.get(o.orderId) ?? { sent: false, treated: false };
-        next.set(o.orderId, { ...cur, sent: true });
+        const cur = next.get(orderId) ?? { sent: false, treated: false };
+        next.set(orderId, { ...cur, sent: true });
         return next;
       });
-    });
+      setSmsOrder(null);
+    } catch (e) {
+      setSmsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSmsBusy(false);
+    }
+  };
 
   const actTreated = (o: (typeof smsOrders)[number]) =>
     withBusy(`done-${o.orderId}`, async () => {
@@ -1319,8 +1375,7 @@ export default function ReceptionCommandesPage() {
                                 <button
                                   type="button"
                                   className="rc-sms-act rc-sms-act--sms"
-                                  disabled={busy.has(`sms-${o.orderId}`)}
-                                  onClick={() => actSms(o)}
+                                  onClick={() => openSms(o)}
                                 >
                                   <MessageSquare className="h-4 w-4" />
                                   {o.state.sent ? "SMS envoyé" : "SMS"}
@@ -1735,6 +1790,83 @@ export default function ReceptionCommandesPage() {
                     <Send className="h-4 w-4" />
                   )}
                   {dispatchOrder.livreurId ? "Changer de livreur" : "Partir en livraison"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {smsOrder && smsPreview && (
+        <div className="ga-modal-overlay" onClick={() => !smsBusy && setSmsOrder(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title">
+                <MessageSquare className="h-4 w-4" />
+                Prévenir le client par SMS
+              </span>
+              <button
+                type="button"
+                className="ga-modal-close"
+                onClick={() => setSmsOrder(null)}
+                aria-label="Fermer"
+                disabled={smsBusy}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="ga-modal-form">
+              {smsError && <div className="nc-error">{smsError}</div>}
+              <div className="rt-picked">
+                <div>
+                  <p className="rt-order-ref">{smsOrder.ref}</p>
+                  <p className="rt-order-client">{smsOrder.clientName}</p>
+                </div>
+                <span className={`rt-badge rt-badge--${smsOrder.complet ? "green" : "amber"}`}>
+                  {smsOrder.complet ? "Complet" : `Partiel · ${smsOrder.received}/${smsOrder.total}`}
+                </span>
+              </div>
+              <div className="sms-to">
+                <span className="od-label">Destinataire</span>
+                {smsPreview.to ? (
+                  <strong>{formatE164(smsPreview.to)}</strong>
+                ) : (
+                  <span className="sms-to-bad">
+                    <AlertTriangle className="h-4 w-4" />
+                    Numéro invalide : {smsOrder.clientPhone ?? "aucun numéro"}
+                  </span>
+                )}
+              </div>
+              <div className="od-field">
+                <span className="od-label">Message</span>
+                <div className="sms-bubble">{smsPreview.text}</div>
+                <span className="sms-meta">
+                  {smsPreview.size.chars} caractères · {smsPreview.size.segments} SMS
+                  {smsPreview.size.encoding === "UCS-2" ? " (caractères spéciaux : 70 par SMS)" : ""}
+                </span>
+              </div>
+              <p className="st-cmd-hint">
+                {smsOrder.state.sent ? "Un SMS a déjà été envoyé pour cette commande ; vous pouvez le renvoyer. " : ""}
+                Texte et horaires se règlent dans{" "}
+                <Link href="/dashboard/parametres" className="rc-cmd">Paramètres → SMS aux clients</Link>.
+              </p>
+              <div className="ga-modal-actions">
+                <button
+                  type="button"
+                  className="od-btn od-btn--ghost"
+                  onClick={() => setSmsOrder(null)}
+                  disabled={smsBusy}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className="od-btn od-btn--primary"
+                  onClick={() => void sendSms()}
+                  disabled={smsBusy || !smsPreview.to}
+                >
+                  {smsBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Send className="h-4 w-4" />}
+                  Envoyer le SMS
                 </button>
               </div>
             </div>

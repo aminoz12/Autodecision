@@ -4,7 +4,7 @@ import { SubscribeButton } from "@/components/billing/SubscribeButton";
 
 import Link from "next/link";
 
-import { Building2, FileText, Save, Settings } from "lucide-react";
+import { Building2, FileText, MessageSquare, Save, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -13,6 +13,13 @@ import {
   updateOrganizationProfile,
   type OrganizationSettings,
 } from "@/lib/data/saas";
+import {
+  SMS_DEFAULT_HORAIRES,
+  SMS_DEFAULT_PARTIAL_TEMPLATE,
+  SMS_DEFAULT_READY_TEMPLATE,
+  buildClientSms,
+  type SmsKind,
+} from "@/lib/sms";
 
 type Field = {
   key: keyof Omit<OrganizationSettings, "id" | "plan" | "subscriptionStatus" | "seatLimit" | "tvaRate" | "logoUrl">;
@@ -46,6 +53,27 @@ const INVOICING: Field[] = [
   { key: "paymentTermsText", label: "Conditions de règlement (texte libre)", placeholder: "Paiement comptant à réception. Pour les garages : à 30 jours.", wide: true },
   { key: "invoiceFooter", label: "Pied de facture", placeholder: "CGV disponibles sur demande. Membre d'une association agréée…", wide: true, textarea: true },
 ];
+
+/* SMS « commande prête » — vide = texte par défaut de lib/sms.ts */
+const SMS_HOURS: Field[] = [
+  { key: "smsHoraires", label: "Horaires indiqués dans le SMS", placeholder: SMS_DEFAULT_HORAIRES, hint: "Remplace {horaires} dans les messages." },
+];
+const SMS_READY: Field = {
+  key: "smsReadyTemplate",
+  label: "Message — commande complète",
+  placeholder: SMS_DEFAULT_READY_TEMPLATE,
+  wide: true,
+  textarea: true,
+};
+const SMS_PARTIAL: Field = {
+  key: "smsPartialTemplate",
+  label: "Message — commande partielle (reliquat en cours)",
+  placeholder: SMS_DEFAULT_PARTIAL_TEMPLATE,
+  wide: true,
+  textarea: true,
+};
+/** Sample order shown in the live preview. */
+const SMS_SAMPLE = { client: "Jean Dupont", commande: "CO-2026-00042" };
 
 export default function ParametresPage() {
   const { profile } = useAuth();
@@ -124,6 +152,27 @@ export default function ParametresPage() {
       </div>
     ));
 
+  /** Exactly what the client would receive, with the cost in SMS. */
+  const renderSmsPreview = (kind: SmsKind, label: string) => {
+    if (!settings) return null;
+    const { text, size } = buildClientSms(kind, SMS_SAMPLE, {
+      magasin: settings.name,
+      horaires: settings.smsHoraires,
+      readyTemplate: settings.smsReadyTemplate,
+      partialTemplate: settings.smsPartialTemplate,
+    });
+    return (
+      <div className="od-field">
+        <span className="od-label">{label}</span>
+        <div className="sms-bubble">{text}</div>
+        <span className="sms-meta">
+          {size.chars} caractères · {size.segments} SMS
+          {size.encoding === "UCS-2" ? " (caractères spéciaux : 70 par SMS)" : ""}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="rl-page">
       <header className="rl-header">
@@ -180,6 +229,24 @@ export default function ParametresPage() {
               <span className="st-cmd-hint">Les prix saisis sont TTC ; le HT et la TVA sont calculés à ce taux (une ligne peut avoir son propre taux).</span>
             </div>
             {renderFields(INVOICING)}
+          </div>
+        </section>
+
+        <section className="od-card st-rajout">
+          <header className="st-rajout-head">
+            <h2 className="st-rajout-title"><MessageSquare className="h-4 w-4" /> SMS aux clients</h2>
+          </header>
+          <p className="st-cmd-hint" style={{ marginBottom: 10 }}>
+            Envoyé depuis «&nbsp;Commande à préparer&nbsp;» quand les pièces d&apos;un client sont arrivées.
+            Champs disponibles : {"{client}"}, {"{commande}"}, {"{horaires}"}, {"{magasin}"}. Vide = texte par défaut.
+            Les lettres hors alphabet SMS (ê, ô, ç…) sont remplacées à l&apos;envoi pour tenir en un seul SMS.
+          </p>
+          <div className="st-rajout-grid">{renderFields(SMS_HOURS)}</div>
+          <div className="sms-settings-grid">
+            {renderFields([SMS_READY])}
+            {renderSmsPreview("READY", "Aperçu — commande complète")}
+            {renderFields([SMS_PARTIAL])}
+            {renderSmsPreview("PARTIAL", "Aperçu — commande partielle")}
           </div>
           {isAdmin && (
             <div className="st-rajout-submit">

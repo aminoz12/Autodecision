@@ -1307,6 +1307,10 @@ export type OrganizationSettings = {
   invoicePrefix: string;
   invoiceFooter: string | null;
   paymentTermsText: string | null;
+  /* SMS aux clients — null = texte par défaut (lib/sms.ts) */
+  smsHoraires: string | null;
+  smsReadyTemplate: string | null;
+  smsPartialTemplate: string | null;
   logoUrl: string | null;
 };
 
@@ -1314,14 +1318,18 @@ export async function loadOrganizationSettings(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<OrganizationSettings> {
-  const { data, error } = await supabase
-    .from("organizations")
-    .select(
-      "id,name,phone,address,city,plan,subscription_status,seat_limit," +
-        "legal_name,legal_form,siret,tva_intra,rcs,capital,iban,bic,tva_rate,invoice_prefix,invoice_footer,payment_terms_text,logo_url",
-    )
-    .eq("id", orgId)
-    .single();
+  const columns =
+    "id,name,phone,address,city,plan,subscription_status,seat_limit," +
+    "legal_name,legal_form,siret,tva_intra,rcs,capital,iban,bic,tva_rate,invoice_prefix,invoice_footer,payment_terms_text,logo_url";
+  const smsColumns = ",sms_horaires,sms_ready_template,sms_partial_template";
+  const fetchProfile = (cols: string) =>
+    supabase.from("organizations").select(cols).eq("id", orgId).single();
+  let res = await fetchProfile(columns + smsColumns);
+  if (res.error && /sms_/.test(res.error.message)) {
+    // Migration 20260918010000 not applied yet: same profile, default SMS wording.
+    res = await fetchProfile(columns);
+  }
+  const { data, error } = res;
 
   if (error) throw new Error(error.message);
   const row = data as unknown as Record<string, unknown>;
@@ -1347,6 +1355,9 @@ export async function loadOrganizationSettings(
     invoicePrefix: String(row.invoice_prefix ?? "FA"),
     invoiceFooter: s(row.invoice_footer),
     paymentTermsText: s(row.payment_terms_text),
+    smsHoraires: s(row.sms_horaires),
+    smsReadyTemplate: s(row.sms_ready_template),
+    smsPartialTemplate: s(row.sms_partial_template),
     logoUrl: s(row.logo_url),
   };
 }
@@ -1374,6 +1385,9 @@ export async function updateOrganizationProfile(
       invoice_prefix: input.invoicePrefix,
       invoice_footer: input.invoiceFooter ?? "",
       payment_terms_text: input.paymentTermsText ?? "",
+      sms_horaires: input.smsHoraires ?? "",
+      sms_ready_template: input.smsReadyTemplate ?? "",
+      sms_partial_template: input.smsPartialTemplate ?? "",
     },
   });
   if (error) throw new Error(error.message);
