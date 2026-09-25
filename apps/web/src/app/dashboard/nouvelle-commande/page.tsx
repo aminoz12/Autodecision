@@ -39,6 +39,7 @@ import {
 } from "@/lib/data/saas";
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
+import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
 import type { CreateOrderPayload } from "@/lib/types/api";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 
@@ -173,6 +174,14 @@ export default function NouvelleCommandePage() {
   const [immatriculation, setImmatriculation] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [kilometrage, setKilometrage] = useState("");
+  // Après-vente : ce qui doit être capturé à la vente (dix secondes, pas plus).
+  const [promisedDate, setPromisedDate] = useState("");
+  const [garagePoseurId, setGaragePoseurId] = useState("");
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [smsConsentTouched, setSmsConsentTouched] = useState(false);
+  const [savWarning, setSavWarning] = useState<string | null>(null);
+  // Politique de reprise et délai de consigne : imprimés sur le ticket (null = module pas encore activé).
+  const [savSettings, setSavSettings] = useState<SavSettings | null>(null);
 
   /* ---- Document ---- */
   const [canalVente, setCanalVente] = useState<string>("MAGASIN");
@@ -309,6 +318,7 @@ export default function NouvelleCommandePage() {
         };
         const order = await createOrderWithLines(supabase, userId, orgId, payload);
         createdRefs.push(order.ref_demande);
+        if (!forStock) void finalizeOrderSav(supabase, order.id).catch(() => {});
       }
 
       setQuickOpen(false);
@@ -361,6 +371,9 @@ export default function NouvelleCommandePage() {
     if (!profile?.organization_id) return;
     loadOrganizationSettings(supabase, profile.organization_id)
       .then(setOrgSettings)
+      .catch(() => {});
+    loadSavSettingsSafe(supabase)
+      .then((s) => setSavSettings(s.available ? s.settings : null))
       .catch(() => {});
   }, [supabase, profile?.organization_id]);
 
@@ -494,6 +507,25 @@ export default function NouvelleCommandePage() {
     if (clientId === NEW_CLIENT) return null;
     return clients.find((c) => c.id === clientId && !garageIds.has(c.id)) ?? null;
   }, [destineA, knownClient, clientId, clients, garageIds]);
+
+  // A client who already agreed to the SMS reminders keeps the box ticked
+  // (the vendeur can still untick it). Silent before the SAV migration.
+  const linkedParticulierId = linkedParticulier?.id ?? null;
+  useEffect(() => {
+    if (!linkedParticulierId || smsConsentTouched) return;
+    let alive = true;
+    void supabase
+      .from("clients")
+      .select("sms_marketing_consent")
+      .eq("id", linkedParticulierId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (alive && (data as { sms_marketing_consent?: boolean } | null)?.sms_marketing_consent === true) setSmsConsent(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [supabase, linkedParticulierId, smsConsentTouched]);
 
   // Id set by the phone match (a manual pick from the list is never undone).
   const phoneMatchedId = useRef<string | null>(null);
@@ -834,6 +866,21 @@ export default function NouvelleCommandePage() {
         orgId,
         payload,
       );
+      // Champs après-vente : jamais bloquants — la commande existe déjà.
+      try {
+        if (destineA === "COMPTOIR") {
+          await setOrderSavFields(supabase, order.id, {
+            promisedDate: promisedDate || undefined,
+            garagePoseurId: garagePoseurId || undefined,
+            smsMarketingConsent: smsConsentTouched ? smsConsent : undefined,
+          });
+        }
+        await finalizeOrderSav(supabase, order.id);
+      } catch (savErr) {
+        if (!(savErr instanceof Error && savErr.name === "SavUnavailableError")) {
+          setSavWarning(savErr instanceof Error ? savErr.message : String(savErr));
+        }
+      }
       setCreatedRef(order.ref_demande);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
       setAvoirWarning(order.avoirWarning ?? null);
@@ -863,6 +910,15 @@ export default function NouvelleCommandePage() {
         statutPaiement: effectiveStatut,
         modePaiement: onAccount ? "EN_COMPTE" : null,
         echeance: accountDueDate ? accountDueDate.toISOString().slice(0, 10) : null,
+        promisedDate: destineA === "COMPTOIR" && promisedDate ? promisedDate : null,
+        returnPolicy: savSettings
+          ? savSettings.returnPolicyText ??
+            `Reprise sous ${savSettings.returnPolicyDays} jours : pièce non montée, emballage d'origine, sur présentation du ticket.`
+          : null,
+        consigneDeadline:
+          savSettings && validLines.some((l) => l.consigne)
+            ? new Date(Date.now() + savSettings.consigneClientDays * 86_400_000).toISOString().slice(0, 10)
+            : null,
       });
       // Refresh client list in case a new one was created.
       void loadClients(supabase, orgId).then(setClients).catch(() => {});
@@ -899,6 +955,11 @@ export default function NouvelleCommandePage() {
     setImmatriculation("");
     setVehicleModel("");
     setKilometrage("");
+    setPromisedDate("");
+    setGaragePoseurId("");
+    setSmsConsent(false);
+    setSmsConsentTouched(false);
+    setSavWarning(null);
     setCanalVente("MAGASIN");
     setLines([{ ...emptyLine }]);
     setReglement("NON_PAYEE");
@@ -941,6 +1002,7 @@ export default function NouvelleCommandePage() {
             </p>
           )}
           {avoirWarning && <div className="nc-error">{avoirWarning}</div>}
+          {savWarning && <p className="nc-hint">Après-vente : {savWarning}</p>}
           <div className="nc-success-actions">
             {ticket && (
               <button
@@ -1166,6 +1228,45 @@ export default function NouvelleCommandePage() {
             />
           </div>
         </div>
+        {destineA === "COMPTOIR" && (
+          <div className="nc-sav">
+            <div className="od-field">
+              <span className="od-label">Promis pour le</span>
+              <input
+                className="od-input"
+                type="date"
+                value={promisedDate}
+                onChange={(e) => setPromisedDate(e.target.value)}
+                title="La date annoncée au client. Vide = l'arrivée prévue de la dernière pièce."
+              />
+            </div>
+            <div className="od-field">
+              <span className="od-label">Garage qui posera la pièce</span>
+              <div className="od-select">
+                <select value={garagePoseurId} onChange={(e) => setGaragePoseurId(e.target.value)}>
+                  <option value="">— Le client / non précisé —</option>
+                  {garages.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="h-4 w-4" />
+              </div>
+            </div>
+            <label className="sav-check nc-sav-consent">
+              <input
+                type="checkbox"
+                checked={smsConsent}
+                onChange={(e) => {
+                  setSmsConsent(e.target.checked);
+                  setSmsConsentTouched(true);
+                }}
+              />
+              Le client accepte nos rappels d&apos;entretien par SMS
+            </label>
+          </div>
+        )}
         {linkedParticulier ? (
           <div className="nc-known">
             <Check className="h-4 w-4" />

@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 import { fmtMoney } from "@/lib/data/saas";
@@ -342,6 +343,8 @@ export default function GarageDetailPage() {
           </table>
         </div>
       </section>
+
+      {orgId && garage && <GarageSavCard orgId={orgId} clientId={garage.id} />}
 
       <section className="od-card">
         <div className="od-card-title"><ShoppingCart className="h-4 w-4" /> Historique des commandes et devis</div>

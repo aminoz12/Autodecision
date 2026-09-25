@@ -7,6 +7,7 @@ import {
   LogOut,
   Plus,
   RotateCcw,
+  Scale,
   ShoppingCart,
   Wrench,
 } from "lucide-react";
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/garagiste/dashboard/commander", label: "Commander", icon: Plus },
   { href: "/garagiste/dashboard/commandes", label: "Mes commandes", icon: ShoppingCart },
   { href: "/garagiste/dashboard/retours", label: "Retours", icon: RotateCcw },
+  { href: "/garagiste/dashboard/litiges", label: "Litiges & garanties", icon: Scale },
   { href: "/garagiste/dashboard/factures", label: "Mon compte", icon: CreditCard },
 ];
 

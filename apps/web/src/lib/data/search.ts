@@ -6,7 +6,7 @@ import { toNumber } from "@/lib/data/saas";
 /* ------------------------------------------------------------------ */
 
 export type SearchHit = {
-  kind: "order" | "client" | "garage" | "part" | "stock";
+  kind: "order" | "client" | "garage" | "part" | "stock" | "sav";
   id: string;
   title: string;
   subtitle: string;
@@ -21,6 +21,8 @@ export type SearchResults = {
   garages: SearchHit[];
   parts: SearchHit[];
   stock: SearchHit[];
+  /** Dossiers SAV (garanties, litiges) — empty before the after-sales migration. */
+  sav: SearchHit[];
   total: number;
 };
 
@@ -49,13 +51,13 @@ export async function globalSearch(
   query: string,
 ): Promise<SearchResults> {
   const q = query.trim();
-  const empty: SearchResults = { orders: [], clients: [], garages: [], parts: [], stock: [], total: 0 };
+  const empty: SearchResults = { orders: [], clients: [], garages: [], parts: [], stock: [], sav: [], total: 0 };
   if (q.length < 2) return empty;
   const p = pattern(q);
   const digits = q.replace(/\D/g, "");
   const phoneP = digits.length >= 4 ? `%${digits.split("").join("%")}%` : null;
 
-  const [ordersRes, clientsRes, linesRes, stockRes] = await Promise.all([
+  const [ordersRes, clientsRes, linesRes, stockRes, savRes] = await Promise.all([
     supabase
       .from("orders")
       .select("id,ref_demande,date_commande,client_phone,immatriculation,vehicle_model,workflow_status,montant_total,clients(name)")
@@ -101,6 +103,13 @@ export async function globalSearch(
       .eq("organization_id", orgId)
       .or(`sku.ilike.${p},name.ilike.${p}`)
       .limit(5),
+    supabase
+      .from("sav_cases")
+      .select("id,ref,type,designation,reference,immatriculation,supplier_case_number,client_status,closed_at,clients(name)")
+      .eq("organization_id", orgId)
+      .or([`ref.ilike.${p}`, `designation.ilike.${p}`, `reference.ilike.${p}`, `immatriculation.ilike.${p}`, `supplier_case_number.ilike.${p}`].join(","))
+      .order("opened_at", { ascending: false })
+      .limit(6),
   ]);
   for (const r of [ordersRes, clientsRes, linesRes, stockRes]) {
     if (r.error) throw new Error(r.error.message);
@@ -175,12 +184,31 @@ export async function globalSearch(
     };
   });
 
+  // A database without the after-sales migration answers with an error here: no SAV group then.
+  const sav: SearchHit[] = savRes.error
+    ? []
+    : (savRes.data ?? []).map((raw) => {
+        const row = raw as Record<string, unknown>;
+        const client = first(row.clients as Embedded<Record<string, unknown>>);
+        return {
+          kind: "sav",
+          id: String(row.id),
+          title: `${row.ref} — ${row.designation ?? ""}`,
+          subtitle: [client?.name ?? "Client comptoir", row.reference, row.immatriculation, row.supplier_case_number ? `dossier ${row.supplier_case_number}` : null]
+            .filter(Boolean)
+            .join(" · "),
+          href: `/dashboard/sav/${row.id}`,
+          tag: row.closed_at ? "Clos" : String(row.type) === "GARANTIE" ? "Garantie" : "Litige",
+        };
+      });
+
   return {
     orders,
     clients,
     garages,
     parts,
     stock,
-    total: orders.length + clients.length + garages.length + parts.length + stock.length,
+    sav,
+    total: orders.length + clients.length + garages.length + parts.length + stock.length + sav.length,
   };
 }

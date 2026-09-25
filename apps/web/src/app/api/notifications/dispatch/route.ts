@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { processSmsQueue, processSupplierReminders, type QueueResult } from "@/lib/sms-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,10 @@ export const dynamic = "force-dynamic";
  * to one real run per minute per instance). Provider: Resend, env-gated —
  * without RESEND_API_KEY / EMAIL_FROM the emails are marked NO_PROVIDER so
  * the outbox does not grow forever and the in-app notification still works.
+ *
+ * The same run empties the after-sales SMS queue (commande prête, retard,
+ * relances de retrait, consigne, satisfaction… — lib/sms-queue.ts) and the
+ * supplier warranty reminders.
  */
 const BATCH = 25;
 let lastRunAt = 0;
@@ -49,6 +54,18 @@ export async function POST(request: Request) {
     }
   } catch (e) {
     console.error("dispatch: scheduled notifications failed", e);
+  }
+
+  // Messages au client déposés par la base (file sms_notifications) + relances fournisseur.
+  let sms: QueueResult | null = null;
+  let supplierReminders: { sent: number; simulated: number } | null = null;
+  try {
+    // Links in the messages (avis, STOP) must be the public address, not an internal one.
+    const publicOrigin = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/+$/, "") || origin;
+    sms = await processSmsQueue(admin, { origin: publicOrigin });
+    supplierReminders = await processSupplierReminders(admin);
+  } catch (e) {
+    console.error("dispatch: sms queue failed", e);
   }
 
   const { data: pending, error } = await admin
@@ -99,5 +116,5 @@ export async function POST(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, sent, simulated, pending: (pending ?? []).length, scheduled });
+  return NextResponse.json({ ok: true, sent, simulated, pending: (pending ?? []).length, scheduled, sms, supplierReminders });
 }

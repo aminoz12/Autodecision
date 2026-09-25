@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { OrderSavPanel } from "@/components/sav/OrderSavPanel";
 import { createClient } from "@/lib/supabase/client";
 import { workflowLabel } from "@/lib/data/dashboard";
 import {
@@ -687,6 +688,31 @@ export default function OrderDetailPage() {
               <div className="od-lines-consigne">remise en pied de commande : − {eur(order.remiseMontant)}</div>
             )}
           </section>
+
+          {/* Après-vente : promesse, casier, garantie par ligne, dossiers */}
+          {profile?.organization_id && !order.cancelledAt && (
+            <OrderSavPanel
+              orgId={profile.organization_id}
+              order={{
+                id: order.id,
+                ref: order.ref,
+                date: order.date,
+                clientName: order.clientName,
+                plate: order.plate,
+                kilometrage: order.kilometrage,
+                isGarage: order.isGarage,
+                isRestock: order.isRestock,
+                devis: order.devis,
+              }}
+              lines={order.lines.map((l) => ({
+                id: l.id,
+                designation: l.designation,
+                reference: l.reference,
+                quantity: l.quantity,
+                handedOver: l.handedOver,
+              }))}
+            />
+          )}
 
           {/* Consigne note */}
           {order.consigne && (

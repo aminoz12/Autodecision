@@ -14,8 +14,10 @@ import {
   Truck,
   Wallet,
   X,
+  ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { PAYMENT_MODES, PAYMENT_MODE_LABEL, type PaymentMode } from "@/lib/data/payments";
@@ -34,6 +36,9 @@ import {
   type ReturnTreatment,
 } from "@/lib/data/saas";
 import { addDays, assignReturnLeg, ensureSupplierTour, parisDate, STANDARD_TOURS, type ReturnLeg } from "@/lib/data/tournees";
+import { OpenCaseDialog, type OpenCasePreset } from "@/components/sav/OpenCaseDialog";
+import { loadReturnQualifications, loadSavSettingsSafe, qualifyReturns } from "@/lib/data/sav";
+import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay, withinReturnPolicy } from "@/lib/sav";
 
 const TREATMENT_LABEL: Record<string, string> = {
   A_TRAITER: "À traiter",
@@ -124,6 +129,18 @@ export default function RetoursPage() {
   const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState("");
   const [compensation, setCompensation] = useState<"REMBOURSEMENT" | "AVOIR">("REMBOURSEMENT");
+
+  // Après-vente : motif codé, état de la pièce, fenêtre fournisseur, bascule en dossier.
+  const router = useRouter();
+  type Qualification = Awaited<ReturnType<typeof loadReturnQualifications>> extends Map<string, infer V> ? V : never;
+  const [quals, setQuals] = useState<Map<string, Qualification>>(new Map());
+  const [savAvailable, setSavAvailable] = useState(false);
+  const [policyDays, setPolicyDays] = useState(15);
+  const [motifCode, setMotifCode] = useState<string>("");
+  const [etat, setEtat] = useState<string>("NEUVE_EMBALLEE");
+  const [qualifyRow, setQualifyRow] = useState<ReturnRow | null>(null);
+  const [qualifyBusy, setQualifyBusy] = useState(false);
+  const [casePreset, setCasePreset] = useState<OpenCasePreset | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -150,6 +167,13 @@ export default function RetoursPage() {
     try {
       const sb = createClient();
       setRows(await loadReturns(sb, profile.organization_id));
+      void Promise.all([loadReturnQualifications(sb, profile.organization_id), loadSavSettingsSafe(sb)])
+        .then(([q, s]) => {
+          setQuals(q);
+          setSavAvailable(s.available);
+          setPolicyDays(s.settings.returnPolicyDays);
+        })
+        .catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -345,6 +369,10 @@ export default function RetoursPage() {
       setModalError("Sélectionnez au moins une ligne à rembourser.");
       return;
     }
+    if (savAvailable && !motifCode) {
+      setModalError("Choisissez le motif du retour : un retour sans motif codé est une donnée perdue.");
+      return;
+    }
     setSubmitting(true);
     setModalError(null);
     try {
@@ -352,10 +380,13 @@ export default function RetoursPage() {
       const { avoirNum } = await createWalkInReturn(sb, profile.organization_id, {
         orderId: selectedOrder.id,
         clientId: selectedOrder.clientId,
-        reason,
+        reason: [motifCode ? motifLabel(motifCode) : "", reason.trim()].filter(Boolean).join(" — "),
         lines,
         compensation,
       });
+      if (savAvailable && motifCode) {
+        await qualifyReturns(sb, { lineIds: lines.map((l) => l.id), motifCode, etat }).catch(() => {});
+      }
       setNotice(
         avoirNum
           ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.`
@@ -368,7 +399,41 @@ export default function RetoursPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [profile?.organization_id, selectedOrder, selectedLineIds, reason, compensation, load]);
+  }, [profile?.organization_id, selectedOrder, selectedLineIds, reason, compensation, load, savAvailable, motifCode, etat]);
+
+  /** Code after the fact a return that came in without a reason (garage request, older rows). */
+  const submitQualify = useCallback(async () => {
+    if (!qualifyRow || !motifCode) return;
+    setQualifyBusy(true);
+    try {
+      await qualifyReturns(createClient(), { returnIds: [qualifyRow.id], motifCode, etat });
+      setQualifyRow(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setQualifyBusy(false);
+    }
+  }, [qualifyRow, motifCode, etat, load]);
+
+  const openCaseFromReturn = useCallback(
+    (row: ReturnRow, type: "GARANTIE" | "LITIGE") => {
+      const q = quals.get(row.id);
+      setCasePreset({
+        type,
+        returnId: row.id,
+        orderLineId: q?.orderLineId ?? null,
+        orderId: row.orderId,
+        clientId: row.clientId,
+        designation: row.reference,
+        description: row.reason === "-" ? "" : row.reason,
+        clientName: row.client,
+        orderRef: row.ref,
+        partLocation: "MAGASIN",
+      });
+    },
+    [quals],
+  );
 
   const stats = useMemo(() => {
     const byStatus = (status: string) => rows.filter((row) => row.treatment === status).length;
@@ -494,7 +559,39 @@ export default function RetoursPage() {
                         )}
                       </td>
                       <td className="rt-cell-motif" title={row.reference}>{row.reference}</td>
-                      <td className="rt-cell-motif" title={row.reason}>{row.reason}</td>
+                      <td className="rt-cell-motif" title={row.reason}>
+                        {(() => {
+                          const q = quals.get(row.id);
+                          const deadline = parseDay(q?.supplierDeadline);
+                          const left = deadline ? daysBetween(parisToday(), deadline) : null;
+                          const open = ["A_TRAITER", "DEMANDE_ENVOYEE", "A_RECUPERER"].includes(row.treatment) && !row.legDone;
+                          return (
+                            <>
+                              {q?.motifCode ? (
+                                <span className="rt-badge rt-badge--violet" title={RETURN_MOTIF_BY_CODE[q.motifCode]?.action}>{motifLabel(q.motifCode)}</span>
+                              ) : savAvailable && row.type !== "CONSIGNE" ? (
+                                <button
+                                  type="button"
+                                  className="rc-act rc-act--quiet"
+                                  onClick={() => {
+                                    setMotifCode("");
+                                    setEtat("NEUVE_EMBALLEE");
+                                    setQualifyRow(row);
+                                  }}
+                                >
+                                  Coder le motif
+                                </button>
+                              ) : null}
+                              <p className="rl-muted">{row.reason}</p>
+                              {row.hasSupplier && open && left != null && (
+                                <p className={`sav-promise${left <= 5 ? " sav-promise--late" : ""}`}>
+                                  {left < 0 ? `Délai ${row.supplier} dépassé depuis ${-left} j` : `À renvoyer à ${row.supplier} avant le ${fmtDate(q?.supplierDeadline ?? null)} (${left} j)`}
+                                </p>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </td>
                       <td><span className={`rt-badge rt-badge--${row.type === "RETOURNABLE" ? "green" : "red"}`}>{row.type === "RETOURNABLE" ? "Retournable" : row.type === "NON_RETOURNABLE" ? "Non retournable" : row.type}</span></td>
                       <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{TREATMENT_LABEL[row.treatment] ?? row.treatment}</span></td>
                       <td className="rt-decote">{row.amount > 0 ? fmtMoney(row.amount) : <span className="rl-muted">—</span>}</td>
@@ -504,7 +601,10 @@ export default function RetoursPage() {
                           const money = !row.hasSupplier && !settled;
                           const pipeline = row.hasSupplier && steps.length > 0;
                           const livreur = canHandToLivreur(row);
-                          if (!money && !pipeline && !livreur) return <span className="rt-dash">—</span>;
+                          const qual = quals.get(row.id);
+                          const canCase = savAvailable && row.type !== "CONSIGNE";
+                          const suggested = RETURN_MOTIF_BY_CODE[qual?.motifCode ?? ""]?.bascule ?? null;
+                          if (!money && !pipeline && !livreur && !canCase) return <span className="rt-dash">—</span>;
                           return (
                             <div className="rt-acts">
                               {money && (
@@ -541,6 +641,22 @@ export default function RetoursPage() {
                                   <Truck className="h-3.5 w-3.5" /> {row.leg ? "Livreur ✓" : "Livreur"}
                                 </button>
                               )}
+                              {canCase &&
+                                (qual?.savCaseId ? (
+                                  <Link href={`/dashboard/sav/${qual.savCaseId}`} className="rc-act rc-act--quiet">
+                                    <ShieldCheck className="h-3.5 w-3.5" /> Dossier
+                                  </Link>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className={`rc-act ${suggested ? "rc-act--retour" : "rc-act--quiet"}`}
+                                    title={suggested === "LITIGE" ? "Basculer en litige fournisseur (sans ressaisie)" : "Basculer en dossier garantie (sans ressaisie)"}
+                                    aria-label={suggested === "LITIGE" ? "Basculer en litige" : "Basculer en garantie"}
+                                    onClick={() => openCaseFromReturn(row, suggested ?? "GARANTIE")}
+                                  >
+                                    <ShieldCheck className="h-3.5 w-3.5" /> {suggested === "LITIGE" ? "Litige" : "Garantie"}
+                                  </button>
+                                ))}
                             </div>
                           );
                         })()}
@@ -843,8 +959,62 @@ export default function RetoursPage() {
                   })}
                 </div>
 
+                {savAvailable && (
+                  <div className="od-field">
+                    <span className="od-label">
+                      Motif du retour <span className="od-req">*</span>
+                    </span>
+                    <div className="sav-motifs" role="radiogroup">
+                      {RETURN_MOTIFS.map((m) => (
+                        <button
+                          key={m.code}
+                          type="button"
+                          role="radio"
+                          aria-checked={motifCode === m.code}
+                          className={`sav-motif${motifCode === m.code ? " sav-motif--on" : ""}`}
+                          onClick={() => setMotifCode(m.code)}
+                        >
+                          <strong>{m.label}</strong>
+                          <span>Responsable : {m.fault.toLowerCase()}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {RETURN_MOTIF_BY_CODE[motifCode] && (
+                      <dl className="sav-rule">
+                        <div><dt>Reprise</dt><dd>{RETURN_MOTIF_BY_CODE[motifCode].reprise}</dd></div>
+                        <div><dt>Frais</dt><dd>{RETURN_MOTIF_BY_CODE[motifCode].frais}</dd></div>
+                        <div><dt>À faire</dt><dd>{RETURN_MOTIF_BY_CODE[motifCode].action}</dd></div>
+                      </dl>
+                    )}
+                    {RETURN_MOTIF_BY_CODE[motifCode]?.policyApplies &&
+                      (() => {
+                        const ok = withinReturnPolicy(selectedOrder.date, policyDays);
+                        if (ok == null) return null;
+                        return (
+                          <p className={`sav-hint${ok ? "" : " sav-hint--warn"}`}>
+                            {ok
+                              ? `Dans le délai de reprise commerciale du magasin (${policyDays} jours).`
+                              : `Hors délai de reprise commerciale (${policyDays} jours) : aucune obligation légale en boutique — la reprise est un geste.`}
+                          </p>
+                        );
+                      })()}
+                  </div>
+                )}
+                {savAvailable && (
+                  <div className="od-field">
+                    <span className="od-label">État de la pièce</span>
+                    <select className="od-input" value={etat} onChange={(e) => setEtat(e.target.value)}>
+                      {PART_CONDITIONS.map((c) => (
+                        <option key={c.code} value={c.code}>{c.label}</option>
+                      ))}
+                    </select>
+                    {PART_CONDITIONS.find((c) => c.code === etat)?.hint && (
+                      <p className="sav-hint sav-hint--warn">{PART_CONDITIONS.find((c) => c.code === etat)?.hint}</p>
+                    )}
+                  </div>
+                )}
                 <div className="od-field">
-                  <span className="od-label">Motif du remboursement</span>
+                  <span className="od-label">{savAvailable ? "Précision (facultatif)" : "Motif du remboursement"}</span>
                   <input
                     className="od-input"
                     placeholder="Pièce non utilisée, erreur de référence…"
@@ -915,6 +1085,53 @@ export default function RetoursPage() {
         </div>
       </div>
     )}
+      {qualifyRow && (
+        <div className="ga-modal-overlay" onClick={() => !qualifyBusy && setQualifyRow(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title">Coder le motif — {qualifyRow.ref}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setQualifyRow(null)} aria-label="Fermer" disabled={qualifyBusy}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="ga-modal-form">
+              <p className="st-cmd-hint">{qualifyRow.reference} · {qualifyRow.client} — « {qualifyRow.reason} »</p>
+              <div className="sav-motifs" role="radiogroup">
+                {RETURN_MOTIFS.map((m) => (
+                  <button
+                    key={m.code}
+                    type="button"
+                    role="radio"
+                    aria-checked={motifCode === m.code}
+                    className={`sav-motif${motifCode === m.code ? " sav-motif--on" : ""}`}
+                    onClick={() => setMotifCode(m.code)}
+                  >
+                    <strong>{m.label}</strong>
+                    <span>{m.action}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="od-field">
+                <span className="od-label">État de la pièce</span>
+                <select className="od-input" value={etat} onChange={(e) => setEtat(e.target.value)}>
+                  {PART_CONDITIONS.map((c) => (
+                    <option key={c.code} value={c.code}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setQualifyRow(null)} disabled={qualifyBusy}>
+                  Annuler
+                </button>
+                <button type="button" className="od-btn od-btn--primary" onClick={() => void submitQualify()} disabled={qualifyBusy || !motifCode}>
+                  {qualifyBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />} Enregistrer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <OpenCaseDialog preset={casePreset} onClose={() => setCasePreset(null)} onCreated={(id) => router.push(`/dashboard/sav/${id}`)} />
     </>
   );
 }

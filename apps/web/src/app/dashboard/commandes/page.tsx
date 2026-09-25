@@ -32,6 +32,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
+import { ShelfCell, type Shelf } from "@/components/sav/ShelfCell";
+import { flushClientMessages, loadOrderShelves } from "@/lib/data/sav";
+import { parisDate } from "@/lib/data/tournees";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
 import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
@@ -136,7 +139,9 @@ export default function ReceptionCommandesPage() {
 
   const [tab, setTab] = useState(() => {
     if (typeof window === "undefined") return "arecevoir";
-    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const raw = new URLSearchParams(window.location.search).get("tab");
+    // Deep links (notifications, after-sales KPIs) say "apreparer"; the tab id stayed "sms".
+    const wanted = raw === "apreparer" ? "sms" : raw;
     return wanted && ["arecevoir", "sms", "alivrer", "reliquats", "historique"].includes(wanted)
       ? wanted
       : "arecevoir";
@@ -505,6 +510,42 @@ export default function ReceptionCommandesPage() {
     [smsOrders, smsFilter],
   );
 
+  // Après-vente : casier de retrait et date promise (à préparer), date promise
+  // seule sur les pièces à recevoir / reliquats. Empty maps, hence nothing
+  // shown, before the SAV migration.
+  const [shelves, setShelves] = useState<Map<string, Shelf>>(new Map());
+  const smsOrderIds = useMemo(() => smsOrders.map((o) => o.orderId).join(","), [smsOrders]);
+  const boardOrderIds = useMemo(() => [...new Set(board.map((l) => l.orderId))].join(","), [board]);
+  const allOrderIds = useMemo(
+    () => [...new Set([...(smsOrderIds ? smsOrderIds.split(",") : []), ...(boardOrderIds ? boardOrderIds.split(",") : [])])].join(","),
+    [smsOrderIds, boardOrderIds],
+  );
+  useEffect(() => {
+    if (!orgId || !allOrderIds) return;
+    let alive = true;
+    void loadOrderShelves(supabase, orgId, allOrderIds.split(","))
+      .then((m) => {
+        if (alive) setShelves(m);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [supabase, orgId, allOrderIds]);
+  /** « Promis le … » under an order ref on the reception board; red once the date is past and nothing is ready. */
+  const promiseNote = (orderId: string) => {
+    const s = shelves.get(orderId);
+    const date = s?.promiseRevisedDate ?? s?.promisedDate;
+    if (!date) return null;
+    const late = !s?.readyAt && date < parisDate();
+    return (
+      <p className={`sav-promise${late ? " sav-promise--late" : ""}`}>
+        Promis le {fmtDay(date)}
+        {s?.promiseRevisedDate && s.promiseRevisedDate !== s.promisedDate ? " (décalé)" : ""}
+      </p>
+    );
+  };
+
   /* ---- actions ---- */
   const withBusy = useCallback(async (key: string, fn: () => Promise<void>) => {
     setBusy((prev) => new Set(prev).add(key));
@@ -545,6 +586,7 @@ export default function ReceptionCommandesPage() {
         },
         qty,
       );
+      flushClientMessages(); // « commande prête » queued by the database, if the magasin switched it on
       const now = new Date().toISOString();
       const received = qty == null ? line.quantity : Math.min(line.quantity, line.received + qty);
       setPartial(null);
@@ -588,6 +630,7 @@ export default function ReceptionCommandesPage() {
     withBusy(line.id, async () => {
       if (!orgId) return;
       await setLineReceptionStatus(supabase, orgId, line.id, status);
+      if (status === "BACKORDER") flushClientMessages(); // « retard fournisseur »
       setBoard((prev) =>
         prev.map((l) => (l.id === line.id ? { ...l, status } : l)),
       );
@@ -692,6 +735,7 @@ export default function ReceptionCommandesPage() {
         `${done} pièce${done > 1 ? "s" : ""} marquée${done > 1 ? "s" : ""} « ${STATUT[status].label} ».`,
       );
       if (failures.length > 0) setError(`Échec pour : ${failures.join(", ")}`);
+      if (status === "RECEIVED" || status === "BACKORDER") flushClientMessages();
       await load();
     });
 
@@ -849,6 +893,7 @@ export default function ReceptionCommandesPage() {
                         {r.orderRef}
                       </Link>
                       <p className="rl-muted">{fmtDay(r.orderDate)}</p>
+                      {promiseNote(r.orderId)}
                     </td>
                     <td>
                       <p className="rl-client">
@@ -1330,6 +1375,20 @@ export default function ReceptionCommandesPage() {
                                 {o.ref}
                               </Link>
                               <p className="rl-muted">{fmtDay(o.date)}</p>
+                              {shelves.has(o.orderId) && (
+                                <ShelfCell
+                                  orderId={o.orderId}
+                                  shelf={shelves.get(o.orderId) as Shelf}
+                                  onSaved={(casier) =>
+                                    setShelves((prev) => {
+                                      const next = new Map(prev);
+                                      const cur = next.get(o.orderId);
+                                      if (cur) next.set(o.orderId, { ...cur, casier });
+                                      return next;
+                                    })
+                                  }
+                                />
+                              )}
                             </td>
                             <td>
                               <p className="rl-client">{o.clientName}</p>

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Building2, FileText, MessageSquare, Save, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { SavSettingsCard } from "@/components/sav/SavSettingsCard";
 import { createClient } from "@/lib/supabase/client";
 import {
   loadOrganizationSettings,
@@ -258,6 +259,15 @@ export default function ParametresPage() {
           )}
         </section>
       </form>
+
+      {profile?.organization_id && (
+        <SavSettingsCard
+          orgId={profile.organization_id}
+          orgName={settings?.name ?? ""}
+          horaires={settings?.smsHoraires ?? null}
+          isAdmin={isAdmin}
+        />
+      )}
 
       <section className="od-card st-rajout">
         <div className="od-card-title">Abonnement</div>

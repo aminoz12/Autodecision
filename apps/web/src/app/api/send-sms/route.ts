@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildClientSms, toE164, type SmsKind, type SmsSettings } from "@/lib/sms";
+import { sendTextMessage } from "@/lib/sms-provider";
 
 /**
  * Send the « commande prête » SMS to the client of an order (server-only).
@@ -133,8 +134,8 @@ export async function POST(request: Request) {
     }
 
     // Every attempt is written server-side with the actor: it is also the quota ledger.
-    const record = async (status: "ENVOYE" | "ECHEC") => {
-      const { error } = await admin.from("sms_notifications").insert({
+    const record = async (status: "ENVOYE" | "ECHEC", simulated = false) => {
+      const base = {
         organization_id: orgId,
         order_id: order.id,
         client_id: order.client_id,
@@ -143,48 +144,27 @@ export async function POST(request: Request) {
         status,
         sent_at: status === "ENVOYE" ? new Date().toISOString() : null,
         sent_by: user.id,
-      });
+      };
+      // `kind` lets the after-sales automation see that « commande prête » already went out
+      // (migration 20260920020000); a database without the column still gets the ledger row.
+      let { error } = await admin.from("sms_notifications").insert({ ...base, kind, simulated });
+      if (error && /kind|simulated|column/i.test(error.message)) {
+        ({ error } = await admin.from("sms_notifications").insert(base));
+      }
       if (error) console.error("send-sms: could not record", error.message);
     };
 
-    const sid = process.env.TWILIO_ACCOUNT_SID;
-    const token = process.env.TWILIO_AUTH_TOKEN;
-    const from = process.env.TWILIO_FROM;
-    let simulated = true;
-    if (sid && token && from) {
-      const params = new URLSearchParams({ To: phone, Body: message });
-      // A Messaging Service (MG...) picks the sender itself; otherwise a number / sender ID.
-      if (from.startsWith("MG")) params.set("MessagingServiceSid", from);
-      else params.set("From", from);
-      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-        method: "POST",
-        headers: {
-          Authorization: "Basic " + Buffer.from(`${sid}:${token}`).toString("base64"),
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: params.toString(),
-      });
-      if (!res.ok) {
-        const raw = await res.text().catch(() => "");
-        let detail = "";
-        try {
-          const parsed = JSON.parse(raw) as { message?: string; code?: number };
-          detail = [parsed.code ? `code ${parsed.code}` : "", parsed.message ?? ""].filter(Boolean).join(", ");
-        } catch {
-          detail = raw.slice(0, 200);
-        }
-        console.error("send-sms: provider refused", res.status, raw);
-        await record("ECHEC");
-        return NextResponse.json(
-          { error: `Envoi refusé par le fournisseur SMS (${res.status})${detail ? ` : ${detail}` : "."}` },
-          { status: 502 },
-        );
-      }
-      simulated = false;
+    const sent = await sendTextMessage({ to: phone, body: message });
+    if (!sent.ok) {
+      await record("ECHEC");
+      return NextResponse.json(
+        { error: `Envoi refusé par le fournisseur SMS (${sent.status})${sent.detail ? ` : ${sent.detail}` : "."}` },
+        { status: 502 },
+      );
     }
 
-    await record("ENVOYE");
-    return NextResponse.json({ ok: true, simulated, to: phone, message, segments: size.segments });
+    await record("ENVOYE", sent.simulated);
+    return NextResponse.json({ ok: true, simulated: sent.simulated, to: phone, message, segments: size.segments });
   } catch (err) {
     console.error("send-sms:", err);
     return NextResponse.json({ error: "Erreur serveur lors de l'envoi du SMS." }, { status: 500 });

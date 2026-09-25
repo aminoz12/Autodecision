@@ -25,6 +25,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ClientSavStrip } from "@/components/sav/ClientSavStrip";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { fmtMoney } from "@/lib/data/saas";
@@ -305,6 +306,17 @@ export default function ClientProfilePage() {
           <div className="cl-kpi"><span className="cl-kpi-icon" style={{ background: "#FEF9C3", color: "#A16207" }}><History className="h-4 w-4" /></span><span><strong>{frDate(client.lastOrderAt)}</strong><em>Dernière commande</em></span></div>
         </div>
       </section>
+
+      {/* ---- Après-vente : solde d'avoir, véhicules, dossiers, rappels ---- */}
+      {profile?.organization_id && (
+        <ClientSavStrip
+          orgId={profile.organization_id}
+          clientId={client.id}
+          credits={client.credits}
+          plates={[client.plate, ...client.ordersList.map((o) => o.plate)]}
+          isGarage={false}
+        />
+      )}
 
       {/* ---- Fidelity card ---- */}
       <section className={`od-card cl-loyalty cl-loyalty--${client.tier.cls}`}>

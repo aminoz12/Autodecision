@@ -30,3 +30,6 @@ supabase/.temp/
 # business spreadsheets (reference only, never commit)
 *.xlsx
 apps/web/dev.log
+
+# business documents (reference only, never commit)
+*.pdf

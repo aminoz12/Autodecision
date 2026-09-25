@@ -207,3 +207,122 @@ export function buildClientSms(
   );
   return { text, size: smsSize(text) };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Messages après-vente (file d'attente sms_notifications.kind)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Kinds queued by the database (migration 20260920020000). READY reuses the
+ * magasin's « commande prête » template above; the others have a default
+ * here that the magasin can override in Paramètres → Après-vente
+ * (sav_settings.templates, keyed by kind).
+ */
+export type QueuedSmsKind =
+  | "READY"
+  | "DELAY"
+  | "DELAY_NODATE"
+  | "PICKUP_3"
+  | "PICKUP_7"
+  | "PICKUP_15"
+  | "CONSIGNE_REMINDER"
+  | "SATISFACTION"
+  | "AVOIR_BALANCE"
+  | "AVOIR_DORMANT"
+  | "MAINTENANCE";
+
+export const QUEUED_SMS_LABEL: Record<QueuedSmsKind, string> = {
+  READY: "Commande prête",
+  DELAY: "Retard fournisseur (nouvelle date)",
+  DELAY_NODATE: "Retard fournisseur (sans date)",
+  PICKUP_3: "Pièce non retirée — J+3",
+  PICKUP_7: "Pièce non retirée — J+7",
+  PICKUP_15: "Pièce non retirée — J+15",
+  CONSIGNE_REMINDER: "Consigne à rapporter — J-10",
+  SATISFACTION: "La pièce vous convient ?",
+  AVOIR_BALANCE: "Solde d'avoir",
+  AVOIR_DORMANT: "Avoir dormant",
+  MAINTENANCE: "Relance d'entretien",
+};
+
+export const QUEUED_SMS_DEFAULTS: Record<Exclude<QueuedSmsKind, "READY">, string> = {
+  DELAY:
+    "Bonjour {client}, votre commande {commande} a du retard chez le fournisseur : nouvelle date prévue le {date}. Nous vous tenons au courant. {magasin}",
+  DELAY_NODATE:
+    "Bonjour {client}, une pièce de votre commande {commande} a du retard chez le fournisseur. Nous vous prévenons dès son arrivée. {magasin}",
+  PICKUP_3:
+    "Bonjour {client}, votre commande {commande} vous attend au magasin. Horaires : {horaires}. A bientôt ! {magasin}",
+  PICKUP_7:
+    "Bonjour {client}, votre commande {commande} vous attend au magasin depuis une semaine. Horaires : {horaires}. {magasin}",
+  PICKUP_15:
+    "Bonjour {client}, votre commande {commande} vous attend depuis 15 jours. Sans nouvelles, nous vous proposerons un remboursement ou une remise en stock. {magasin}",
+  CONSIGNE_REMINDER:
+    "Bonjour {client}, pensez à rapporter votre ancienne pièce ({piece}) avant le {date} pour récupérer votre consigne de {montant} €. {magasin}",
+  SATISFACTION: "Bonjour {client}, la pièce achetée chez {magasin} vous convient ? Dites-le nous en 1 clic : {lien}",
+  AVOIR_BALANCE: "Bonjour {client}, vous avez {montant} € d'avoir chez {magasin}, valable jusqu'au {date}. A bientôt ! STOP : {stop}",
+  AVOIR_DORMANT: "Bonjour {client}, vous avez toujours {montant} € d'avoir chez {magasin}, valable jusqu'au {date}. A bientôt ! STOP : {stop}",
+  MAINTENANCE: "Bonjour {client}, c'est le moment de faire contrôler {piece} {vehicule}. Passez chez {magasin} ! STOP : {stop}",
+};
+
+/** Placeholders a magasin may use when it rewrites one of the messages above. */
+export const QUEUED_SMS_PLACEHOLDERS: Record<Exclude<QueuedSmsKind, "READY">, string[]> = {
+  DELAY: ["client", "commande", "date", "magasin"],
+  DELAY_NODATE: ["client", "commande", "magasin"],
+  PICKUP_3: ["client", "commande", "horaires", "magasin"],
+  PICKUP_7: ["client", "commande", "horaires", "magasin"],
+  PICKUP_15: ["client", "commande", "horaires", "magasin"],
+  CONSIGNE_REMINDER: ["client", "piece", "date", "montant", "magasin"],
+  SATISFACTION: ["client", "magasin", "lien"],
+  AVOIR_BALANCE: ["client", "montant", "date", "magasin", "stop"],
+  AVOIR_DORMANT: ["client", "montant", "date", "magasin", "stop"],
+  MAINTENANCE: ["client", "piece", "vehicule", "magasin", "stop"],
+};
+
+export function isQueuedSmsKind(kind: unknown): kind is QueuedSmsKind {
+  return typeof kind === "string" && (kind === "READY" || kind in QUEUED_SMS_DEFAULTS);
+}
+
+function fillTemplate(template: string, vars: Record<string, string>): string {
+  return template
+    .replace(/\{\s*([a-z]+)\s*\}/gi, (m, key: string) => {
+      const k = key.toLowerCase();
+      return k in vars ? vars[k] : m;
+    })
+    .replace(/\(\s*\)/g, "") // "( )" when an optional variable is empty
+    .replace(/[ \t]+([,.])/g, "$1") // French keeps its space before « : ! ? »
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
+    .slice(0, SMS_MAX_LENGTH);
+}
+
+/**
+ * The exact text of a queued message. `vars` come from the database row,
+ * `links` are the public URLs built by the server (satisfaction page, STOP page).
+ */
+export function buildQueuedSms(
+  kind: QueuedSmsKind,
+  vars: Record<string, unknown>,
+  settings: SmsSettings & { templates?: Record<string, string> | null },
+  links: { lien?: string; stop?: string } = {},
+): { text: string; size: SmsSize } {
+  const s = (v: unknown): string => (v == null ? "" : String(v).trim());
+  if (kind === "READY") {
+    return buildClientSms("READY", { client: s(vars.client), commande: s(vars.commande) }, settings);
+  }
+  const custom = settings.templates?.[kind]?.trim();
+  const text = toGsm7(
+    fillTemplate(custom || QUEUED_SMS_DEFAULTS[kind], {
+      client: s(vars.client),
+      commande: s(vars.commande),
+      date: s(vars.date),
+      piece: s(vars.piece),
+      montant: s(vars.montant),
+      vehicule: s(vars.vehicule) ? `(${s(vars.vehicule)})` : "",
+      horaires: settings.horaires?.trim() || SMS_DEFAULT_HORAIRES,
+      magasin: settings.magasin.trim(),
+      lien: links.lien ?? "",
+      stop: links.stop ?? "",
+    }),
+  );
+  return { text, size: smsSize(text) };
+}

@@ -2,6 +2,7 @@
 
 import {
   Boxes,
+  CarFront,
   ChartColumn,
   ChevronLeft,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
+  LifeBuoy,
   LogOut,
   Menu,
   PackageCheck,
@@ -20,12 +22,12 @@ import {
   ShieldCheck,
   Store,
   Truck,
+  type LucideIcon,
   Undo2,
   Users,
   Warehouse,
   Wrench,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -57,6 +59,14 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/dashboard/stock", label: "Stock", icon: Boxes },
       { href: "/dashboard/recherche-piece", label: "Recherche pièce", icon: Search },
+    ],
+  },
+  {
+    // Tout ce qui arrive à une pièce après qu'elle a été vendue.
+    label: "Après-vente",
+    items: [
+      { href: "/dashboard/sav", label: "SAV & garanties", icon: LifeBuoy },
+      { href: "/dashboard/vehicules", label: "Carnet véhicule", icon: CarFront },
       { href: "/dashboard/retours", label: "Retours", icon: Undo2 },
       { href: "/dashboard/avoirs", label: "Avoirs", icon: Receipt },
       { href: "/dashboard/consignes", label: "Consignes", icon: CircleDollarSign },

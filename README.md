@@ -83,3 +83,29 @@ Sans elles, `/tarifs` propose de vous contacter et `/api/billing/*` répond 503.
 3. Le webhook écrit `subscription_status`, `plan`, `current_period_end` et les identifiants Stripe
    sur `organizations` ; l'application verrouille le tableau de bord sur `past_due`, `unpaid`,
    `canceled` (voir `lib/data/billing.ts`). Le superadmin peut toujours suspendre / activer à la main.
+
+## Module après-vente (SAV)
+
+« Tout ce qui arrive à une pièce après qu'elle a été vendue » — migrations
+`20260920010000_sav_foundation.sql` + `20260920020000_sav_automations.sql`
+(`npx supabase db push`). Tant qu'elles ne sont pas appliquées, les écrans
+existants fonctionnent comme avant et les écrans SAV l'indiquent.
+
+- **Écrans** : `/dashboard/sav` (4 chiffres, dossiers, analyses, messages),
+  `/dashboard/sav/[id]` (dossier garantie / litige : deux workflows client et
+  fournisseur, dépannage immédiat, geste commercial, photos, journal),
+  `/dashboard/vehicules` (retrouver une vente par immatriculation, carnet
+  véhicule, voyant de garantie), `/garagiste/dashboard/litiges`, et les pages
+  publiques `/avis/<jeton>` (satisfaction → avis Google) et `/stop/<jeton>`.
+- **Messages au client** : la base dépose les messages dans
+  `sms_notifications` (`kind`, variables) ; l'envoi passe par
+  `/api/notifications/dispatch` (cron `x-cron-secret` ou cloche de l'appli) et
+  `/api/sav/send-queued` (juste après une action au comptoir). Textes dans
+  `src/lib/sms.ts`, envoi Twilio dans `src/lib/sms-provider.ts`
+  (`TWILIO_WHATSAPP_FROM` optionnel). 8 h – 20 h, jamais de prospection le
+  dimanche, 300 messages par magasin et par jour.
+- **Tous les automatismes sont éteints par défaut** : chaque magasin les allume
+  dans Paramètres → Après-vente. La relance d'entretien exige le consentement
+  recueilli à la vente (RGPD) et porte un lien STOP.
+- Règles métier pures et testées : `src/lib/sav.ts` (familles de pièces, six
+  motifs de retour, dates de garantie légale 24 mois + commerciale).

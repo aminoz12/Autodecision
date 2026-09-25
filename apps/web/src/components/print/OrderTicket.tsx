@@ -38,6 +38,13 @@ export type TicketData = {
   modePaiement?: string | null;
   /** Due date of an on-account order (yyyy-mm-dd). */
   echeance?: string | null;
+  /* ---- Après-vente : ce qui est annoncé au client, noir sur blanc ---- */
+  /** Date promise pour les pièces à venir (yyyy-mm-dd). */
+  promisedDate?: string | null;
+  /** Politique de reprise du magasin (Paramètres → Après-vente). */
+  returnPolicy?: string | null;
+  /** Date limite pour rapporter l'ancienne pièce consignée (yyyy-mm-dd). */
+  consigneDeadline?: string | null;
 };
 
 function eur(v: number): string {
@@ -240,10 +247,24 @@ export function OrderTicket({
 
       <div className="tk-dash" />
 
+      {(data.promisedDate || data.consigneDeadline) && (
+        <p className="tk-note tk-note--strong">
+          {data.promisedDate && <>PIÈCES À VENIR PROMISES POUR LE {new Date(data.promisedDate).toLocaleDateString("fr-FR")}</>}
+          {data.promisedDate && data.consigneDeadline && <br />}
+          {data.consigneDeadline && <>ANCIENNE PIÈCE (CONSIGNE) À RAPPORTER AVANT LE {new Date(data.consigneDeadline).toLocaleDateString("fr-FR")}</>}
+        </p>
+      )}
+
       <p className="tk-note">
         Merci de vérifier la marchandise à la réception.
         <br />
         En cas d&apos;anomalie, nous contacter sous 24h.
+        {data.returnPolicy && (
+          <>
+            <br />
+            {data.returnPolicy}
+          </>
+        )}
       </p>
 
       <Barcode value={data.ref} />

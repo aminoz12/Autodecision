@@ -26,11 +26,22 @@ import {
   type SupplierInput,
   type SupplierSummary,
 } from "@/lib/data/saas";
+import { loadSupplierSavTerms, updateSupplierSavTerms, type SupplierSavTerms } from "@/lib/data/sav";
 
 const LEAD_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 10, 14];
 
-type Form = { name: string; code: string; ownDelivery: boolean; leadDays: number };
-const emptyForm: Form = { name: "", code: "", ownDelivery: false, leadDays: 0 };
+type Form = {
+  name: string;
+  code: string;
+  ownDelivery: boolean;
+  leadDays: number;
+  /* Conditions après-vente (migration 20260920010000) — typed as text for the inputs. */
+  returnWindowDays: string;
+  coreReturnDays: string;
+  warrantyReminderDays: string;
+  savEmail: string;
+};
+const emptyForm: Form = { name: "", code: "", ownDelivery: false, leadDays: 0, returnWindowDays: "", coreReturnDays: "", warrantyReminderDays: "15", savEmail: "" };
 
 export default function FournisseursPage() {
   return (
@@ -46,6 +57,8 @@ function FournisseursContent() {
   const supabase = useMemo(() => createClient(), []);
 
   const [rows, setRows] = useState<SupplierSummary[]>([]);
+  // Empty until the after-sales migration is applied: the block then stays hidden.
+  const [terms, setTerms] = useState<Map<string, SupplierSavTerms>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -62,6 +75,7 @@ function FournisseursContent() {
     setError(null);
     try {
       setRows(await loadSuppliers(supabase, orgId));
+      void loadSupplierSavTerms(supabase, orgId).then(setTerms).catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -94,7 +108,20 @@ function FournisseursContent() {
     setFormError(null);
   }
   function openEdit(r: SupplierSummary) {
-    setModal({ id: r.id, form: { name: r.name, code: r.code ?? "", ownDelivery: r.ownDelivery, leadDays: r.leadDays } });
+    const s = terms.get(r.id);
+    setModal({
+      id: r.id,
+      form: {
+        name: r.name,
+        code: r.code ?? "",
+        ownDelivery: r.ownDelivery,
+        leadDays: r.leadDays,
+        returnWindowDays: s?.returnWindowDays != null ? String(s.returnWindowDays) : "",
+        coreReturnDays: s?.coreReturnDays != null ? String(s.coreReturnDays) : "",
+        warrantyReminderDays: String(s?.warrantyReminderDays ?? 15),
+        savEmail: s?.savEmail ?? "",
+      },
+    });
     setFormError(null);
   }
   function setForm(patch: Partial<Form>) {
@@ -115,6 +142,15 @@ function FournisseursContent() {
     try {
       if (modal.id) {
         await updateSupplier(supabase, orgId, modal.id, input);
+        if (terms.has(modal.id)) {
+          const n = (v: string): number | null => (v.trim() === "" ? null : Number(v));
+          await updateSupplierSavTerms(supabase, orgId, modal.id, {
+            returnWindowDays: n(modal.form.returnWindowDays),
+            coreReturnDays: n(modal.form.coreReturnDays),
+            warrantyReminderDays: n(modal.form.warrantyReminderDays) ?? 15,
+            savEmail: modal.form.savEmail,
+          });
+        }
         setNotice(`${input.name.trim()} mis à jour.`);
       } else {
         await createSupplier(supabase, orgId, input);
@@ -310,6 +346,36 @@ function FournisseursContent() {
                       : `La pièce est attendue sur la même tournée, ${modal.form.leadDays} jour${modal.form.leadDays > 1 ? "s" : ""} plus tard (${leadLabel(modal.form.leadDays)}).`}
                 </span>
               </div>
+
+              {modal.id && terms.has(modal.id) && (
+                <div className="od-field">
+                  <span className="od-label">Après-vente</span>
+                  <div className="ga-modal-row">
+                    <label className="od-field">
+                      <span className="od-label">Fenêtre de retour (jours)</span>
+                      <input className="od-input" type="number" min={0} max={365} value={modal.form.returnWindowDays} onChange={(e) => setForm({ returnWindowDays: e.target.value })} placeholder="ex. 30" />
+                    </label>
+                    <label className="od-field">
+                      <span className="od-label">Renvoi des cœurs consignés (jours)</span>
+                      <input className="od-input" type="number" min={0} max={365} value={modal.form.coreReturnDays} onChange={(e) => setForm({ coreReturnDays: e.target.value })} placeholder="ex. 60" />
+                    </label>
+                  </div>
+                  <div className="ga-modal-row">
+                    <label className="od-field">
+                      <span className="od-label">E-mail du SAV / garanties</span>
+                      <input className="od-input" type="email" value={modal.form.savEmail} onChange={(e) => setForm({ savEmail: e.target.value })} placeholder="sav@fournisseur.fr" />
+                    </label>
+                    <label className="od-field">
+                      <span className="od-label">Relance garantie après (jours)</span>
+                      <input className="od-input" type="number" min={1} max={90} value={modal.form.warrantyReminderDays} onChange={(e) => setForm({ warrantyReminderDays: e.target.value })} />
+                    </label>
+                  </div>
+                  <span className="st-cmd-hint">
+                    Passé la fenêtre de retour, la pièce reste à la charge du magasin : une alerte part 5 jours avant. Un dossier garantie sans
+                    réponse est relancé automatiquement à cette adresse.
+                  </span>
+                </div>
+              )}
 
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setModal(null)} disabled={saving}>Annuler</button>

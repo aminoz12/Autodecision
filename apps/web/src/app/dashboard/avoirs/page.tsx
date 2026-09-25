@@ -13,11 +13,14 @@ import {
   Undo2,
   User,
   Wallet,
+  MessageSquareText,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
+import { loadSavSettingsSafe, notifyClient, sendResultText } from "@/lib/data/sav";
 import {
   markConsigneReturned,
   reopenConsigne,
@@ -86,6 +89,41 @@ export default function AvoirsPage() {
   const [kindFilter, setKindFilter] = useState("TOUS");
   const [statusFilter, setStatusFilter] = useState("TOUS");
   const [actingId, setActingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dormantMonths, setDormantMonths] = useState(6);
+  const [savAvailable, setSavAvailable] = useState(false);
+  const [now] = useState(() => Date.now());
+
+  useEffect(() => {
+    void loadSavSettingsSafe(createClient())
+      .then((s) => {
+        setSavAvailable(s.available);
+        setDormantMonths(s.settings.dormantCreditMonths);
+      })
+      .catch(() => {});
+  }, []);
+
+  /** An open avoir nobody touched for months: revenue that never comes back. */
+  const isDormant = useCallback(
+    (row: CreditConsignRow) =>
+      row.kind === "avoir" &&
+      (row.status === "EN_COURS" || row.status === "PARTIEL") &&
+      row.remaining > 0 &&
+      now - new Date(row.createdAt).getTime() > dormantMonths * 30.44 * 86_400_000,
+    [now, dormantMonths],
+  );
+
+  const notifyBalance = useCallback(async (row: CreditConsignRow) => {
+    setActingId(row.id);
+    setError(null);
+    try {
+      setNotice(sendResultText(await notifyClient(createClient(), "AVOIR_BALANCE", row.id)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActingId(null);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
@@ -157,7 +195,10 @@ export default function AvoirsPage() {
     const openAvoirs = avoirs.filter((r) => r.status === "EN_COURS" || r.status === "PARTIEL");
     const expiring = openAvoirs.filter((r) => dueTone(r) === "soon" && r.remaining > 0);
     const activeConsignes = rows.filter((r) => r.kind === "consigne" && r.status === "ACTIF");
+    const dormant = openAvoirs.filter(isDormant);
     return {
+      dormantAmount: dormant.reduce((s, r) => s + r.remaining, 0),
+      dormantCount: dormant.length,
       emitted: avoirs.reduce((s, r) => s + r.amount, 0),
       remaining: openAvoirs.reduce((s, r) => s + r.remaining, 0),
       used: avoirs.reduce((s, r) => s + r.usedAmount, 0),
@@ -166,7 +207,7 @@ export default function AvoirsPage() {
       consigneAmount: activeConsignes.reduce((s, r) => s + r.amount, 0),
       consigneCount: activeConsignes.length,
     };
-  }, [rows]);
+  }, [rows, isDormant]);
 
   return (
     <div className="rl-page">
@@ -203,8 +244,9 @@ export default function AvoirsPage() {
         <div className="av-sum-card av-sum-card--blue">
           <span className="av-sum-icon av-sum-icon--blue"><Wallet className="h-6 w-6" /></span>
           <div>
-            <p className="av-sum-label">Montant consommé</p>
-            <p className="av-sum-value av-sum-value--blue">{fmtMoney(stats.used)}</p>
+            <p className="av-sum-label">Avoirs dormants (+ de {dormantMonths} mois)</p>
+            <p className="av-sum-value av-sum-value--blue">{fmtMoney(stats.dormantAmount)}</p>
+            <p className="av-sum-label">{stats.dormantCount} avoir(s) · {fmtMoney(stats.used)} consommés au total</p>
           </div>
         </div>
         <div className="av-sum-card av-sum-card--orange">
@@ -218,6 +260,7 @@ export default function AvoirsPage() {
       </div>
 
       {error && <p className="stat-change" style={{ color: "var(--clr-danger)" }}>{error}</p>}
+      <Toast message={notice} onClose={() => setNotice(null)} />
 
       <section className="od-card rl-table-card">
         <div className="rt-filterbar">
@@ -306,7 +349,10 @@ export default function AvoirsPage() {
                     <td className={`av-th-right av-montant av-montant--${row.kind}`}>{fmtMoney(row.amount)}</td>
                     <td className="av-th-right rl-muted-strong">{row.kind === "avoir" ? fmtMoney(row.usedAmount) : "—"}</td>
                     <td className={`av-th-right av-montant av-montant--${row.kind}`}>{row.kind === "avoir" ? fmtMoney(row.remaining) : "—"}</td>
-                    <td><span className={`av-statut av-statut--${STATUS_CLASS[row.status] ?? "encours"}`}>{STATUS_LABEL[row.status] ?? row.status}</span></td>
+                    <td>
+                      <span className={`av-statut av-statut--${STATUS_CLASS[row.status] ?? "encours"}`}>{STATUS_LABEL[row.status] ?? row.status}</span>
+                      {isDormant(row) && <p className="sav-promise sav-promise--late">Dormant : le client l&apos;a oublié</p>}
+                    </td>
                     <td className={`rl-muted-strong${tone ? ` av-due--${tone}` : ""}`}>{fmtDate(row.dueAt)}</td>
                     <td>
                       {row.kind === "avoir" ? (
@@ -321,6 +367,17 @@ export default function AvoirsPage() {
                             </Link>
                           ) : (
                             <span className="rt-dash">—</span>
+                          )}
+                          {savAvailable && row.remaining > 0 && row.status !== "EXPIRE" && row.clientId && (
+                            <button
+                              type="button"
+                              className={`rc-act ${isDormant(row) ? "rc-act--recu" : "rc-act--quiet"}`}
+                              disabled={actingId !== null}
+                              title="SMS : « vous avez X € d'avoir chez nous » — un rappel de visite gratuit"
+                              onClick={() => void notifyBalance(row)}
+                            >
+                              {busy ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <MessageSquareText className="h-3.5 w-3.5" />} Prévenir
+                            </button>
                           )}
                           {row.orderId && (
                             <Link href={`/dashboard/commandes/${row.orderId}`} className="rc-act rc-act--quiet" title="Commande d'origine">

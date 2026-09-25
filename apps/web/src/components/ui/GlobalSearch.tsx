@@ -4,6 +4,7 @@ import {
   Boxes,
   Building2,
   ClipboardList,
+  LifeBuoy,
   Loader2,
   Package,
   Search,
@@ -23,6 +24,7 @@ const GROUPS: { key: keyof Omit<SearchResults, "total">; label: string; icon: Lu
   { key: "garages", label: "Garages", icon: Building2 },
   { key: "parts", label: "Pièces commandées", icon: Package },
   { key: "stock", label: "Stock magasin", icon: Boxes },
+  { key: "sav", label: "Dossiers SAV", icon: LifeBuoy },
 ];
 
 /**

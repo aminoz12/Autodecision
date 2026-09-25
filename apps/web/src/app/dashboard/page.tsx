@@ -19,6 +19,7 @@ import {
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { SavHomeBanner } from "@/components/sav/SavHomeBanner";
 import { GlobalSearch } from "@/components/ui/GlobalSearch";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -232,6 +233,7 @@ export default function DashboardPage() {
             );
           })}
         </div>
+        <SavHomeBanner />
       </section>
 
       {/* Tables row */}
