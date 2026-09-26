@@ -185,7 +185,7 @@ export default function SavPage() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Après-<span className="nc-title-accent">vente</span>
+            Après-vente
           </h1>
           <p className="rl-subtitle">Tout ce qui arrive à une pièce après qu&apos;elle a été vendue : garanties, litiges, argent qui dort, retards.</p>
         </div>

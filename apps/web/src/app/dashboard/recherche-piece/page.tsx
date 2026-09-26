@@ -45,7 +45,7 @@ export default function RecherchePiecePage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title rl-title--upper">Recherche <span className="nc-title-accent">pièce</span></h1>
+          <h1 className="rl-title rl-title--upper">Recherche pièce</h1>
           <p className="rl-subtitle">
             Retrouvez une pièce dans le stock magasin et dans toutes les commandes.
           </p>

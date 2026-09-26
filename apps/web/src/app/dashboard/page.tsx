@@ -2,9 +2,6 @@
 
 import {
   ArrowRight,
-  Calendar,
-  ChevronDown,
-  CirclePlus,
   ClipboardCheck,
   Clock,
   Package,
@@ -13,14 +10,12 @@ import {
   Star,
   Trophy,
   TrendingDown,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { SavHomeBanner } from "@/components/sav/SavHomeBanner";
-import { GlobalSearch } from "@/components/ui/GlobalSearch";
 import { createClient } from "@/lib/supabase/client";
 import {
   loadDashboardOverview,
@@ -137,70 +132,38 @@ export default function DashboardPage() {
   ];
 
   const filledStars = Math.round(data?.avgRating ?? 0);
-  const todayLabel = new Date().toLocaleDateString("fr-FR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const firstName = (profile?.display_name ?? "").trim().split(" ")[0] || "";
+  const todayLabel = (() => {
+    const d = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    return d.charAt(0).toUpperCase() + d.slice(1);
+  })();
 
   return (
     <div className="dashboard-content">
       {/* Header */}
       <header className="dashboard-header">
         <div className="dashboard-header-left">
-          <h1 className="dashboard-greeting">
-            Bonjour {profile?.display_name || "👋"} <span>👋</span>
-          </h1>
+          <h1 className="dashboard-greeting">Bonjour {firstName}</h1>
           <p className="dashboard-subtitle">
             {loading
               ? "Chargement des données…"
               : error
                 ? `Erreur: ${error}`
-                : "Voici ce qui se passe dans votre magasin aujourd'hui."}
+                : `${todayLabel} · voici ce qui se passe dans votre magasin.`}
           </p>
         </div>
         <div className="dashboard-header-right">
-          <GlobalSearch />
-        </div>
-      </header>
-
-      {/* Counter workbench: one unmistakable primary action, then two shortcuts. */}
-      <section className="dashboard-workbench" aria-label="Actions du comptoir">
-        <Link href="/dashboard/nouvelle-commande" className="dashboard-primary-action">
-          <span className="dashboard-primary-action-icon"><CirclePlus className="h-6 w-6" /></span>
-          <span className="dashboard-primary-action-copy">
-            <span className="dashboard-eyebrow"><Wrench className="h-3.5 w-3.5" /> Comptoir</span>
-            <strong>Nouvelle commande</strong>
-            <span>Créer une commande client ou fournisseur</span>
-          </span>
-          <span className="dashboard-primary-action-cta">Commencer <ArrowRight className="h-4 w-4" /></span>
-        </Link>
-
-        <div className="dashboard-secondary-actions">
           {secondaryActions.map((action) => {
             const Icon = action.icon;
             return (
-              <Link key={action.title} href={action.href} className="dashboard-secondary-action">
-                <span className="dashboard-secondary-action-icon"><Icon className="h-4 w-4" /></span>
-                <span>
-                  <strong>{action.title}</strong>
-                  <small>{action.description}</small>
-                </span>
-                <ArrowRight className="dashboard-secondary-action-arrow h-4 w-4" />
+              <Link key={action.title} href={action.href} className="od-btn od-btn--ghost" title={action.description}>
+                <Icon className="h-4 w-4" />
+                {action.title}
               </Link>
             );
           })}
         </div>
-
-        <div className="dashboard-date-row">
-          <span className="dashboard-date-label">Vue du jour</span>
-          <span className="date-picker-btn" aria-label="Date affichée">
-            <Calendar className="h-4 w-4" />
-            <span style={{ textTransform: "capitalize" }}>{todayLabel}</span>
-          </span>
-        </div>
-      </section>
+      </header>
 
       {/* Stat cards */}
       <section aria-labelledby="dashboard-kpis-title">
@@ -329,9 +292,6 @@ export default function DashboardPage() {
       {/* Bottom stats row */}
       <div className="bottom-stats">
         <div className="bottom-stat-card bottom-stat--loyalty">
-          <div className="loyalty-trophy">
-            <Trophy className="h-8 w-8" style={{ color: "#D97706" }} />
-          </div>
           <div className="loyalty-content">
             <p className="loyalty-title">Score fidélité moyen</p>
             <div className="loyalty-stars">
@@ -353,7 +313,7 @@ export default function DashboardPage() {
               Top client du mois
             </p>
             <p className="bottom-stat-value-name">
-              <span className="bottom-stat-fire">🏆</span> {data?.topClient?.name ?? "—"}
+{data?.topClient?.name ?? "—"}
             </p>
             <span className="bottom-stat-tag">{data?.topClient?.count ?? 0} commandes</span>
           </div>

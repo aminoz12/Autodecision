@@ -447,7 +447,7 @@ export default function TourneesPage() {
       <header className="rl-header tf-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Tournée <span className="nc-title-accent">fournisseurs</span>
+            Tournée fournisseurs
           </h1>
           <p className="rl-subtitle">
             Les pièces à récupérer chez chaque fournisseur, tournée par tournée — cochées en direct par le livreur.

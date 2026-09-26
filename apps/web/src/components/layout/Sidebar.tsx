@@ -9,10 +9,8 @@ import {
   CircleDollarSign,
   ClipboardPlus,
   FileText,
-  KeyRound,
   LayoutDashboard,
   LifeBuoy,
-  LogOut,
   Menu,
   PackageCheck,
   Receipt,
@@ -30,16 +28,11 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
-import { Toast } from "@/components/ui/Toast";
-import { loginFor } from "@/lib/spaces";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { NotificationBell } from "@/components/NotificationBell";
-import { MagasinSwitcher } from "@/components/MagasinSwitcher";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
 type NavGroup = { label: string; items: NavItem[] };
@@ -99,12 +92,6 @@ const adminGroup: NavGroup = {
   ],
 };
 
-const ROLE_LABEL: Record<string, string> = {
-  ADMIN: "Administrateur",
-  CAISSIER: "Caissier",
-  LIVREUR: "Livreur",
-};
-
 /*
  * The folded / open state lives on <html data-sidebar>: an inline script in
  * the root layout applies the remembered choice before the first paint, and
@@ -119,23 +106,9 @@ function subscribeSidebarState(onChange: () => void): () => void {
   return () => observer.disconnect();
 }
 
-function initials(name: string): string {
-  return (
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? "")
-      .join("") || "?"
-  );
-}
-
 export function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, profile, logout } = useAuth();
-  const [pwdOpen, setPwdOpen] = useState(false);
-  const [pwdNotice, setPwdNotice] = useState<string | null>(null);
+  const { profile } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
   /** Desktop only: the menu folds to an icon rail so the page gets the room. */
@@ -168,14 +141,6 @@ export function Sidebar() {
   }, [profile?.organization_id]);
 
   const brand = orgName ?? "Mon magasin";
-  const userName = profile?.display_name ?? "Utilisateur";
-  const userRole = profile?.role ? ROLE_LABEL[profile.role] ?? profile.role : "";
-
-  async function onLogout() {
-    const door = loginFor(profile, user?.email);
-    await logout();
-    router.replace(door);
-  }
 
   function isActive(href: string): boolean {
     return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
@@ -191,7 +156,6 @@ export function Sidebar() {
           </span>
           <span>{brand}</span>
         </div>
-        <NotificationBell compact />
         <button
           type="button"
           className="sidebar-mobile-toggle"
@@ -218,7 +182,6 @@ export function Sidebar() {
 
         {/* Brand */}
         <div className="sidebar-brand">
-          <div className="sidebar-bell-slot"><NotificationBell /></div>
           <div className="sidebar-brand-content">
             <div className="sidebar-brand-icon-new">
               <Store className="h-5 w-5 text-white" />
@@ -228,7 +191,6 @@ export function Sidebar() {
               <p className="sidebar-brand-sub">Comptoir</p>
             </div>
           </div>
-          <MagasinSwitcher className="sidebar-switch" />
           <button
             type="button"
             className="sidebar-close-btn"
@@ -269,40 +231,7 @@ export function Sidebar() {
             </div>
           ))}
         </nav>
-
-        {/* Signed-in user + logout */}
-        <div className="sidebar-user">
-          <div className="sidebar-user-avatar">
-            <span className="sidebar-user-initials">{initials(userName)}</span>
-            <div className="sidebar-user-status-dot" />
-          </div>
-          <div className="sidebar-user-info">
-            <p className="sidebar-user-name">{userName}</p>
-            <p className="sidebar-user-role">{userRole}</p>
-          </div>
-          <button
-            type="button"
-            className="sidebar-logout-btn"
-            onClick={() => setPwdOpen(true)}
-            aria-label="Changer mon mot de passe"
-            title="Changer mon mot de passe"
-          >
-            <KeyRound className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="sidebar-logout-btn"
-            onClick={() => void onLogout()}
-            aria-label="Se déconnecter"
-            title="Se déconnecter"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
-        </div>
       </aside>
-
-      <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setPwdNotice} />
-      <Toast message={pwdNotice} onClose={() => setPwdNotice(null)} />
 
       {/* Mobile overlay */}
       {mobileOpen && (

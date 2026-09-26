@@ -112,7 +112,7 @@ export default function RapportsPage() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Mes <span className="nc-title-accent">rapports</span>
+            Rapports
           </h1>
           <p className="rl-subtitle">
             Chiffre d&apos;affaires, marge estimée, encaissements, meilleurs clients et fournisseurs — calculés en base sur vos commandes.

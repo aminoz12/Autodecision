@@ -299,7 +299,7 @@ export default function StockPage() {
         <div>
           <h1 className="stk-title rl-title--upper">
             <span className="stk-title-icon"><PackageOpen className="h-5 w-5" /></span>
-            Mon <span className="nc-title-accent">stock</span>
+            Stock
           </h1>
           <p className="stk-sub">
             Alerte de réapprovisionnement : recommandez les pièces sorties du stock

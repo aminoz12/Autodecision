@@ -223,7 +223,7 @@ function VehiculesInner() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Carnet <span className="nc-title-accent">véhicule</span>
+            Carnet véhicule
           </h1>
           <p className="rl-subtitle">
             « J&apos;ai acheté un alternateur chez vous l&apos;an dernier » — tapez la plaque, retrouvez la vente, la référence, la date et la

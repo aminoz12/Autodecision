@@ -455,7 +455,7 @@ export default function RetoursPage() {
           <div className="rt-title-wrap">
             <span className="rt-title-icon"><RotateCcw className="h-6 w-6" /></span>
             <div>
-              <h1 className="rt-title rl-title--upper">Retours &amp; <span className="nc-title-accent">remboursements</span></h1>
+              <h1 className="rt-title rl-title--upper">Retours &amp; remboursements</h1>
               <p className="rt-subtitle">Pièces rendues par les clients et garages, suivi des retours fournisseur et des remboursements.</p>
             </div>
           </div>

@@ -187,11 +187,11 @@ async function loadReportDataInBrowser(
     fetchAllPages<Record<string, unknown>>((from, to) =>
       supabase
         .from("sales_returns")
-        .select("id,montant,createdAt")
+        .select("id,montant,created_at")
         .eq("organization_id", orgId)
-        .gte("createdAt", `${range.from}T00:00:00`)
-        .lte("createdAt", `${range.to}T23:59:59`)
-        .order("createdAt", { ascending: true })
+        .gte("created_at", `${range.from}T00:00:00`)
+        .lte("created_at", `${range.to}T23:59:59`)
+        .order("created_at", { ascending: true })
         .range(from, to),
     ),
     fetchAllPages<Record<string, unknown>>((from, to) =>

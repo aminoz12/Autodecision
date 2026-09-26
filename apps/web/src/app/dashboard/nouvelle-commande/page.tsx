@@ -1056,7 +1056,7 @@ export default function NouvelleCommandePage() {
         <div>
           <h1 className="od-title nc-title">
             <span className="nc-title-icon"><ShoppingCart className="h-5 w-5" /></span>
-            Nouvelle <span className="nc-title-accent">commande</span>
+            Nouvelle commande
           </h1>
           <div className="od-meta">
             <span className="od-meta-item">

@@ -159,7 +159,7 @@ export default function LivreursPage() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Mes <span className="nc-title-accent">livreurs</span>
+            Livreurs
           </h1>
           <p className="rl-subtitle">
             Vos livreurs et les commandes garages qu&apos;ils ont en cours de livraison.

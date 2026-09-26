@@ -923,10 +923,7 @@ export default function ReceptionCommandesPage() {
                       <p className="rl-muted">{r.designation}</p>
                     </td>
                     <td>
-                      <span
-                        className="rc-brand"
-                        style={{ color: r.supplierName ? "#DC2626" : "#1D4ED8" }}
-                      >
+                      <span className={`rc-brand ${r.supplierName ? "rc-brand--supplier" : "rc-brand--stock"}`}>
                         {r.supplierName ?? "Stock magasin"}
                       </span>
                       {r.supplierName && (r.supplierOwnDelivery || r.supplierLeadDays > 0) && (
@@ -1121,7 +1118,7 @@ export default function ReceptionCommandesPage() {
       {/* Header */}
       <header className="rc-header">
         <div>
-          <h1 className="rc-title">Suivi des <span className="nc-title-accent">commandes</span></h1>
+          <h1 className="rc-title">Suivi des commandes</h1>
           <p className="rl-subtitle">Réception des pièces, préparation des commandes clients et livraisons garages.</p>
         </div>
         <div className="rc-header-actions">

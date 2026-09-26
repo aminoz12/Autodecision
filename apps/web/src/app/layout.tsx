@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { ThemeInitializer } from "@/components/theme/ThemeToggle";
 import "./globals.css";
+import "./design-system.css";
 
 // Inter (variable), self-hosted from ./fonts so builds never depend on Google.
 // Exposed as --font-inter (see --font-main in globals.css).

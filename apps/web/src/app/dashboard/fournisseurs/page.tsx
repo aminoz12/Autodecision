@@ -170,7 +170,7 @@ function FournisseursContent() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Mes <span className="nc-title-accent">fournisseurs</span>
+            Fournisseurs
           </h1>
           <p className="rl-subtitle">
             Fiches fournisseurs, mode de livraison et délai attendu — utilisés pour prévoir la réception des pièces.

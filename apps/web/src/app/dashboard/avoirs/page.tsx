@@ -213,7 +213,7 @@ export default function AvoirsPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title rl-title--upper">Avoirs &amp; <span className="nc-title-accent">consignes</span></h1>
+          <h1 className="rl-title rl-title--upper">Avoirs &amp; consignes</h1>
           <p className="rl-subtitle">Bons d&apos;achat émis, montants consommés et consignes de pièces.</p>
         </div>
         <div className="rl-header-actions">

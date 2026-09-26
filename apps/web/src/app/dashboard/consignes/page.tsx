@@ -150,7 +150,7 @@ export default function ConsignesPage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title rl-title--upper">Mes <span className="nc-title-accent">consignes</span></h1>
+          <h1 className="rl-title rl-title--upper">Consignes</h1>
           <p className="rl-subtitle">
             Deux boucles, deux délais : le client rapporte le vieux (caution rendue), puis le cœur repart chez le fournisseur avant sa date
             limite (avoir consigne). C&apos;est la seconde qui coûte le plus cher.

@@ -76,6 +76,15 @@ const SMS_PARTIAL: Field = {
 /** Sample order shown in the live preview. */
 const SMS_SAMPLE = { client: "Jean Dupont", commande: "CO-2026-00042" };
 
+const SECTIONS = [
+  { id: "identite", label: "Identité" },
+  { id: "mentions", label: "Mentions légales" },
+  { id: "tva", label: "TVA & facturation" },
+  { id: "sms", label: "SMS aux clients" },
+  { id: "apres-vente", label: "Après-vente" },
+  { id: "abonnement", label: "Abonnement" },
+];
+
 export default function ParametresPage() {
   const { profile } = useAuth();
   const [settings, setSettings] = useState<OrganizationSettings | null>(null);
@@ -179,7 +188,7 @@ export default function ParametresPage() {
       <header className="rl-header">
         <div className="rl-header-left">
           <h1 className="rl-title rl-title--upper">
-            Paramètres du <span className="nc-title-accent">magasin</span>
+            Paramètres
           </h1>
           <p className="rl-subtitle">
             Identité imprimée sur vos tickets et factures, mentions légales obligatoires, TVA, état de l&apos;abonnement.
@@ -188,18 +197,25 @@ export default function ParametresPage() {
         </div>
       </header>
 
+      <div className="settings-layout">
+      <nav className="settings-nav" aria-label="Sections des paramètres">
+        {SECTIONS.map((sec) => (
+          <a key={sec.id} href={`#${sec.id}`} className="settings-nav-link">{sec.label}</a>
+        ))}
+      </nav>
+      <div className="settings-main">
       {error && <p className="stat-change" style={{ color: "var(--clr-danger)" }}>{error}</p>}
       {message && <p className="stat-change" style={{ color: "var(--clr-success)" }}>{message}</p>}
 
       <form onSubmit={submit}>
-        <section className="od-card st-rajout">
+        <section className="od-card st-rajout" id="identite">
           <header className="st-rajout-head">
             <h2 className="st-rajout-title"><Building2 className="h-4 w-4" /> Identité du magasin</h2>
           </header>
           <div className="st-rajout-grid">{renderFields(IDENTITY)}</div>
         </section>
 
-        <section className="od-card st-rajout">
+        <section className="od-card st-rajout" id="mentions">
           <header className="st-rajout-head">
             <h2 className="st-rajout-title"><FileText className="h-4 w-4" /> Mentions légales des factures</h2>
           </header>
@@ -209,7 +225,7 @@ export default function ParametresPage() {
           <div className="st-rajout-grid">{renderFields(LEGAL)}</div>
         </section>
 
-        <section className="od-card st-rajout">
+        <section className="od-card st-rajout" id="tva">
           <header className="st-rajout-head">
             <h2 className="st-rajout-title"><FileText className="h-4 w-4" /> TVA et facturation</h2>
           </header>
@@ -233,7 +249,7 @@ export default function ParametresPage() {
           </div>
         </section>
 
-        <section className="od-card st-rajout">
+        <section className="od-card st-rajout" id="sms">
           <header className="st-rajout-head">
             <h2 className="st-rajout-title"><MessageSquare className="h-4 w-4" /> SMS aux clients</h2>
           </header>
@@ -261,15 +277,17 @@ export default function ParametresPage() {
       </form>
 
       {profile?.organization_id && (
+        <div id="apres-vente" className="settings-anchor">
         <SavSettingsCard
           orgId={profile.organization_id}
           orgName={settings?.name ?? ""}
           horaires={settings?.smsHoraires ?? null}
           isAdmin={isAdmin}
         />
+        </div>
       )}
 
-      <section className="od-card st-rajout">
+      <section className="od-card st-rajout" id="abonnement">
         <div className="od-card-title">Abonnement</div>
         <p className="rl-muted" style={{ marginBottom: 10 }}>
           {(settings?.subscriptionStatus ?? "").toLowerCase() === "active"
@@ -320,6 +338,8 @@ export default function ParametresPage() {
             <p className="ga-stat-label">Accès inclus (équipe)</p>
           </div>
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );
