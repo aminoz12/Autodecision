@@ -18,9 +18,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { PAYMENT_MODES, PAYMENT_MODE_LABEL, type PaymentMode } from "@/lib/data/payments";
+import { SearchParamEffect } from "@/components/ui/SearchParamEffect";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -28,6 +29,8 @@ import {
   fmtDate,
   fmtMoney,
   loadRefundableOrders,
+  receiveGarageReturn,
+  validateGarageReturn,
   loadReturns,
   settleClientReturn,
   updateReturnTreatment,
@@ -35,10 +38,11 @@ import {
   type ReturnRow,
   type ReturnTreatment,
 } from "@/lib/data/saas";
-import { addDays, assignReturnLeg, ensureSupplierTour, parisDate, STANDARD_TOURS, type ReturnLeg } from "@/lib/data/tournees";
+import { addDays, assignReturnLeg, ensureSupplierTour, parisDate, STANDARD_TOURS, type ReturnLeg, nextTourFromNow } from "@/lib/data/tournees";
 import { OpenCaseDialog, type OpenCasePreset } from "@/components/sav/OpenCaseDialog";
 import { loadReturnQualifications, loadSavSettingsSafe, qualifyReturns } from "@/lib/data/sav";
-import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay, withinReturnPolicy } from "@/lib/sav";
+import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay } from "@/lib/sav";
+import { RETURN_CONDITIONS_LINES, feeAmount, netRefund, returnConditions, type ReturnConditions } from "@/lib/return-conditions";
 
 const TREATMENT_LABEL: Record<string, string> = {
   A_TRAITER: "À traiter",
@@ -52,6 +56,7 @@ const TREATMENT_LABEL: Record<string, string> = {
 
 const FILTER_CHIPS: { id: string; label: string }[] = [
   { id: "TOUS", label: "Tous" },
+  { id: "A_VALIDER", label: "Garage à valider" },
   { id: "A_TRAITER", label: "À traiter" },
   { id: "DEMANDE_ENVOYEE", label: "Demande envoyée" },
   { id: "A_RECUPERER", label: "À récupérer" },
@@ -74,6 +79,21 @@ const NEXT_STEPS: Record<
   ],
   ACCEPTE: [{ to: "REMBOURSE", label: "Remboursé", cls: "accept" }],
 };
+
+/** A return the garage asked for from its portal, or any garage return handled by the magasin. */
+function isGarageFlow(row: ReturnRow): boolean {
+  return row.isGarage && !row.hasSupplier;
+}
+
+/** The label the counter reads: the garage flow words for garage returns, the pipeline words otherwise. */
+function treatmentLabelFor(row: ReturnRow): string {
+  if (isGarageFlow(row)) {
+    if (row.treatment === "A_TRAITER") return "Retour demandé";
+    if (row.treatment === "A_RECUPERER") return row.legDone ? "Récupéré — à réceptionner" : "À récupérer";
+    if (row.treatment === "ACCEPTE") return "Retourné";
+  }
+  return TREATMENT_LABEL[row.treatment] ?? row.treatment;
+}
 
 function treatmentTone(status: string) {
   if (status === "ACCEPTE" || status === "REMBOURSE" || status === "AVOIR") return "green";
@@ -102,6 +122,12 @@ function tourChoicesFrom(now: Date): TourChoice[] {
   const upcoming = all.filter((c) => c.date !== today || c.slot > hhmm);
   const gone = all.filter((c) => c.date === today && c.slot <= hhmm);
   return [...upcoming, ...gone];
+}
+
+/** The gross value a refund starts from: a garage request or a bare line value; 0 for a counter return that already holds its net amount. */
+function grossOf(row: ReturnRow): number {
+  if (row.requestedByGarage) return row.amount > 0 ? row.amount : row.lineValue;
+  return row.amount > 0 ? 0 : row.lineValue;
 }
 
 /** A return the livreur can handle: collect at a garage, or drop at the supplier. */
@@ -135,7 +161,6 @@ export default function RetoursPage() {
   type Qualification = Awaited<ReturnType<typeof loadReturnQualifications>> extends Map<string, infer V> ? V : never;
   const [quals, setQuals] = useState<Map<string, Qualification>>(new Map());
   const [savAvailable, setSavAvailable] = useState(false);
-  const [policyDays, setPolicyDays] = useState(15);
   const [motifCode, setMotifCode] = useState<string>("");
   const [etat, setEtat] = useState<string>("NEUVE_EMBALLEE");
   const [qualifyRow, setQualifyRow] = useState<ReturnRow | null>(null);
@@ -153,12 +178,6 @@ export default function RetoursPage() {
   const [settleBusy, setSettleBusy] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
 
-  const openSettle = useCallback((row: ReturnRow, mode: "REMBOURSEMENT" | "AVOIR") => {
-    setSettle({ row, mode });
-    setSettleAmount(String(row.amount > 0 ? row.amount : row.lineValue > 0 ? row.lineValue : ""));
-    setSettleReason("");
-    setSettleError(null);
-  }, []);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id) return;
@@ -171,7 +190,6 @@ export default function RetoursPage() {
         .then(([q, s]) => {
           setQuals(q);
           setSavAvailable(s.available);
-          setPolicyDays(s.settings.returnPolicyDays);
         })
         .catch(() => {});
     } catch (e) {
@@ -184,6 +202,7 @@ export default function RetoursPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
 
   const act = useCallback(
     async (row: ReturnRow, to: ReturnTreatment) => {
@@ -203,6 +222,48 @@ export default function RetoursPage() {
       }
     },
     [profile?.organization_id],
+  );
+
+  /* ---- Retours garage : valider (→ livreur) / refuser, puis réceptionner ---- */
+  const [flowBusy, setFlowBusy] = useState<string | null>(null);
+  const validateRequest = useCallback(
+    async (row: ReturnRow, accept: boolean) => {
+      setFlowBusy(row.id);
+      setError(null);
+      try {
+        const sb = createClient();
+        let tourId: string | null = null;
+        if (accept) {
+          const next = nextTourFromNow(new Date());
+          tourId = await ensureSupplierTour(sb, { date: next.date, name: next.name, slot: next.slot });
+        }
+        await validateGarageReturn(sb, row.id, accept, tourId);
+        setNotice(accept ? `${row.ref} validé : à récupérer chez ${row.client}, confié au livreur.` : `${row.ref} refusé.`);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setFlowBusy(null);
+      }
+    },
+    [load],
+  );
+  const receiveRequest = useCallback(
+    async (row: ReturnRow) => {
+      if (!row.legDone && !window.confirm("Le livreur n\u2019a pas encore marqué cette pièce récupérée. Réceptionner quand même ?")) return;
+      setFlowBusy(row.id);
+      setError(null);
+      try {
+        await receiveGarageReturn(createClient(), row.id);
+        setNotice(`${row.ref} réceptionné : ${row.quantity} × ${row.reference} de retour en stock.`);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setFlowBusy(null);
+      }
+    },
+    [load],
   );
 
   /* ---- Confier un retour au livreur : un trajet sur une tournée ---- */
@@ -250,11 +311,44 @@ export default function RetoursPage() {
     }
   };
 
+  /** Conditions de retour of an existing return: origin and sale date from its line, motif from its qualification. */
+  const conditionsOf = useCallback(
+    (row: ReturnRow) => {
+      const q = quals.get(row.id);
+      return returnConditions({
+        saleDate: q?.saleDate ?? row.saleDate ?? row.createdAt.slice(0, 10),
+        origin: row.fromStock === false ? "COMMANDE" : "STOCK",
+        designation: row.designation || row.reference,
+        motifCode: q?.motifCode ?? null,
+      });
+    },
+    [quals],
+  );
+  const openSettle = useCallback(
+    (row: ReturnRow, mode: "REMBOURSEMENT" | "AVOIR") => {
+      const cond = conditionsOf(row);
+      // A counter return already carries its net amount; a garage request (montant = quantity × price) and a bare line value are gross.
+      const gross = grossOf(row);
+      const base = gross > 0 ? (cond.waived ? gross : netRefund(gross, cond.feePct)) : row.amount;
+      setSettle({ row, mode });
+      setSettleAmount(base > 0 ? String(base) : "");
+      setSettleReason("");
+      setSettleError(null);
+    },
+    [conditionsOf],
+  );
+  const settleCond = useMemo(() => (settle ? conditionsOf(settle.row) : null), [settle, conditionsOf]);
+  const settleGross = settle ? grossOf(settle.row) : 0;
+
   const submitSettle = useCallback(async () => {
     if (!settle) return;
     const amount = Number(String(settleAmount).replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
       setSettleError("Indiquez le montant remboursé au client.");
+      return;
+    }
+    if (settleCond && !settleCond.allowed && !settleReason.trim()) {
+      setSettleError("Reprise hors conditions : indiquez pourquoi le magasin fait une exception.");
       return;
     }
     setSettleBusy(true);
@@ -279,12 +373,14 @@ export default function RetoursPage() {
     } finally {
       setSettleBusy(false);
     }
-  }, [settle, settleAmount, settleReason, load]);
+  }, [settle, settleAmount, settleReason, load, settleCond]);
 
   const visibleRows = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
     return rows.filter((row) => {
-      if (treatFilter !== "TOUS" && row.treatment !== treatFilter) return false;
+      if (treatFilter === "A_VALIDER") {
+        if (!(isGarageFlow(row) && row.treatment === "A_TRAITER")) return false;
+      } else if (treatFilter !== "TOUS" && row.treatment !== treatFilter) return false;
       if (!q) return true;
       return [row.ref, row.supplier, row.client, row.reference, row.reason]
         .some((v) => v.toLowerCase().includes(q));
@@ -296,6 +392,7 @@ export default function RetoursPage() {
     for (const row of rows) {
       counts.set(row.treatment, (counts.get(row.treatment) ?? 0) + 1);
     }
+    counts.set("A_VALIDER", rows.filter((r) => isGarageFlow(r) && r.treatment === "A_TRAITER").length);
     return counts;
   }, [rows]);
 
@@ -334,20 +431,41 @@ export default function RetoursPage() {
     );
   }, [refundOrders, search]);
 
-  const refundTotal = useMemo(() => {
-    if (!selectedOrder) return 0;
-    return selectedOrder.lines
-      .filter((l) => selectedLineIds.has(l.id))
-      .reduce((s, l) => s + l.lineTotal, 0);
-  }, [selectedOrder, selectedLineIds]);
+  /** Conditions de retour of each line of the picked order, for the motif chosen so far. */
+  const lineConditions = useMemo(() => {
+    const map = new Map<string, ReturnConditions>();
+    if (!selectedOrder) return map;
+    for (const l of selectedOrder.lines) {
+      map.set(
+        l.id,
+        returnConditions({ saleDate: selectedOrder.date, origin: l.fromStock ? "STOCK" : "COMMANDE", designation: l.designation, motifCode: motifCode || null }),
+      );
+    }
+    return map;
+  }, [selectedOrder, motifCode]);
+  const selectedLines = useMemo(
+    () => (selectedOrder ? selectedOrder.lines.filter((l) => selectedLineIds.has(l.id)) : []),
+    [selectedOrder, selectedLineIds],
+  );
+  const refundTotal = useMemo(
+    () => selectedLines.reduce((s, l) => s + netRefund(l.lineTotal, lineConditions.get(l.id)?.feePct ?? 0), 0),
+    [selectedLines, lineConditions],
+  );
+  const refundFees = useMemo(
+    () => selectedLines.reduce((s, l) => s + feeAmount(l.lineTotal, lineConditions.get(l.id)?.feePct ?? 0), 0),
+    [selectedLines, lineConditions],
+  );
+  /** Ticked lines the conditions do not provide for: the counter is making an exception. */
+  const exceptionLines = useMemo(() => selectedLines.filter((l) => lineConditions.get(l.id)?.allowed === false), [selectedLines, lineConditions]);
 
   const pickOrder = useCallback((order: RefundableOrder) => {
     setSelectedOrderId(order.id);
-    // Pre-select every refundable line.
+    // Pre-select every line the conditions allow today (the counter can still tick the others).
     setSelectedLineIds(
       new Set(
         order.lines
           .filter((l) => !l.retourImpossible && !l.alreadyReturned)
+          .filter((l) => returnConditions({ saleDate: order.date, origin: l.fromStock ? "STOCK" : "COMMANDE", designation: l.designation }).allowed)
           .map((l) => l.id),
       ),
     );
@@ -373,24 +491,32 @@ export default function RetoursPage() {
       setModalError("Choisissez le motif du retour : un retour sans motif codé est une donnée perdue.");
       return;
     }
+    if (exceptionLines.length > 0 && !reason.trim()) {
+      setModalError("Reprise hors conditions : indiquez pourquoi le magasin fait une exception.");
+      return;
+    }
     setSubmitting(true);
     setModalError(null);
     try {
       const sb = createClient();
-      const { avoirNum } = await createWalkInReturn(sb, profile.organization_id, {
+      const { avoirNum, feesApplied } = await createWalkInReturn(sb, profile.organization_id, {
         orderId: selectedOrder.id,
         clientId: selectedOrder.clientId,
         reason: [motifCode ? motifLabel(motifCode) : "", reason.trim()].filter(Boolean).join(" — "),
         lines,
         compensation,
+        feePcts: Object.fromEntries(lines.map((l) => [l.id, lineConditions.get(l.id)?.feePct ?? 0])),
       });
       if (savAvailable && motifCode) {
         await qualifyReturns(sb, { lineIds: lines.map((l) => l.id), motifCode, etat }).catch(() => {});
       }
       setNotice(
-        avoirNum
-          ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.`
-          : null,
+        [
+          avoirNum ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.` : null,
+          refundFees > 0 && !feesApplied ? `Frais de retour non retenus (${fmtMoney(refundFees)}) : la base attend la migration 20260930020000.` : null,
+        ]
+          .filter(Boolean)
+          .join(" ") || null,
       );
       setModalOpen(false);
       await load();
@@ -399,7 +525,7 @@ export default function RetoursPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [profile?.organization_id, selectedOrder, selectedLineIds, reason, compensation, load, savAvailable, motifCode, etat]);
+  }, [profile?.organization_id, selectedOrder, selectedLineIds, reason, compensation, load, savAvailable, motifCode, etat, lineConditions, exceptionLines, refundFees]);
 
   /** Code after the fact a return that came in without a reason (garage request, older rows). */
   const submitQualify = useCallback(async () => {
@@ -441,6 +567,7 @@ export default function RetoursPage() {
     const open = rows.filter((r) => !["REMBOURSE", "AVOIR", "REFUSE"].includes(r.treatment)).length;
     return [
       { label: "À traiter", value: String(open), icon: Clock, color: "#983705", bg: "#FCEDB9" },
+      { label: "Demandes garage à valider", value: String(rows.filter((r) => isGarageFlow(r) && r.treatment === "A_TRAITER").length), icon: Truck, color: "#4B2FD8", bg: "#EEEDFF" },
       { label: `Remboursés (${byStatus("REMBOURSE")})`, value: fmtMoney(sum("REMBOURSE")), icon: Banknote, color: "#0E6245", bg: "#D7F7C2" },
       { label: `Avoirs émis (${byStatus("AVOIR")})`, value: fmtMoney(sum("AVOIR")), icon: FileText, color: "#4B2FD8", bg: "#EEEDFF" },
       { label: "Total retours", value: String(rows.length), icon: RotateCcw, color: "#0055BC", bg: "#D6ECFF" },
@@ -449,6 +576,10 @@ export default function RetoursPage() {
 
   return (
     <>
+    {/* The bell links here with ?filter=A_VALIDER, also while the page is already open. */}
+    <Suspense fallback={null}>
+      <SearchParamEffect name="filter" onValue={setTreatFilter} />
+    </Suspense>
     <div className="rt-layout">
       <div className="rt-main">
         <header className="rt-header">
@@ -558,7 +689,7 @@ export default function RetoursPage() {
                           </p>
                         )}
                       </td>
-                      <td className="rt-cell-motif" title={row.reference}>{row.reference}</td>
+                      <td className="rt-cell-motif" title={row.reference}>{row.quantity > 1 ? `${row.quantity} × ` : ""}{row.reference}</td>
                       <td className="rt-cell-motif" title={row.reason}>
                         {(() => {
                           const q = quals.get(row.id);
@@ -593,20 +724,45 @@ export default function RetoursPage() {
                         })()}
                       </td>
                       <td><span className={`rt-badge rt-badge--${row.type === "RETOURNABLE" ? "green" : "red"}`}>{row.type === "RETOURNABLE" ? "Retournable" : row.type === "NON_RETOURNABLE" ? "Non retournable" : row.type}</span></td>
-                      <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{TREATMENT_LABEL[row.treatment] ?? row.treatment}</span></td>
+                      <td><span className={`rt-badge rt-badge--${treatmentTone(row.treatment)}`}>{treatmentLabelFor(row)}</span></td>
                       <td className="rt-decote">{row.amount > 0 ? fmtMoney(row.amount) : <span className="rl-muted">—</span>}</td>
                       <td>
                         {(() => {
                           const settled = ["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment);
-                          const money = !row.hasSupplier && !settled;
+                          const garageFlow = isGarageFlow(row);
+                          const awaitingValidation = garageFlow && row.treatment === "A_TRAITER";
+                          const toReceive = garageFlow && row.treatment === "A_RECUPERER";
+                          // A garage request is settled only once the part is back (retourné).
+                          const money = !row.hasSupplier && !settled && !(garageFlow && row.requestedByGarage && row.treatment !== "ACCEPTE");
                           const pipeline = row.hasSupplier && steps.length > 0;
-                          const livreur = canHandToLivreur(row);
+                          const livreur = canHandToLivreur(row) && !awaitingValidation;
                           const qual = quals.get(row.id);
                           const canCase = savAvailable && row.type !== "CONSIGNE";
                           const suggested = RETURN_MOTIF_BY_CODE[qual?.motifCode ?? ""]?.bascule ?? null;
-                          if (!money && !pipeline && !livreur && !canCase) return <span className="rt-dash">—</span>;
+                          if (!money && !pipeline && !livreur && !canCase && !awaitingValidation && !toReceive) return <span className="rt-dash">—</span>;
                           return (
                             <div className="rt-acts">
+                              {awaitingValidation && (
+                                <>
+                                  <button type="button" className="rc-act rc-act--recu" disabled={flowBusy === row.id} onClick={() => void validateRequest(row, true)} title="Valider : la pièce passe « à récupérer » et le livreur la voit sur sa prochaine tournée">
+                                    {flowBusy === row.id ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Valider
+                                  </button>
+                                  <button type="button" className="rc-act rc-act--nonrecu" disabled={flowBusy === row.id} onClick={() => void validateRequest(row, false)}>
+                                    <X className="h-3.5 w-3.5" /> Refuser
+                                  </button>
+                                </>
+                              )}
+                              {toReceive && (
+                                <button
+                                  type="button"
+                                  className={`rc-act ${row.legDone ? "rc-act--recu" : "rc-act--quiet"}`}
+                                  disabled={flowBusy === row.id}
+                                  onClick={() => void receiveRequest(row)}
+                                  title={row.legDone ? "La pièce est revenue avec le livreur : la remettre en stock" : "Le livreur n\u2019a pas encore marqué la pièce récupérée"}
+                                >
+                                  {flowBusy === row.id ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Réceptionner
+                                </button>
+                              )}
                               {money && (
                                 <>
                                   <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
@@ -788,6 +944,22 @@ export default function RetoursPage() {
                 <p className="rt-order-client">{settle.row.reference} — {settle.row.reason}</p>
               </div>
             </div>
+            {settleCond && (
+              <div className={`rt-cond rt-cond--${settleCond.allowed ? (settleCond.feePct > 0 && !settleCond.waived ? "fee" : "ok") : "no"}`}>
+                {settleCond.allowed ? <Check /> : <Ban />}
+                <span>
+                  <strong>Conditions de retour.</strong> {settleCond.reason}
+                  {settleGross > 0 && settleCond.feePct > 0 && !settleCond.waived && (
+                    <span className="rt-cond-sum">
+                      <span>Valeur {fmtMoney(settleGross)}</span>
+                      <span>Frais {fmtMoney(feeAmount(settleGross, settleCond.feePct))}</span>
+                      <span>Rendu {fmtMoney(netRefund(settleGross, settleCond.feePct))}</span>
+                    </span>
+                  )}
+                  {!settleCond.allowed && " Reprise exceptionnelle possible : indiquez le motif ci-dessous."}
+                </span>
+              </div>
+            )}
             <div className="ga-modal-row">
               <div className="od-field">
                 <span className="od-label">{settle.mode === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"} <span className="od-req">*</span></span>
@@ -931,7 +1103,7 @@ export default function RetoursPage() {
                     return (
                       <label
                         key={l.id}
-                        className={`rt-line-item${blocked ? " rt-line-item--blocked" : ""}`}
+                        className={`rt-line-item${blocked ? " rt-line-item--blocked" : ""}${!blocked && selectedLineIds.has(l.id) && lineConditions.get(l.id)?.allowed === false ? " rt-line-item--exception" : ""}`}
                       >
                         <input
                           type="checkbox"
@@ -944,6 +1116,11 @@ export default function RetoursPage() {
                           <em>
                             {l.reference} · {l.quantity}× {fmtMoney(l.unitPrice)}
                           </em>
+                          {!blocked && (() => {
+                            const c = lineConditions.get(l.id);
+                            if (!c) return null;
+                            return <span className={`rt-line-cond rt-line-cond--${c.allowed ? (c.feePct > 0 ? "fee" : "ok") : "no"}`}>{c.reason}</span>;
+                          })()}
                         </span>
                         {l.retourImpossible ? (
                           <span className="rt-badge rt-badge--red">
@@ -952,12 +1129,38 @@ export default function RetoursPage() {
                         ) : l.alreadyReturned ? (
                           <span className="rt-badge rt-badge--blue">Déjà remboursé</span>
                         ) : (
-                          <span className="rt-line-amount">{fmtMoney(l.lineTotal)}</span>
+                          <span className="rt-line-amount">
+                            {(() => {
+                              const pct = lineConditions.get(l.id)?.feePct ?? 0;
+                              if (pct <= 0) return fmtMoney(l.lineTotal);
+                              return (
+                                <>
+                                  {fmtMoney(netRefund(l.lineTotal, pct))}
+                                  <span className="rt-line-net">{fmtMoney(l.lineTotal)} − {pct} %</span>
+                                </>
+                              );
+                            })()}
+                          </span>
                         )}
                       </label>
                     );
                   })}
                 </div>
+
+                {exceptionLines.length > 0 ? (
+                  <div className="rt-cond rt-cond--no">
+                    <Ban />
+                    <span>
+                      <strong>Reprise hors conditions</strong> pour {exceptionLines.length} pièce{exceptionLines.length > 1 ? "s" : ""} : les conditions de retour ne la prévoient pas. Indiquez la raison de l&apos;exception ; les frais maximaux s&apos;appliquent.
+                    </span>
+                  </div>
+                ) : (
+                  <ul className="rt-cond-list">
+                    {RETURN_CONDITIONS_LINES.map((t) => (
+                      <li key={t}>{t}</li>
+                    ))}
+                  </ul>
+                )}
 
                 {savAvailable && (
                   <div className="od-field">
@@ -986,18 +1189,6 @@ export default function RetoursPage() {
                         <div><dt>À faire</dt><dd>{RETURN_MOTIF_BY_CODE[motifCode].action}</dd></div>
                       </dl>
                     )}
-                    {RETURN_MOTIF_BY_CODE[motifCode]?.policyApplies &&
-                      (() => {
-                        const ok = withinReturnPolicy(selectedOrder.date, policyDays);
-                        if (ok == null) return null;
-                        return (
-                          <p className={`sav-hint${ok ? "" : " sav-hint--warn"}`}>
-                            {ok
-                              ? `Dans le délai de reprise commerciale du magasin (${policyDays} jours).`
-                              : `Hors délai de reprise commerciale (${policyDays} jours) : aucune obligation légale en boutique — la reprise est un geste.`}
-                          </p>
-                        );
-                      })()}
                   </div>
                 )}
                 {savAvailable && (
@@ -1054,6 +1245,7 @@ export default function RetoursPage() {
                 <div className="rt-refund-total">
                   {compensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
                   <strong>{fmtMoney(refundTotal)}</strong>
+                  {refundFees > 0 && <span className="rt-refund-fees">dont frais de retour retenus : {fmtMoney(refundFees)}</span>}
                 </div>
               </>
             )}

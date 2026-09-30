@@ -126,7 +126,8 @@ export function addMonths(d: Date, months: number): Date {
 }
 
 export function daysBetween(from: Date, to: Date): number {
-  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+  // `|| 0` turns a -0 (same day, local vs UTC construction) into a plain 0.
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000) || 0;
 }
 
 /** Today in Paris as a UTC-midnight Date (what the database compares with). */
@@ -139,8 +140,12 @@ export function parisToday(now: Date = new Date()): Date {
 /*  Garantie                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Garantie légale de conformité d'un bien neuf (Code de la consommation, L. 217-3). */
-export const LEGAL_WARRANTY_MONTHS = 24;
+/**
+ * Durée de garantie que le magasin applique sur chaque pièce vendue : 12 mois,
+ * choix du magasin (2026-09-30). En droit français la garantie légale de
+ * conformité d'un bien neuf est de 24 mois (Code de la consommation, L. 217-3).
+ */
+export const LEGAL_WARRANTY_MONTHS = 12;
 /** Below this many days left the light turns orange. */
 export const WARRANTY_WARNING_DAYS = 90;
 
@@ -148,7 +153,7 @@ export type WarrantyLight = "green" | "orange" | "red";
 
 export type LineWarranty = {
   start: string;
-  /** Légale : 24 mois + extension (mise en conformité → + 6 mois). */
+  /** Légale : 12 mois + extension (mise en conformité → + 6 mois). */
   legalEnd: string;
   /** Commerciale de l'équipementier — a second, independent counter. */
   commercialEnd: string | null;
@@ -194,7 +199,7 @@ export function warrantyText(w: LineWarranty): string {
 }
 
 /**
- * Présomption d'antériorité du défaut : pendant 24 mois c'est au vendeur de
+ * Présomption d'antériorité du défaut : pendant 12 mois c'est au vendeur de
  * prouver que le défaut n'existait pas à la délivrance.
  */
 export function presumptionApplies(w: LineWarranty, today: Date = parisToday()): boolean {
@@ -268,7 +273,7 @@ export const RETURN_MOTIFS: ReturnMotifRule[] = [
     label: "Le client s'est trompé",
     fault: "Le client",
     reprise: "selon politique",
-    frais: "Selon la politique du magasin",
+    frais: "Selon les conditions de retour (20 à 40 %)",
     action: "Aucune obligation légale en boutique : appliquer la politique de reprise.",
     bascule: null,
     policyApplies: true,
@@ -288,7 +293,7 @@ export const RETURN_MOTIFS: ReturnMotifRule[] = [
     label: "Pièce défectueuse à la pose",
     fault: "L'équipementier",
     reprise: "oui",
-    frais: "À négocier",
+    frais: "Selon les conditions de retour (20 à 40 %)",
     action: "Basculer en dossier garantie.",
     bascule: "GARANTIE",
     policyApplies: false,
@@ -298,7 +303,7 @@ export const RETURN_MOTIFS: ReturnMotifRule[] = [
     label: "Commande annulée avant retrait",
     fault: "Personne",
     reprise: "oui",
-    frais: "Aucuns",
+    frais: "Selon les conditions de retour (20 à 40 %)",
     action: "Remise en stock ou retour fournisseur.",
     bascule: null,
     policyApplies: false,

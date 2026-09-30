@@ -298,6 +298,8 @@ export default function ReceptionCommandesPage() {
             id: returnLine.id,
             reference: returnLine.reference,
             designation: returnLine.designation,
+            fromStock: returnLine.fromStock,
+            remainingQuantity: returnLine.quantity,
             quantity: returnLine.quantity,
             unitPrice: returnLine.unitPrice,
             lineTotal: returnLine.quantity * returnLine.unitPrice,

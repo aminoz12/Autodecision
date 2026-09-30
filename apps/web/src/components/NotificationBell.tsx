@@ -2,62 +2,23 @@
 
 import { Bell, CheckCheck } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import {
-  loadNotifications,
-  markNotificationsRead,
-  relativeTime,
-  type Notification,
-} from "@/lib/data/notifications";
+import { useNotifications, useNotificationsFeed } from "@/components/providers/NotificationsProvider";
+import { relativeTime } from "@/lib/data/notifications";
 
 /**
- * In-app notification bell, shared by the three spaces. RLS decides what
- * each account sees (staff of the org / one garage / one livreur). Live via
- * Supabase Realtime, with a 60 s poll as fallback; also pings the email
- * dispatcher so pending emails leave within a minute of the event.
+ * In-app notification bell, shared by the three spaces. Reads the shared feed
+ * when a NotificationsProvider is above (dashboard shell); otherwise it runs
+ * its own feed (garagiste portal, livreur page).
  */
 export function NotificationBell({ compact = false }: { compact?: boolean }) {
-  const { supabase, profile } = useAuth();
-  const orgId = profile?.organization_id;
-  const [items, setItems] = useState<Notification[]>([]);
-  const [unread, setUnread] = useState(0);
+  const { profile } = useAuth();
+  const shared = useNotifications();
+  const own = useNotificationsFeed(shared ? null : profile?.organization_id ?? null);
+  const { items, unread, readAll, readOne } = shared ?? own;
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
-
-  const refresh = useCallback(async () => {
-    if (!orgId) return;
-    try {
-      const { items: list, unread: n } = await loadNotifications(supabase, orgId);
-      setItems(list);
-      setUnread(n);
-    } catch {
-      /* the bell is best-effort */
-    }
-  }, [supabase, orgId]);
-
-  useEffect(() => {
-    void refresh();
-    if (!orgId) return;
-    const timer = window.setInterval(() => void refresh(), 60_000);
-    const channel = supabase
-      .channel(`notifications:${orgId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications", filter: `organization_id=eq.${orgId}` },
-        () => void refresh(),
-      )
-      .subscribe();
-    // Opportunistic email fan-out (server-side, rate limited).
-    const ping = () => void fetch("/api/notifications/dispatch", { method: "POST" }).catch(() => {});
-    ping();
-    const pingTimer = window.setInterval(ping, 5 * 60_000);
-    return () => {
-      window.clearInterval(timer);
-      window.clearInterval(pingTimer);
-      void supabase.removeChannel(channel);
-    };
-  }, [supabase, orgId, refresh]);
 
   useEffect(() => {
     if (!open) return;
@@ -74,23 +35,6 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-
-  const readAll = async () => {
-    try {
-      await markNotificationsRead(supabase);
-      setItems((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })));
-      setUnread(0);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const readOne = (n: Notification) => {
-    if (n.readAt) return;
-    void markNotificationsRead(supabase, [n.id]).catch(() => {});
-    setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)));
-    setUnread((u) => Math.max(0, u - 1));
-  };
 
   return (
     <div className={`nb-wrap${compact ? " nb-wrap--compact" : ""}`} ref={wrap}>

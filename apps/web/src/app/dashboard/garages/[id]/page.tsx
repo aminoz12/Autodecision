@@ -6,6 +6,8 @@ import {
   Banknote,
   CalendarClock,
   Check,
+  ChevronDown,
+  ChevronRight,
   ClipboardPlus,
   FileText,
   HandCoins,
@@ -21,12 +23,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
 import { paymentTermsLabel } from "@/lib/constants/enums";
-import { fmtMoney } from "@/lib/data/saas";
+import { fmtMoney, receiveGarageReturn, validateGarageReturn } from "@/lib/data/saas";
+import { ensureSupplierTour, nextTourFromNow } from "@/lib/data/tournees";
+import { LINE_RETURN_LABEL, REGLEMENT_LABEL, lineReglement, lineReturnState, type LineReglement } from "@/lib/garage-line-state";
 import {
   buildGarageStatement,
   DEVIS_LABEL,
@@ -36,7 +40,9 @@ import {
   loadGarageInfo,
   loadGarageOrdersForStaff,
   loadGarageReturns,
+  setLineReglement,
   type GarageCredit,
+  type GarageReturn,
   type GarageInfo,
   type GarageOrder,
 } from "@/lib/data/garage";
@@ -83,6 +89,12 @@ export default function GarageDetailPage() {
   const [orders, setOrders] = useState<GarageOrder[]>([]);
   const [credits, setCredits] = useState<GarageCredit[]>([]);
   const [returnCount, setReturnCount] = useState(0);
+  const [returns, setReturns] = useState<GarageReturn[]>([]);
+  /** Orders opened to their lines. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [lineBusy, setLineBusy] = useState<string | null>(null);
+  /** « Payé » on a line: the payment is recorded through the règlement modal, then the label is set. */
+  const [payLine, setPayLine] = useState<{ orderId: string; lineId: string } | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +116,7 @@ export default function GarageDetailPage() {
       setOrders(o);
       setCredits(c);
       setReturnCount(r.length);
+      setReturns(r);
       setPayments(p);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -144,6 +157,7 @@ export default function GarageDetailPage() {
   const [settleError, setSettleError] = useState<string | null>(null);
 
   const openSettle = () => {
+    setPayLine(null);
     setAmount(owed > 0 ? String(owed.toFixed(2)) : "");
     setMode("VIREMENT");
     setReference("");
@@ -184,7 +198,12 @@ export default function GarageDetailPage() {
         mode,
         reference,
         note,
+        orderIds: payLine ? [payLine.orderId] : undefined,
       });
+      if (payLine) {
+        await setLineReglement(supabase, payLine.lineId, "PAYE").catch(() => {});
+        setPayLine(null);
+      }
       setSettleOpen(false);
       setNotice(
         `${fmtMoney(res.amount)} reçus (${PAYMENT_MODE_LABEL[mode].toLowerCase()}) — ${res.allocations.length} commande(s) réglée(s) : ${res.allocations
@@ -198,6 +217,72 @@ export default function GarageDetailPage() {
       setBusy(false);
     }
   };
+
+  /* ---- Lignes : règlement + retours ---- */
+  function toggleOrder(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  async function setReglement(order: GarageOrder, line: GarageOrder["lines"][number], code: LineReglement) {
+    if (code === "PAYE" && order.balance > 0.005) {
+      // Money first: the standard règlement, restricted to this order, prefilled with the line.
+      setPayLine({ orderId: order.id, lineId: line.id });
+      setAmount(Math.min(order.balance, line.lineTotal).toFixed(2));
+      setMode("VIREMENT");
+      setReference("");
+      setNote(`Règlement ${line.reference} — ${order.ref}`);
+      setSettleError(null);
+      setSettleOpen(true);
+      return;
+    }
+    if (code === "OFFERT" && !window.confirm("Marquer cette pièce « offerte » ? Le solde dû de la commande n\u2019est pas modifié (à ajuster par une remise ou un avoir si besoin).")) return;
+    setLineBusy(line.id);
+    setError(null);
+    try {
+      await setLineReglement(supabase, line.id, code);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLineBusy(null);
+    }
+  }
+  async function validateRequest(ret: GarageReturn, accept: boolean) {
+    setLineBusy(ret.lineId ?? ret.id);
+    setError(null);
+    try {
+      let tourId: string | null = null;
+      if (accept) {
+        const next = nextTourFromNow(new Date());
+        tourId = await ensureSupplierTour(supabase, { date: next.date, name: next.name, slot: next.slot });
+      }
+      await validateGarageReturn(supabase, ret.id, accept, tourId);
+      setNotice(accept ? `${ret.ref} validé : à récupérer, confié au livreur.` : `${ret.ref} refusé.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLineBusy(null);
+    }
+  }
+  async function receiveRequest(ret: GarageReturn) {
+    if (!ret.legDone && !window.confirm("Le livreur n\u2019a pas encore marqué cette pièce récupérée. Réceptionner quand même ?")) return;
+    setLineBusy(ret.lineId ?? ret.id);
+    setError(null);
+    try {
+      await receiveGarageReturn(supabase, ret.id);
+      setNotice(`${ret.ref} réceptionné : ${ret.quantity} × ${ret.designation} de retour en stock.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLineBusy(null);
+    }
+  }
 
   if (!loading && !garage) {
     return (
@@ -358,16 +443,90 @@ export default function GarageDetailPage() {
                 const st = o.devis
                   ? DEVIS_LABEL[o.devisStatus ?? "REQUESTED"] ?? { label: "Devis", cls: "amber" }
                   : GARAGE_STAGE_LABEL[garageStage(o)];
+                const open = expanded.has(o.id);
                 return (
-                  <tr key={o.id}>
-                    <td className="stk-ref"><Link href={`/dashboard/commandes/${o.id}`}>{o.ref}</Link></td>
-                    <td className="rl-muted-strong">{frDate(o.date)}</td>
-                    <td><span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span></td>
-                    <td className="rl-muted-strong">{o.balance > 0 ? frDate(o.echeance) : "—"}</td>
-                    <td className="stk-td-center">{fmtMoney(o.total)}</td>
-                    <td className="stk-td-center">{fmtMoney(o.paid)}</td>
-                    <td className="stk-td-center" style={{ color: o.balance > 0 ? "#DC2626" : "#16A34A", fontWeight: 700 }}>{fmtMoney(o.balance)}</td>
-                  </tr>
+                  <Fragment key={o.id}>
+                    <tr className={`ga-order-row${open ? " ga-order-row--open" : ""}`} onClick={() => toggleOrder(o.id)} aria-expanded={open}>
+                      <td className="stk-ref">
+                        <span className="ga-order-chev">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
+                        <Link href={`/dashboard/commandes/${o.id}`} onClick={(e) => e.stopPropagation()}>{o.ref}</Link>
+                        <span className="ga-order-count">{o.lines.length} art.</span>
+                      </td>
+                      <td className="rl-muted-strong">{frDate(o.date)}</td>
+                      <td><span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span></td>
+                      <td className="rl-muted-strong">{o.balance > 0 ? frDate(o.echeance) : "—"}</td>
+                      <td className="stk-td-center">{fmtMoney(o.total)}</td>
+                      <td className="stk-td-center">{fmtMoney(o.paid)}</td>
+                      <td className="stk-td-center" style={{ color: o.balance > 0 ? "#DC2626" : "#16A34A", fontWeight: 700 }}>{fmtMoney(o.balance)}</td>
+                    </tr>
+                    {open && (
+                      <tr className="ga-order-lines-row">
+                        <td colSpan={7}>
+                          <div className="ga-lines">
+                            {o.lines.map((l) => {
+                              const rs = lineReturnState(returns, l.id);
+                              const reg = lineReglement(l.reglement, o.balance);
+                              const cur = rs.current;
+                              const busyLine = lineBusy === l.id;
+                              return (
+                                <div key={l.id} className="ga-line">
+                                  <div className="ga-line-main">
+                                    <strong>{l.designation || l.reference}</strong>
+                                    <span className="rl-muted">{l.reference} · {l.quantity} × {fmtMoney(l.unitPrice)} = {fmtMoney(l.lineTotal)}</span>
+                                  </div>
+                                  <div className="ga-line-state">
+                                    <span className={`rt-badge rt-badge--${REGLEMENT_LABEL[reg].cls}`}>{REGLEMENT_LABEL[reg].label.toUpperCase()}</span>
+                                    <span className="ga-line-sep">·</span>
+                                    <span className={`rt-badge rt-badge--${LINE_RETURN_LABEL[rs.state].cls}`}>
+                                      {LINE_RETURN_LABEL[rs.state].label.toUpperCase()}
+                                      {cur && cur.quantity > 1 ? ` ×${cur.quantity}` : ""}
+                                    </span>
+                                  </div>
+                                  <div className="ga-line-acts">
+                                    {!o.devis &&
+                                      (["PAYE", "OFFERT", "A_PAYER"] as LineReglement[]).map((code) => (
+                                        <button
+                                          key={code}
+                                          type="button"
+                                          className={`rc-act ${reg === code ? "rc-act--retour" : "rc-act--quiet"}`}
+                                          disabled={busyLine || reg === code}
+                                          onClick={() => void setReglement(o, l, code)}
+                                          title={code === "PAYE" ? "Enregistrer le règlement de cette pièce" : code === "OFFERT" ? "Pièce offerte au garage" : "Reste à payer"}
+                                        >
+                                          {REGLEMENT_LABEL[code].label}
+                                        </button>
+                                      ))}
+                                    {cur && rs.state === "REQUESTED" && (
+                                      <>
+                                        <button type="button" className="rc-act rc-act--recu" disabled={busyLine} onClick={() => void validateRequest(cur, true)}>
+                                          {busyLine ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Valider le retour
+                                        </button>
+                                        <button type="button" className="rc-act rc-act--nonrecu" disabled={busyLine} onClick={() => void validateRequest(cur, false)}>
+                                          <X className="h-3.5 w-3.5" /> Refuser
+                                        </button>
+                                      </>
+                                    )}
+                                    {cur && (rs.state === "COLLECTED" || rs.state === "TO_COLLECT") && (
+                                      <button
+                                        type="button"
+                                        className={`rc-act ${rs.state === "COLLECTED" ? "rc-act--recu" : "rc-act--quiet"}`}
+                                        disabled={busyLine}
+                                        onClick={() => void receiveRequest(cur)}
+                                        title={rs.state === "COLLECTED" ? "La pièce est revenue avec le livreur : la remettre en stock" : "Le livreur n\u2019a pas encore marqué la pièce récupérée"}
+                                      >
+                                        {busyLine ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Réceptionner
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {o.lines.length === 0 && <p className="rl-muted">Aucun article sur cette commande.</p>}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
               {!loading && orders.length === 0 && (

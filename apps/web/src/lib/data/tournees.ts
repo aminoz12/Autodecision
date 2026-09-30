@@ -104,6 +104,8 @@ export type TourReturn = {
   /** Part reference, when the return is tied to an order line. */
   reference: string | null;
   orderRef: string | null;
+  /** Units to collect (garage requests can be partial). */
+  quantity: number;
   /** The garage (collect) or the supplier (drop). */
   destination: string;
   address: string | null;
@@ -168,6 +170,7 @@ function parseReturns(v: unknown): TourReturn[] {
         designation: text(r.designation) ?? text(r.reference) ?? "Pièce",
         reference: text(r.reference),
         orderRef: text(r.order_ref),
+        quantity: Math.max(1, Number(r.quantity) || 1),
         destination: text(r.destination) ?? (leg === "GARAGE_TO_STORE" ? "Garage" : "Fournisseur"),
         address: text(r.address),
         city: text(r.city),
@@ -421,6 +424,18 @@ export function nextStandardTour(slot: string | null): { name: string; slot: str
   if (slot && slot < "15:00") return { name: "Tournée 3", slot: "15:00", nextDay: false };
   if (slot && slot < "17:30") return { name: "Tournée 4", slot: "17:30", nextDay: false };
   return { name: "Tournée 1", slot: "10:00", nextDay: true };
+}
+
+/**
+ * The next standard tournée from a moment: the next departure today, else
+ * tomorrow's first one. Where a validated garage return is handed to the livreur.
+ */
+export function nextTourFromNow(now: Date = new Date()): { date: string; name: string; slot: string } {
+  const today = parisDate(now);
+  const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  const upcoming = STANDARD_TOURS.find((tour) => tour.slot > hhmm);
+  if (upcoming) return { date: today, name: upcoming.name, slot: upcoming.slot };
+  return { date: addDays(today, 1), name: STANDARD_TOURS[0].name, slot: STANDARD_TOURS[0].slot };
 }
 
 export type ReturnStats = { total: number; done: number; left: number };

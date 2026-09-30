@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, Package, RefreshCw, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Package, RefreshCw, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -12,7 +12,13 @@ import {
   loadGarageOrders,
   refuseDevisOrder,
   type GarageOrder,
+  loadGarageReturns,
+  requestGarageLineReturn,
+  type GarageOrderLine,
+  type GarageReturn,
 } from "@/lib/data/garage";
+import { RETURN_MOTIFS } from "@/lib/sav";
+import { LINE_RETURN_LABEL, lineReturnState, returnableQuantity } from "@/lib/garage-line-state";
 
 function eur(v: number) {
   return `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -35,6 +41,15 @@ export default function GarageOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /* ---- Demander un retour, article par article ---- */
+  const [returns, setReturns] = useState<GarageReturn[]>([]);
+  const [request, setRequest] = useState<{ order: GarageOrder; line: GarageOrderLine; left: number } | null>(null);
+  const [qty, setQty] = useState(1);
+  const [motif, setMotif] = useState("");
+  const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || !profile.client_id) return;
@@ -42,6 +57,7 @@ export default function GarageOrdersPage() {
     setError(null);
     try {
       setOrders(await loadGarageOrders(supabase, profile.organization_id, profile.client_id));
+      setReturns(await loadGarageReturns(supabase, profile.organization_id, profile.client_id).catch(() => [] as GarageReturn[]));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -68,6 +84,31 @@ export default function GarageOrdersPage() {
     }
   }
 
+  function openRequest(order: GarageOrder, line: GarageOrderLine, left: number) {
+    setRequest({ order, line, left });
+    setQty(1);
+    setMotif("");
+    setComment("");
+    setRequestError(null);
+  }
+
+  async function submitRequest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!request || !motif) return;
+    setSaving(true);
+    setRequestError(null);
+    try {
+      const ref = await requestGarageLineReturn(supabase, { lineId: request.line.id, quantity: qty, motifCode: motif, comment });
+      setNotice(`Demande ${ref} envoyée au magasin : ${qty} × ${request.line.designation || request.line.reference}. Vous serez prévenu dès sa validation.`);
+      setRequest(null);
+      await load();
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="gp-page">
       <header className="gp-header gp-header--row">
@@ -82,6 +123,8 @@ export default function GarageOrdersPage() {
       </header>
 
       {error && <div className="nc-error">{error}</div>}
+
+      {notice && <div className="nc-ok">{notice}</div>}
 
       {loading && orders.length === 0 ? (
         <div className="gp-card gp-empty">Chargement…</div>
@@ -134,6 +177,26 @@ export default function GarageOrdersPage() {
                           {isDevis ? "—" : LINE_STATUS[l.status] ?? l.status}
                         </span>
                       )}
+                      {!isDevis &&
+                        (() => {
+                          const rs = lineReturnState(returns, l.id);
+                          const left = returnableQuantity(returns, l.id, l.quantity);
+                          return (
+                            <span className="gp-ol-return">
+                              {rs.state !== "NONE" && (
+                                <span className={`rt-badge rt-badge--${LINE_RETURN_LABEL[rs.state].cls}`}>
+                                  {LINE_RETURN_LABEL[rs.state].label}
+                                  {rs.current && rs.current.quantity > 1 ? ` ×${rs.current.quantity}` : ""}
+                                </span>
+                              )}
+                              {!l.retourImpossible && left > 0 && (
+                                <button type="button" className="rc-act rc-act--quiet" onClick={() => openRequest(o, l, left)}>
+                                  <RotateCcw className="h-3.5 w-3.5" /> Demander un retour
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })()}
                     </div>
                   ))}
                 </div>
@@ -188,6 +251,66 @@ export default function GarageOrdersPage() {
               </article>
             );
           })}
+        </div>
+      )}
+
+      {request && (
+        <div className="ga-modal-overlay" onClick={() => !saving && setRequest(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><RotateCcw className="h-4 w-4" /> Demander un retour</span>
+              <button type="button" className="ga-modal-close" onClick={() => setRequest(null)} aria-label="Fermer" disabled={saving}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitRequest}>
+              {requestError && <div className="nc-error">{requestError}</div>}
+              <div className="rt-picked">
+                <div>
+                  <p className="rt-order-ref">{request.line.designation || request.line.reference}</p>
+                  <p className="rt-order-client">
+                    {request.line.reference} · commande {request.order.ref} · {request.line.quantity} × {eur(request.line.unitPrice)}
+                  </p>
+                </div>
+              </div>
+              <div className="ga-modal-row">
+                <label className="od-field">
+                  <span className="od-label">Quantité à retourner</span>
+                  <div className="od-select">
+                    <select value={qty} onChange={(e) => setQty(Number(e.target.value))}>
+                      {Array.from({ length: request.left }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </label>
+                <label className="od-field">
+                  <span className="od-label">Motif du retour <span className="od-req">*</span></span>
+                  <div className="od-select">
+                    <select value={motif} onChange={(e) => setMotif(e.target.value)}>
+                      <option value="">— Choisir —</option>
+                      {RETURN_MOTIFS.map((m) => (
+                        <option key={m.code} value={m.code}>{m.code === "ERREUR_CLIENT" ? "Erreur de notre part" : m.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </label>
+              </div>
+              <label className="od-field">
+                <span className="od-label">Commentaire (facultatif)</span>
+                <textarea className="gp-textarea" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pièce non montée, emballage d\u2019origine…" />
+              </label>
+              <p className="sav-hint">Le magasin valide la demande, puis le livreur passe récupérer la pièce. Chaque étape est visible dans « Retours ».</p>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setRequest(null)} disabled={saving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={saving || !motif}>
+                  {saving ? <Loader2 className="h-4 w-4 nc-spin" /> : <RotateCcw className="h-4 w-4" />} Envoyer la demande
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  Ban,
   Camera,
   Check,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   Truck,
   Wrench,
 } from "lucide-react";
+import { feeAmount, netRefund, returnConditions } from "@/lib/return-conditions";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -494,6 +496,27 @@ export default function SavCasePage() {
           {/* ---------------- Geste commercial ---------------- */}
           <section className="od-card">
             <h2 className="od-card-title"><HandCoins className="h-4 w-4" /> Geste commercial</h2>
+            {c.type === "GARANTIE" &&
+              (() => {
+                // A refund under warranty follows the shop return conditions (not a dispute).
+                const cond = returnConditions({ saleDate: c.purchaseDate, origin: c.fromStock === false ? "COMMANDE" : "STOCK", designation: c.designation });
+                const value = c.partValue ?? 0;
+                return (
+                  <div className={`rt-cond rt-cond--${cond.allowed ? (cond.feePct > 0 ? "fee" : "ok") : "no"}`}>
+                    {cond.allowed ? <Check className="h-4 w-4" /> : <Ban className="h-4 w-4" />}
+                    <span>
+                      <strong>Conditions de retour.</strong> {cond.reason}
+                      {value > 0 && cond.feePct > 0 && (
+                        <span className="rt-cond-sum">
+                          <span>Pièce {fmtMoney(value)}</span>
+                          <span>Frais {fmtMoney(feeAmount(value, cond.feePct))}</span>
+                          <span>Remboursement conseillé {fmtMoney(netRefund(value, cond.feePct))}</span>
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })()}
             {c.gestureType ? (
               <p className="od-note">
                 <strong>{GESTURE_LABEL[c.gestureType] ?? c.gestureType}</strong>

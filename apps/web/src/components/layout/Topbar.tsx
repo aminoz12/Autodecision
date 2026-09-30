@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, CirclePlus, KeyRound, LogOut } from "lucide-react";
+import { ChevronDown, CirclePlus, KeyRound, LogOut, Zap } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -76,10 +76,20 @@ export function Topbar() {
       </div>
       <div className="topbar-actions">
         {!onNewOrder && (
-          <Link href="/dashboard/nouvelle-commande" className="od-btn od-btn--primary topbar-new">
-            <CirclePlus />
-            <span>Nouvelle commande</span>
-          </Link>
+          <>
+            <Link href="/dashboard/nouvelle-commande" className="od-btn od-btn--primary topbar-new">
+              <CirclePlus />
+              <span>Nouvelle commande</span>
+            </Link>
+            <Link
+              href="/dashboard/nouvelle-commande?rajout=1"
+              className="od-btn od-btn--ghost topbar-quick"
+              title="Plusieurs commandes en une fois : une ligne par pièce"
+            >
+              <Zap />
+              <span>Rajout rapide</span>
+            </Link>
+          </>
         )}
         <MagasinSwitcher />
         <NotificationBell />

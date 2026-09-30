@@ -151,6 +151,7 @@ function ReturnSection({
               <div className="lv-ret-item-top">
                 <div className="lv-ret-item-text">
                   <strong>
+                    {r.quantity > 1 ? `${r.quantity} × ` : ""}
                     {r.designation}
                     {r.reference && r.reference !== r.designation ? ` · ${r.reference}` : ""}
                   </strong>
@@ -159,6 +160,7 @@ function ReturnSection({
                     {r.destination}
                     {r.slip ? ` · bon ${r.slip}` : ""}
                     {r.ref ? ` · ${r.ref}` : ""}
+                    {r.orderRef ? ` · commande ${r.orderRef}` : ""}
                     {t ? ` · ${t.name} ${slotLabel(t.slot)}` : ""}
                   </span>
                 </div>

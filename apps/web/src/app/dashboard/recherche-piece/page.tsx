@@ -1,13 +1,22 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { ArrowUpRight, Search } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { searchParts, type PartSearchResult } from "@/lib/data/saas";
 
+/** Where a result opens: the order that holds the line, or the stock page on that reference. */
+function hrefOf(row: PartSearchResult): string | null {
+  if (row.kind === "order-line") return row.orderId ? `/dashboard/commandes/${row.orderId}` : null;
+  return `/dashboard/stock?q=${encodeURIComponent(row.reference)}`;
+}
+
 export default function RecherchePiecePage() {
   const { profile } = useAuth();
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<PartSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,9 +54,9 @@ export default function RecherchePiecePage() {
     <div className="rl-page">
       <header className="rl-header">
         <div className="rl-header-left">
-          <h1 className="rl-title rl-title--upper">Recherche pièce</h1>
+          <h1 className="rl-title">Recherche pièce</h1>
           <p className="rl-subtitle">
-            Retrouvez une pièce dans le stock magasin et dans toutes les commandes.
+            Retrouvez une pièce dans le stock magasin et dans toutes les commandes. Cliquez sur une ligne pour ouvrir la commande ou le stock.
           </p>
         </div>
       </header>
@@ -59,6 +68,7 @@ export default function RecherchePiecePage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Référence, désignation, SKU…"
+          autoFocus
         />
       </div>
 
@@ -74,35 +84,62 @@ export default function RecherchePiecePage() {
                 <th>Désignation</th>
                 <th className="rl-th-center">Quantité</th>
                 <th>Source</th>
+                <th aria-label="Ouvrir" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.kind}-${row.id}`}>
-                  <td>
-                    <span className={`av-type av-type--${row.kind === "stock" ? "consigne" : "avoir"}`}>
-                      {row.kind === "stock" ? "Stock" : "Commande"}
-                    </span>
-                  </td>
-                  <td className="rl-reffour">
-                    {row.reference}
-                    {row.referenceCommande && row.referenceCommande !== row.reference && (
-                      <span className="rl-ref-cmd"> · cmd. {row.referenceCommande}</span>
-                    )}
-                  </td>
-                  <td className="rl-client">{row.designation}</td>
-                  <td className="rl-th-center rl-qte">{row.quantity}</td>
-                  <td className="rl-muted-strong">{row.source}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const href = hrefOf(row);
+                const open = () => {
+                  if (href) router.push(href);
+                };
+                return (
+                  <tr
+                    key={`${row.kind}-${row.id}`}
+                    className={href ? "sav-row" : undefined}
+                    tabIndex={href ? 0 : undefined}
+                    onClick={open}
+                    onKeyDown={(e) => {
+                      if (href && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault();
+                        open();
+                      }
+                    }}
+                  >
+                    <td>
+                      <span className={`av-type av-type--${row.kind === "stock" ? "consigne" : "avoir"}`}>
+                        {row.kind === "stock" ? "Stock" : "Commande"}
+                      </span>
+                    </td>
+                    <td className="rl-reffour">
+                      {href ? (
+                        <Link href={href} className="rc-cmd" onClick={(e) => e.stopPropagation()}>
+                          {row.reference}
+                        </Link>
+                      ) : (
+                        row.reference
+                      )}
+                      {row.referenceCommande && row.referenceCommande !== row.reference && (
+                        <span className="rl-ref-cmd"> · cmd. {row.referenceCommande}</span>
+                      )}
+                    </td>
+                    <td className="rl-client">{row.designation}</td>
+                    <td className="rl-th-center rl-qte">{row.quantity}</td>
+                    <td className="rl-muted-strong">{row.source}</td>
+                    <td className="rl-td-open">
+                      {href && <ArrowUpRight className="h-4 w-4" aria-hidden="true" />}
+                    </td>
+                  </tr>
+                );
+              })}
               {!loading && query.trim().length >= 2 && rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-muted">Aucun resultat.</td>
+                  <td colSpan={6} className="text-muted">Aucun résultat.</td>
                 </tr>
               )}
               {query.trim().length < 2 && (
                 <tr>
-                  <td colSpan={5} className="text-muted">Tapez au moins 2 caractères.</td>
+                  <td colSpan={6} className="text-muted">Tapez au moins 2 caractères.</td>
                 </tr>
               )}
             </tbody>

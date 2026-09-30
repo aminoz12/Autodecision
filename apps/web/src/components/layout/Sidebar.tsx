@@ -29,8 +29,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { countByDestination, useNotifications } from "@/components/providers/NotificationsProvider";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -113,6 +114,16 @@ export function Sidebar() {
   const [orgName, setOrgName] = useState<string | null>(null);
   /** Desktop only: the menu folds to an icon rail so the page gets the room. */
   const collapsed = useSyncExternalStore(subscribeSidebarState, readSidebarState, () => false);
+  const feed = useNotifications();
+  const groups = useMemo<NavGroup[]>(
+    () => (profile?.role === "ADMIN" && !profile.client_id ? [...navGroups, adminGroup] : navGroups),
+    [profile?.role, profile?.client_id],
+  );
+  /** Unread notifications per destination, shown as a counter next to the label. */
+  const counts = useMemo(
+    () => countByDestination(feed?.unreadHrefs ?? [], groups.flatMap((g) => g.items.map((i) => i.href))),
+    [feed?.unreadHrefs, groups],
+  );
 
   function toggleCollapsed() {
     const next = !collapsed;
@@ -203,10 +214,7 @@ export function Sidebar() {
 
         {/* Navigation */}
         <nav className="sidebar-nav">
-          {(profile?.role === "ADMIN" && !profile.client_id
-            ? [...navGroups, adminGroup]
-            : navGroups
-          ).map((group) => (
+          {groups.map((group) => (
             <div key={group.label} className="sidebar-group">
               <p className="sidebar-group-label">{group.label}</p>
               <div className="sidebar-group-items">
@@ -224,6 +232,11 @@ export function Sidebar() {
                     >
                       <Icon className="sidebar-nav-icon" />
                       <span className="sidebar-nav-label flex-1">{item.label}</span>
+                      {counts[item.href] ? (
+                        <span className="sidebar-nav-badge" title={`${counts[item.href]} notification(s) non lue(s)`}>
+                          {counts[item.href]}
+                        </span>
+                      ) : null}
                     </Link>
                   );
                 })}

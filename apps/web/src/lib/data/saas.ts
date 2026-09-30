@@ -358,22 +358,27 @@ export async function loadRestockAlerts(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<RestockAlert[]> {
-  const { data, error } = await supabase
-    .from("order_lines")
-    .select(
-      "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
-        "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))",
-    )
-    .eq("organization_id", orgId)
-    .eq("depuis_magasin", true)
-    .is("supplier_id", null)
-    // Already re-ordered → a restock order exists for this sale line.
-    .is("restock_line_id", null)
-    .eq("retour_stock_fait", false)
-    .eq("orders.devis", false)
-    .eq("orders.is_restock", false)
-    .limit(500);
-
+  const query = (withSkipFilter: boolean) => {
+    let q = supabase
+      .from("order_lines")
+      .select(
+        "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
+          "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))",
+      )
+      .eq("organization_id", orgId)
+      .eq("depuis_magasin", true)
+      .is("supplier_id", null)
+      // Already re-ordered → a restock order exists for this sale line.
+      .is("restock_line_id", null)
+      .eq("retour_stock_fait", false)
+      .eq("orders.devis", false)
+      .eq("orders.is_restock", false);
+    // « Déjà en stock » (migration 20260930010000): the alert was dismissed at the counter.
+    if (withSkipFilter) q = q.is("restock_skipped_at", null);
+    return q.limit(500);
+  };
+  let { data, error } = await query(true);
+  if (error && /restock_skipped_at/.test(error.message)) ({ data, error } = await query(false));
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((raw) => {
@@ -394,6 +399,20 @@ export async function loadRestockAlerts(
       ),
     };
   });
+}
+
+/** « Déjà en stock » : the line leaves « Pièces à recommander » without a restock order. */
+export async function skipRestockAlert(supabase: SupabaseClient, lineId: string): Promise<void> {
+  const { error } = await supabase
+    .from("order_lines")
+    .update({ restock_skipped_at: new Date().toISOString() })
+    .eq("id", lineId);
+  if (error) {
+    if (/restock_skipped_at/.test(error.message)) {
+      throw new Error("« Déjà en stock » demande la migration 20260930010000 (npx supabase db push).");
+    }
+    throw new Error(error.message);
+  }
 }
 
 export type RestockHistoryStatus = "COMMANDE" | "RECU" | "RANGE";
@@ -546,6 +565,8 @@ export type PartSearchResult = {
   reference: string;
   /** Supplier reference (stock re-orders), when different from `reference`. */
   referenceCommande?: string | null;
+  /** Order that holds the line (order-line results only). */
+  orderId?: string | null;
   designation: string;
   quantity: number;
   source: string;
@@ -575,19 +596,19 @@ export async function searchParts(
       .limit(20),
     supabase
       .from("order_lines")
-      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
+      .select("id,order_id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
       .eq("organization_id", orgId)
       .ilike("reference", pattern)
       .limit(20),
     supabase
       .from("order_lines")
-      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
+      .select("id,order_id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
       .eq("organization_id", orgId)
       .ilike("nom_produit", pattern)
       .limit(20),
     supabase
       .from("order_lines")
-      .select("id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
+      .select("id,order_id,reference,reference_commande,nom_produit,quantity,orders(ref_demande)")
       .eq("organization_id", orgId)
       .ilike("reference_commande", pattern)
       .limit(20),
@@ -628,6 +649,7 @@ export async function searchParts(
     results.push({
       kind: "order-line",
       id: String(row.id),
+      orderId: (row.order_id as string | null) ?? null,
       reference: String(row.reference ?? ""),
       referenceCommande: (row.reference_commande as string | null) || null,
       designation: String(row.nom_produit ?? ""),
@@ -753,6 +775,16 @@ export type ReturnRow = {
   amount: number;
   /** Value of the returned line (qty × unit price) to prefill a refund. */
   lineValue: number;
+  /** Sold from the shelf (true), ordered from a supplier (false), unknown (null): drives the return fees. */
+  fromStock: boolean | null;
+  designation: string;
+  saleDate: string | null;
+  /** Units returned (garage requests can be partial). */
+  quantity: number;
+  orderLineId: string | null;
+  /** Requested by the garage from its portal (migration 20260930030000): validate → collect → receive. */
+  requestedByGarage: boolean;
+  receivedAt: string | null;
   /** Handed to the livreur: collect at the garage, or drop at the supplier (migration 20260919010000). */
   leg: "GARAGE_TO_STORE" | "STORE_TO_SUPPLIER" | null;
   legDone: boolean;
@@ -769,12 +801,17 @@ export async function loadReturns(
 ): Promise<ReturnRow[]> {
   const BASE =
     "id,ref,created_at,order_id,client_id,supplier_id,reason,motif,designation,type_retour,statut_traitement,decote_pct,montant,clients(name,is_garage),suppliers(name)," +
-    "orders(ref_demande,clients(name,is_garage)),order_lines(depuis_magasin,quantity,prix_vente_unitaire,nom_produit,reference,suppliers(name))";
+    "orders(ref_demande,date_commande,clients(name,is_garage)),order_lines(depuis_magasin,quantity,prix_vente_unitaire,nom_produit,reference,suppliers(name))";
   // The livreur legs (migration 20260919010000); a database without them still lists the returns.
   const LEGS = ",livreur_leg,leg_status,leg_done_at,leg_slip,leg_note,leg_tour:delivery_tours!sales_returns_leg_tour_id_fkey(name,tour_date,slot_start)";
   const query = (select: string) =>
     supabase.from("sales_returns").select(select).eq("organization_id", orgId).order("created_at", { ascending: false }).limit(200);
-  let { data, error } = await query(BASE + LEGS);
+  // Garage flow columns (migration 20260930030000); a database without them still lists the returns.
+  const FLOW = ",quantity,requested_by,received_at";
+  let { data, error } = await query(BASE + LEGS + FLOW);
+  if (error && /requested_by|received_at|quantity/i.test(error.message)) {
+    ({ data, error } = await query(BASE + LEGS));
+  }
   if (error && /livreur_leg|leg_tour|delivery_tours|leg_status/i.test(error.message)) {
     ({ data, error } = await query(BASE));
   }
@@ -807,6 +844,13 @@ export async function loadReturns(
       isGarage: client?.is_garage === true || orderClient?.is_garage === true,
       orderId: (row.order_id as string | null) ?? null,
       lineValue: toNumber(line?.quantity) * toNumber(line?.prix_vente_unitaire),
+      fromStock: line ? line.depuis_magasin === true : null,
+      designation: String(line?.nom_produit ?? row.designation ?? ""),
+      saleDate: (order?.date_commande as string | null) ?? null,
+      quantity: Math.max(1, toNumber(row.quantity) || 1),
+      orderLineId: (row.order_line_id as string | null) ?? null,
+      requestedByGarage: Boolean(row.requested_by),
+      receivedAt: (row.received_at as string | null) ?? null,
       reference: String(row.designation ?? line?.nom_produit ?? line?.reference ?? "—"),
       reason: String(row.motif ?? row.reason ?? "-"),
       type: String(row.type_retour ?? "RETOURNABLE"),
@@ -864,6 +908,35 @@ export async function settleClientReturn(
   return typeof data === "string" ? data : null;
 }
 
+/** Garage request: accept (→ « à récupérer », handed to the livreur on the tour) or refuse. Migration 20260930030000. */
+export async function validateGarageReturn(
+  supabase: SupabaseClient,
+  returnId: string,
+  accept: boolean,
+  tourId?: string | null,
+): Promise<void> {
+  const { error } = await supabase.rpc("validate_garage_return", { p_return_id: returnId, p_accept: accept, p_tour_id: tourId ?? null });
+  if (error) {
+    throw new Error(
+      /validate_garage_return/i.test(error.message)
+        ? "La validation des retours garage demande la migration 20260930030000 (npx supabase db push)."
+        : error.message,
+    );
+  }
+}
+
+/** The part is back at the magasin: « retourné », put back in stock. */
+export async function receiveGarageReturn(supabase: SupabaseClient, returnId: string): Promise<void> {
+  const { error } = await supabase.rpc("receive_garage_return", { p_return_id: returnId });
+  if (error) {
+    throw new Error(
+      /receive_garage_return/i.test(error.message)
+        ? "La réception des retours garage demande la migration 20260930030000 (npx supabase db push)."
+        : error.message,
+    );
+  }
+}
+
 export async function updateReturnTreatment(
   supabase: SupabaseClient,
   _orgId: string,
@@ -892,6 +965,10 @@ export type RefundableLine = {
   lineTotal: number;
   retourImpossible: boolean;
   alreadyReturned: boolean;
+  /** Sold from the shelf: the stock fee schedule applies (else the ordered-part one). */
+  fromStock: boolean;
+  /** Units not yet taken back (a refused request does not count); lineTotal covers these only. */
+  remainingQuantity: number;
 };
 
 export type RefundableOrder = {
@@ -908,32 +985,35 @@ export async function loadRefundableOrders(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<RefundableOrder[]> {
-  const [ordersRes, returnsRes] = await Promise.all([
+  const returnsQuery = (select: string) =>
+    supabase.from("sales_returns").select(select).eq("organization_id", orgId).not("order_line_id", "is", null);
+  const [ordersRes, returnsFirst] = await Promise.all([
     supabase
       .from("orders")
       .select(
         "id,ref_demande,date_commande,client_id,montant_total,clients(name)," +
-          "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,retour_impossible)",
+          "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,retour_impossible,depuis_magasin)",
       )
       .eq("organization_id", orgId)
       .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
       .order("date_commande", { ascending: false })
       .limit(150),
-    supabase
-      .from("sales_returns")
-      .select("order_line_id")
-      .eq("organization_id", orgId)
-      .not("order_line_id", "is", null),
+    returnsQuery("order_line_id,statut_traitement,quantity"),
   ]);
+  // Units per return (migration 20260930020000); an older database counts one unit per return.
+  const returnsRes =
+    returnsFirst.error && /quantity/i.test(returnsFirst.error.message) ? await returnsQuery("order_line_id,statut_traitement") : returnsFirst;
 
   if (ordersRes.error) throw new Error(ordersRes.error.message);
   if (returnsRes.error) throw new Error(returnsRes.error.message);
 
-  const returnedLineIds = new Set(
-    (returnsRes.data ?? []).map((r) =>
-      String((r as Record<string, unknown>).order_line_id),
-    ),
-  );
+  const returnedQty = new Map<string, number>();
+  for (const raw of returnsRes.data ?? []) {
+    const r = raw as unknown as Record<string, unknown>;
+    if (r.statut_traitement === "REFUSE") continue;
+    const id = String(r.order_line_id);
+    returnedQty.set(id, (returnedQty.get(id) ?? 0) + Math.max(1, Number(r.quantity) || 1));
+  }
 
   return (ordersRes.data ?? []).map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
@@ -945,15 +1025,18 @@ export async function loadRefundableOrders(
     )?.map((l) => {
       const qty = toNumber(l.quantity);
       const unit = toNumber(l.prix_vente_unitaire);
+      const remaining = Math.max(0, qty - (returnedQty.get(String(l.id)) ?? 0));
       return {
         id: String(l.id),
         reference: String(l.reference ?? ""),
         designation: String(l.nom_produit ?? ""),
         quantity: qty,
         unitPrice: unit,
-        lineTotal: qty * unit,
+        lineTotal: remaining * unit,
         retourImpossible: Boolean(l.retour_impossible),
-        alreadyReturned: returnedLineIds.has(String(l.id)),
+        alreadyReturned: remaining <= 0,
+        fromStock: l.depuis_magasin === true,
+        remainingQuantity: remaining,
       };
     });
     return {
@@ -978,8 +1061,10 @@ export async function createWalkInReturn(
     lines: RefundableLine[];
     compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
     supplierId?: string | null;
+    /** Return fee per line id, in percent (conditions de retour). */
+    feePcts?: Record<string, number>;
   },
-): Promise<{ avoirNum: string | null }> {
+): Promise<{ avoirNum: string | null; feesApplied: boolean }> {
   const refundable = input.lines.filter(
     (line) => !line.retourImpossible && !line.alreadyReturned,
   );
@@ -987,15 +1072,23 @@ export async function createWalkInReturn(
     throw new Error("Aucune ligne remboursable selectionnee.");
   }
 
-  const { data, error } = await supabase.rpc("create_walk_in_return", {
+  const base = {
     p_order_id: input.orderId,
     p_line_ids: refundable.map((line) => line.id),
     p_reason: input.reason,
     p_compensation: input.compensation ?? "REMBOURSEMENT",
     p_supplier_id: input.supplierId ?? null,
-  });
+  };
+  const fees = refundable.map((line) => Math.min(100, Math.max(0, input.feePcts?.[line.id] ?? 0)));
+  let feesApplied = fees.some((f) => f > 0);
+  let { data, error } = await supabase.rpc("create_walk_in_return", { ...base, p_fee_pcts: fees });
+  // Database without migration 20260930020000: the return still goes through, without fees.
+  if (error && /p_fee_pcts|create_walk_in_return/i.test(error.message)) {
+    feesApplied = false;
+    ({ data, error } = await supabase.rpc("create_walk_in_return", base));
+  }
   if (error) throw new Error(error.message);
-  return { avoirNum: typeof data === "string" ? data : null };
+  return { avoirNum: typeof data === "string" ? data : null, feesApplied };
 }
 
 /* ------------------------------------------------------------------ */

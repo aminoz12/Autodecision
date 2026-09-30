@@ -1,6 +1,7 @@
 "use client";
 
 import { LifeBuoy, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -258,13 +259,13 @@ export function SavSettingsCard({ orgId, orgName, horaires, isAdmin }: { orgId: 
             disabled={!isAdmin}
             value={settings.returnPolicyText ?? ""}
             onChange={(e) => patch({ returnPolicyText: e.target.value || null })}
-            placeholder={`Reprise sous ${settings.returnPolicyDays} jours, pièce non montée, dans son emballage d'origine, sur présentation du ticket. Pièces électriques montées : ni reprises ni échangées.`}
+            placeholder={RETURN_CONDITIONS_TEXT}
           />
         </div>
 
         <h3 className="sav-panel-subtitle">Garantie commerciale des équipementiers</h3>
         <p className="st-cmd-hint">
-          La garantie légale (24 mois) est calculée d&apos;office sur chaque ligne vendue. Ajoutez ici les durées commerciales par marque et/ou
+          La garantie légale (12 mois) est calculée d&apos;office sur chaque ligne vendue. Ajoutez ici les durées commerciales par marque et/ou
           famille : la règle la plus précise l&apos;emporte.
         </p>
         <table className="sav-mini">
@@ -283,7 +284,7 @@ export function SavSettingsCard({ orgId, orgName, horaires, isAdmin }: { orgId: 
                 </td>
               </tr>
             ))}
-            {rules.length === 0 && <tr><td className="text-muted">Aucune règle : seule la garantie légale de 24 mois est comptée.</td></tr>}
+            {rules.length === 0 && <tr><td className="text-muted">Aucune règle : seule la garantie légale de 12 mois est comptée.</td></tr>}
           </tbody>
         </table>
         {isAdmin && (

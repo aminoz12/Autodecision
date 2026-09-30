@@ -498,6 +498,8 @@ export type SavCaseRow = {
   /** Commercial warranty and legal extension of the sold line (null without a sale). */
   lineWarrantyMonths: number | null;
   lineExtensionMonths: number;
+  /** Sold from the shelf (stock fee schedule) or ordered (unknown on older rows). */
+  fromStock: boolean | null;
   partValue: number | null;
   description: string | null;
   clientStatus: string;
@@ -535,7 +537,7 @@ export type SavCaseRow = {
 };
 
 const CASE_SELECT =
-  "*, clients(name, is_garage), suppliers(name, sav_email), orders(ref_demande), order_lines(warranty_months, warranty_extension_months)";
+  "*, clients(name, is_garage), suppliers(name, sav_email), orders(ref_demande), order_lines(warranty_months, warranty_extension_months, depuis_magasin)";
 
 function parseCase(raw: unknown): SavCaseRow {
   const r = raw as Record<string, unknown>;
@@ -567,6 +569,7 @@ function parseCase(raw: unknown): SavCaseRow {
     purchaseDate: str(r.purchase_date),
     lineWarrantyMonths: num(line?.warranty_months),
     lineExtensionMonths: toNumber(line?.warranty_extension_months),
+    fromStock: line ? line.depuis_magasin === true : null,
     partValue: num(r.part_value),
     description: str(r.description),
     clientStatus: String(r.client_status ?? "RECU"),

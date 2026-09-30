@@ -46,6 +46,19 @@ export async function loadNotifications(
   return { items: (listRes.data ?? []).map(map), unread: countRes.count ?? 0 };
 }
 
+/** Destinations (href) of every unread notification: feeds the per-page counters in the menu. */
+export async function loadUnreadHrefs(supabase: SupabaseClient, orgId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("href")
+    .eq("organization_id", orgId)
+    .is("read_at", null)
+    .not("href", "is", null)
+    .limit(500);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => String((r as { href: string | null }).href ?? "")).filter(Boolean);
+}
+
 export async function markNotificationsRead(supabase: SupabaseClient, ids?: string[]): Promise<void> {
   const { error } = await supabase.rpc("mark_notifications_read", { p_ids: ids && ids.length > 0 ? ids : null });
   if (error) throw new Error(error.message);

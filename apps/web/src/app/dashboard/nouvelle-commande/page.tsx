@@ -40,6 +40,7 @@ import {
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
+import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 
@@ -174,11 +175,10 @@ export default function NouvelleCommandePage() {
   const [immatriculation, setImmatriculation] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [kilometrage, setKilometrage] = useState("");
-  // Après-vente : ce qui doit être capturé à la vente (dix secondes, pas plus).
-  const [promisedDate, setPromisedDate] = useState("");
-  const [garagePoseurId, setGaragePoseurId] = useState("");
+  /* RGPD: opt-in to the maintenance reminders (« Relance d'entretien »), asked at the sale. */
   const [smsConsent, setSmsConsent] = useState(false);
   const [smsConsentTouched, setSmsConsentTouched] = useState(false);
+  // Après-vente : ce qui doit être capturé à la vente (dix secondes, pas plus).
   const [savWarning, setSavWarning] = useState<string | null>(null);
   // Politique de reprise et délai de consigne : imprimés sur le ticket (null = module pas encore activé).
   const [savSettings, setSavSettings] = useState<SavSettings | null>(null);
@@ -198,6 +198,13 @@ export default function NouvelleCommandePage() {
     setQuickRows([{ ...emptyQuickRow }]);
     setQuickOpen(true);
   }, []);
+
+  // The top bar opens this page with ?rajout=1 straight into the quick-add modal.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("rajout") !== "1") return;
+    const id = window.setTimeout(openQuick, 0);
+    return () => window.clearTimeout(id);
+  }, [openQuick]);
 
   const setQuickRow = useCallback(
     (idx: number, field: keyof QuickRow, value: string | number | boolean) => {
@@ -527,6 +534,7 @@ export default function NouvelleCommandePage() {
     };
   }, [supabase, linkedParticulierId, smsConsentTouched]);
 
+
   // Id set by the phone match (a manual pick from the list is never undone).
   const phoneMatchedId = useRef<string | null>(null);
   useEffect(() => {
@@ -786,6 +794,10 @@ export default function NouvelleCommandePage() {
       setError("Renseignez le nom du client.");
       return;
     }
+    if (lines.some((l) => l.nom_produit.trim() && !l.reference.trim())) {
+      setError("La référence de chaque pièce est obligatoire.");
+      return;
+    }
     const validLines = lines.filter(
       (l) => l.nom_produit.trim() && l.reference.trim(),
     );
@@ -868,12 +880,8 @@ export default function NouvelleCommandePage() {
       );
       // Champs après-vente : jamais bloquants — la commande existe déjà.
       try {
-        if (destineA === "COMPTOIR") {
-          await setOrderSavFields(supabase, order.id, {
-            promisedDate: promisedDate || undefined,
-            garagePoseurId: garagePoseurId || undefined,
-            smsMarketingConsent: smsConsentTouched ? smsConsent : undefined,
-          });
+        if (destineA === "COMPTOIR" && smsConsentTouched) {
+          await setOrderSavFields(supabase, order.id, { smsMarketingConsent: smsConsent });
         }
         await finalizeOrderSav(supabase, order.id);
       } catch (savErr) {
@@ -910,11 +918,8 @@ export default function NouvelleCommandePage() {
         statutPaiement: effectiveStatut,
         modePaiement: onAccount ? "EN_COMPTE" : null,
         echeance: accountDueDate ? accountDueDate.toISOString().slice(0, 10) : null,
-        promisedDate: destineA === "COMPTOIR" && promisedDate ? promisedDate : null,
-        returnPolicy: savSettings
-          ? savSettings.returnPolicyText ??
-            `Reprise sous ${savSettings.returnPolicyDays} jours : pièce non montée, emballage d'origine, sur présentation du ticket.`
-          : null,
+        promisedDate: null,
+        returnPolicy: savSettings?.returnPolicyText || RETURN_CONDITIONS_TEXT,
         consigneDeadline:
           savSettings && validLines.some((l) => l.consigne)
             ? new Date(Date.now() + savSettings.consigneClientDays * 86_400_000).toISOString().slice(0, 10)
@@ -955,8 +960,6 @@ export default function NouvelleCommandePage() {
     setImmatriculation("");
     setVehicleModel("");
     setKilometrage("");
-    setPromisedDate("");
-    setGaragePoseurId("");
     setSmsConsent(false);
     setSmsConsentTouched(false);
     setSavWarning(null);
@@ -1229,43 +1232,17 @@ export default function NouvelleCommandePage() {
           </div>
         </div>
         {destineA === "COMPTOIR" && (
-          <div className="nc-sav">
-            <div className="od-field">
-              <span className="od-label">Promis pour le</span>
-              <input
-                className="od-input"
-                type="date"
-                value={promisedDate}
-                onChange={(e) => setPromisedDate(e.target.value)}
-                title="La date annoncée au client. Vide = l'arrivée prévue de la dernière pièce."
-              />
-            </div>
-            <div className="od-field">
-              <span className="od-label">Garage qui posera la pièce</span>
-              <div className="od-select">
-                <select value={garagePoseurId} onChange={(e) => setGaragePoseurId(e.target.value)}>
-                  <option value="">— Le client / non précisé —</option>
-                  {garages.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="h-4 w-4" />
-              </div>
-            </div>
-            <label className="sav-check nc-sav-consent">
-              <input
-                type="checkbox"
-                checked={smsConsent}
-                onChange={(e) => {
-                  setSmsConsent(e.target.checked);
-                  setSmsConsentTouched(true);
-                }}
-              />
-              Le client accepte nos rappels d&apos;entretien par SMS
-            </label>
-          </div>
+          <label className="sav-check nc-consent">
+            <input
+              type="checkbox"
+              checked={smsConsent}
+              onChange={(e) => {
+                setSmsConsent(e.target.checked);
+                setSmsConsentTouched(true);
+              }}
+            />
+            Le client accepte nos rappels d&apos;entretien par SMS
+          </label>
         )}
         {linkedParticulier ? (
           <div className="nc-known">
@@ -1312,7 +1289,7 @@ export default function NouvelleCommandePage() {
                   />
                 </th>
                 <th>Désignation</th>
-                <th>Référence</th>
+                <th>Référence <span className="od-req">*</span></th>
                 <th>Fournisseur</th>
                 <th className="od-th-center">Qté</th>
                 <th className="od-th-right">Prix vente</th>
@@ -1350,6 +1327,7 @@ export default function NouvelleCommandePage() {
                     <input
                       className="od-input nc-cell-input nc-cell-ref"
                       placeholder="GDB1322"
+                      aria-invalid={!!l.nom_produit.trim() && !l.reference.trim()}
                       value={l.reference}
                       onChange={(e) =>
                         setLine(idx, "reference", e.target.value)

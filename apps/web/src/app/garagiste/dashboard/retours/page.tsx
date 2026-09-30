@@ -1,16 +1,10 @@
 "use client";
 
-import { ChevronDown, Info, Loader2, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowRight, RotateCcw } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import {
-  createGarageReturn,
-  loadGarageOrders,
-  loadGarageReturns,
-  RETURN_LABEL,
-  type GarageOrder,
-  type GarageReturn,
-} from "@/lib/data/garage";
+import { loadGarageReturns, RETURN_LABEL, type GarageReturn } from "@/lib/data/garage";
 
 function frDate(v: string | null) {
   if (!v) return "—";
@@ -18,53 +12,23 @@ function frDate(v: string | null) {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
 }
 
-export default function RetoursPage() {
+/**
+ * The garage follows its return requests here. A request is made from
+ * « Mes commandes », article by article; the magasin validates, the livreur
+ * collects, the magasin receives.
+ */
+export default function GarageReturnsPage() {
   const { supabase, profile } = useAuth();
-  const [orders, setOrders] = useState<GarageOrder[]>([]);
   const [returns, setReturns] = useState<GarageReturn[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [orderId, setOrderId] = useState("");
-  const [lineId, setLineId] = useState("");
-  const [designation, setDesignation] = useState("");
-  const [reason, setReason] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const selectedOrder = useMemo(
-    () => orders.find((o) => o.id === orderId) ?? null,
-    [orders, orderId],
-  );
-
-  const pickOrder = useCallback((value: string) => {
-    setOrderId(value);
-    setLineId("");
-    setDesignation("");
-  }, []);
-
-  const pickLine = useCallback(
-    (value: string) => {
-      setLineId(value);
-      const line = selectedOrder?.lines.find((l) => l.id === value);
-      setDesignation(
-        line ? `${line.designation} (${line.reference})`.trim() : "",
-      );
-    },
-    [selectedOrder],
-  );
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || !profile.client_id) return;
     setLoading(true);
     setError(null);
     try {
-      const [o, r] = await Promise.all([
-        loadGarageOrders(supabase, profile.organization_id, profile.client_id),
-        loadGarageReturns(supabase, profile.organization_id, profile.client_id),
-      ]);
-      setOrders(o);
-      setReturns(r);
+      setReturns(await loadGarageReturns(supabase, profile.organization_id, profile.client_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -76,115 +40,39 @@ export default function RetoursPage() {
     void load();
   }, [load]);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!profile?.organization_id || !profile.client_id) return;
-    if (orderId && !lineId) {
-      setError("Choisissez la pièce à retourner dans la commande.");
-      return;
-    }
-    // A part the magasin flagged non-returnable cannot be sent back.
-    const chosen = selectedOrder?.lines.find((l) => l.id === lineId);
-    if (chosen?.retourImpossible) {
-      setError("Cette pièce est non retournable (retour impossible).");
-      return;
-    }
-    if (!designation.trim() || !reason.trim()) {
-      setError("Indiquez la pièce et le motif du retour.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setMsg(null);
-    try {
-      await createGarageReturn(supabase, profile.organization_id, profile.client_id, {
-        orderId: orderId || null,
-        designation,
-        reason,
-      });
-      setOrderId("");
-      setLineId("");
-      setDesignation("");
-      setReason("");
-      setMsg("Demande de retour envoyée à votre magasin.");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div className="gp-page">
       <header className="gp-header">
         <h1 className="gp-title">Retours</h1>
-        <p className="gp-subtitle">Demandez le retour d&apos;une pièce auprès de votre magasin.</p>
+        <p className="gp-subtitle">Vos demandes de retour et leur avancement : validation par le magasin, passage du livreur, réception.</p>
       </header>
 
       {error && <div className="nc-error">{error}</div>}
-      {msg && <div className="nc-ok">{msg}</div>}
 
-      <form onSubmit={submit} className="gp-card gp-form">
-        <div className="gp-card-title">Nouvelle demande de retour</div>
-        <div className="od-field">
-          <span className="od-label">Commande concernée (optionnel)</span>
-          <div className="od-select">
-            <select value={orderId} onChange={(e) => pickOrder(e.target.value)}>
-              <option value="">— Aucune / hors commande —</option>
-              {orders.map((o) => (
-                <option key={o.id} value={o.id}>{o.ref} — {frDate(o.date)}</option>
-              ))}
-            </select>
-            <ChevronDown className="h-4 w-4" />
-          </div>
+      <div className="gp-card gp-return-howto">
+        <RotateCcw className="h-5 w-5" />
+        <div>
+          <strong>Pour demander un retour</strong>
+          <span>Ouvrez la commande dans « Mes commandes » et cliquez « Demander un retour » sur l&apos;article : quantité, motif, commentaire.</span>
         </div>
-        {orderId ? (
-          <div className="od-field">
-            <span className="od-label">Pièce à retourner *</span>
-            <div className="od-select">
-              <select value={lineId} onChange={(e) => pickLine(e.target.value)}>
-                <option value="">— Choisir une pièce —</option>
-                {selectedOrder?.lines.map((l) => (
-                  <option key={l.id} value={l.id} disabled={l.retourImpossible}>
-                    {l.designation} ({l.reference})
-                    {l.retourImpossible ? " — retour impossible" : ""}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-4 w-4" />
-            </div>
-            {selectedOrder?.lines.some((l) => l.retourImpossible) && (
-              <span className="nc-hint" style={{ marginTop: 6 }}>
-                <Info className="h-3.5 w-3.5" />
-                Les pièces marquées « retour impossible » ne peuvent pas être retournées.
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="od-field">
-            <span className="od-label">Pièce à retourner *</span>
-            <input className="od-input" placeholder="Plaquettes de frein avant (GDB1330)" value={designation} onChange={(e) => setDesignation(e.target.value)} />
-          </div>
-        )}
-        <div className="od-field">
-          <span className="od-label">Motif *</span>
-          <textarea className="gp-textarea" rows={3} placeholder="Pièce non conforme, erreur de référence…" value={reason} onChange={(e) => setReason(e.target.value)} />
-        </div>
-        <div className="gp-form-actions">
-          <button type="submit" className="od-btn od-btn--primary" disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 nc-spin" /> : <RotateCcw className="h-4 w-4" />}
-            {saving ? "Envoi…" : "Demander le retour"}
-          </button>
-        </div>
-      </form>
+        <Link href="/garagiste/dashboard/commandes" className="od-btn od-btn--primary">
+          Mes commandes <ArrowRight className="h-4 w-4" />
+        </Link>
+      </div>
 
-      <section className="gp-card" style={{ marginTop: 18 }}>
+      <section className="gp-card">
         <div className="gp-card-title">Mes demandes de retour</div>
         <div className="rl-table-wrap">
           <table className="stk-table">
             <thead>
-              <tr><th>Réf.</th><th>Pièce</th><th>Motif</th><th>Commande</th><th>Date</th><th>Statut</th></tr>
+              <tr>
+                <th>Réf.</th>
+                <th>Pièce</th>
+                <th>Motif</th>
+                <th>Commande</th>
+                <th>Date</th>
+                <th>Statut</th>
+              </tr>
             </thead>
             <tbody>
               {returns.map((r) => {
@@ -192,16 +80,24 @@ export default function RetoursPage() {
                 return (
                   <tr key={r.id}>
                     <td className="stk-ref">{r.ref}</td>
-                    <td>{r.designation}</td>
+                    <td>
+                      {r.quantity > 1 ? `${r.quantity} × ` : ""}
+                      {r.designation}
+                    </td>
                     <td className="rl-muted">{r.reason}</td>
                     <td>{r.orderRef ?? "—"}</td>
                     <td className="rl-muted-strong">{frDate(r.createdAt)}</td>
-                    <td><span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span></td>
+                    <td>
+                      <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                      {r.status === "A_RECUPERER" && r.legDone && <span className="rl-muted"> · récupérée par le livreur</span>}
+                    </td>
                   </tr>
                 );
               })}
               {!loading && returns.length === 0 && (
-                <tr><td colSpan={6} className="stk-empty">Aucune demande de retour.</td></tr>
+                <tr>
+                  <td colSpan={6} className="stk-empty">Aucune demande de retour pour l&apos;instant.</td>
+                </tr>
               )}
             </tbody>
           </table>

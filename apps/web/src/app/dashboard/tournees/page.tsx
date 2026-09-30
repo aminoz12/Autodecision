@@ -11,7 +11,6 @@ import {
   Hourglass,
   Loader2,
   PackageCheck,
-  Play,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -815,17 +814,6 @@ export default function TourneesPage() {
 
                 {tour && (
                   <div className="tf-panel-actions">
-                    {tour.status === "PLANIFIEE" && (
-                      <button
-                        type="button"
-                        className="od-btn od-btn--primary"
-                        disabled={busy === `status-${tour.id}`}
-                        onClick={() => changeStatus("EN_COURS")}
-                      >
-                        <Play className="h-4 w-4" />
-                        Marquer partie
-                      </button>
-                    )}
                     {tour.status !== "TERMINEE" && (
                       <button
                         type="button"
@@ -835,17 +823,6 @@ export default function TourneesPage() {
                       >
                         <Flag className="h-4 w-4" />
                         Finaliser la tournée
-                      </button>
-                    )}
-                    {tour.status !== "PLANIFIEE" && (
-                      <button
-                        type="button"
-                        className="od-btn od-btn--ghost"
-                        disabled={busy === `status-${tour.id}`}
-                        onClick={() => changeStatus(tour.status === "TERMINEE" ? "EN_COURS" : "PLANIFIEE")}
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        {tour.status === "TERMINEE" ? "Rouvrir la tournée" : "Remettre en planifiée"}
                       </button>
                     )}
                   </div>

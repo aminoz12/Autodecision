@@ -258,7 +258,7 @@ export function OrderSavPanel({
       <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={(e) => void uploadPhoto(e.target.files?.[0])} />
 
       <div className="sav-flow-foot">
-        <span className="sav-sub">Garantie légale : 24 mois à compter de la délivrance. Le magasin porte la garantie, même quand le fournisseur traîne.</span>
+        <span className="sav-sub">Garantie légale : 12 mois à compter de la délivrance. Le magasin porte la garantie, même quand le fournisseur traîne.</span>
         <button type="button" className="od-btn od-btn--outline" disabled={busy !== null || !info} onClick={() => void save()}>
           {busy === "save" ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />} Enregistrer
         </button>

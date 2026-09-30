@@ -69,6 +69,8 @@ export type GarageOrderLine = {
   retourImpossible: boolean;
   unitPrice: number;
   lineTotal: number;
+  /** Counter label on the line: A_PAYER / PAYE / OFFERT (null on the portal view or before migration 20260930030000). */
+  reglement: string | null;
 };
 
 export type GarageOrder = {
@@ -145,6 +147,7 @@ export async function loadGarageOrders(
           retourImpossible: Boolean(l.retour_impossible),
           unitPrice: pv,
           lineTotal: qty * pv,
+          reglement: null,
         };
       },
     );
@@ -292,6 +295,12 @@ export type GarageReturn = {
   reason: string;
   status: string;
   orderRef: string | null;
+  /** The order line (garage requests by article). */
+  lineId: string | null;
+  quantity: number;
+  /** The livreur collected it. */
+  legDone: boolean;
+  receivedAt: string | null;
 };
 
 export async function loadGarageReturns(
@@ -299,16 +308,15 @@ export async function loadGarageReturns(
   orgId: string,
   clientId: string,
 ): Promise<GarageReturn[]> {
-  const { data, error } = await supabase
-    .from("sales_returns")
-    .select(
-      "id,ref,created_at,designation,reason,motif,statut_traitement,orders(ref_demande)",
-    )
-    .eq("organization_id", orgId)
-    .eq("client_id", clientId)
-    .order("created_at", { ascending: false })
-    .limit(200);
-
+  const query = (select: string) =>
+    supabase.from("sales_returns").select(select).eq("organization_id", orgId).eq("client_id", clientId).order("created_at", { ascending: false }).limit(200);
+  const BASE = "id,ref,created_at,designation,reason,motif,statut_traitement,order_line_id,leg_status,orders(ref_demande)";
+  // Garage flow columns (migration 20260930030000).
+  let { data, error } = await query(BASE + ",quantity,received_at");
+  if (error && /quantity|received_at/i.test(error.message)) ({ data, error } = await query(BASE));
+  if (error && /order_line_id|leg_status/i.test(error.message)) {
+    ({ data, error } = await query("id,ref,created_at,designation,reason,motif,statut_traitement,orders(ref_demande)"));
+  }
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((raw) => {
@@ -322,6 +330,10 @@ export async function loadGarageReturns(
       reason: String(row.reason ?? row.motif ?? "-"),
       status: String(row.statut_traitement ?? "A_TRAITER"),
       orderRef: order ? String(order.ref_demande ?? "") : null,
+      lineId: (row.order_line_id as string | null) ?? null,
+      quantity: Math.max(1, toNumber(row.quantity) || 1),
+      legDone: row.leg_status === "FAIT",
+      receivedAt: (row.received_at as string | null) ?? null,
     };
   });
 }
@@ -338,6 +350,39 @@ export async function createGarageReturn(
     p_reason: input.reason,
   });
   if (error) throw new Error(error.message);
+}
+
+/** Garage portal: ask the magasin to take back part of a line (migration 20260930030000). */
+export async function requestGarageLineReturn(
+  supabase: SupabaseClient,
+  input: { lineId: string; quantity: number; motifCode: string; comment?: string },
+): Promise<string> {
+  const { data, error } = await supabase.rpc("request_garage_line_return", {
+    p_line_id: input.lineId,
+    p_quantity: Math.max(1, Math.trunc(input.quantity)),
+    p_motif_code: input.motifCode,
+    p_comment: input.comment?.trim() || null,
+  });
+  if (error) {
+    throw new Error(
+      /request_garage_line_return/i.test(error.message)
+        ? "Les demandes de retour par article demandent une mise à jour côté magasin (migration 20260930030000)."
+        : error.message,
+    );
+  }
+  return String(data ?? "");
+}
+
+/** Counter: the label of a line on the garage file (A_PAYER / PAYE / OFFERT). */
+export async function setLineReglement(supabase: SupabaseClient, lineId: string, reglement: "A_PAYER" | "PAYE" | "OFFERT"): Promise<void> {
+  const { error } = await supabase.rpc("set_line_reglement", { p_line_id: lineId, p_reglement: reglement });
+  if (error) {
+    throw new Error(
+      /set_line_reglement/i.test(error.message)
+        ? "Le règlement par ligne demande la migration 20260930030000 (npx supabase db push)."
+        : error.message,
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -474,11 +519,13 @@ export function garageStage(
 }
 
 export const RETURN_LABEL: Record<string, { label: string; cls: string }> = {
-  A_TRAITER: { label: "À traiter", cls: "amber" },
+  A_TRAITER: { label: "En attente de validation magasin", cls: "amber" },
   DEMANDE_ENVOYEE: { label: "Demande envoyée", cls: "blue" },
-  A_RECUPERER: { label: "À récupérer", cls: "blue" },
-  ACCEPTE: { label: "Accepté", cls: "green" },
-  REFUSE: { label: "Refusé", cls: "red" },
+  A_RECUPERER: { label: "Validé — le livreur passe la récupérer", cls: "blue" },
+  ACCEPTE: { label: "Retournée au magasin", cls: "green" },
+  REFUSE: { label: "Retour refusé", cls: "red" },
+  REMBOURSE: { label: "Remboursée", cls: "green" },
+  AVOIR: { label: "Avoir émis", cls: "green" },
 };
 
 /* ------------------------------------------------------------------ */
@@ -625,17 +672,14 @@ export async function loadGarageOrdersForStaff(
   orgId: string,
   clientId: string,
 ): Promise<GarageOrder[]> {
-  const { data, error } = await supabase
-    .from("orders")
-    .select(
-      "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance," +
-        "order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire)",
-    )
-    .eq("organization_id", orgId)
-    .eq("client_id", clientId)
-    .eq("is_restock", false)
-    .order("createdAt", { ascending: false })
-    .limit(500);
+  const select = (withReglement: boolean) =>
+    "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance," +
+    `order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire${withReglement ? ",reglement" : ""})`;
+  const query = (sel: string) =>
+    supabase.from("orders").select(sel).eq("organization_id", orgId).eq("client_id", clientId).eq("is_restock", false).order("createdAt", { ascending: false }).limit(500);
+  // Line labels (migration 20260930030000); an older database still lists the orders.
+  let { data, error } = await query(select(true));
+  if (error && /reglement/i.test(error.message)) ({ data, error } = await query(select(false)));
   if (error) throw new Error(error.message);
   return (data ?? []).map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
@@ -653,6 +697,7 @@ export async function loadGarageOrdersForStaff(
         retourImpossible: Boolean(l.retour_impossible),
         unitPrice: pv,
         lineTotal: qty * pv,
+        reglement: (l.reglement as string | null) ?? null,
       };
     });
     return {

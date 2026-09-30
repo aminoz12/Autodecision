@@ -49,16 +49,16 @@ describe("addMonths", () => {
 describe("lineWarranty — le voyant", () => {
   const today = day("2026-09-19");
 
-  it("is green well inside the 24 legal months", () => {
+  it("is green well inside the 12 legal months", () => {
     const w = lineWarranty({ start: "2026-05-03" }, today);
-    expect(w?.legalEnd).toBe("2028-05-03");
+    expect(w?.legalEnd).toBe("2027-05-03");
     expect(w?.commercialEnd).toBeNull();
     expect(w?.light).toBe("green");
     expect(w?.coverage).toBe("LEGALE");
   });
 
   it("turns orange in the last 90 days, red once expired", () => {
-    expect(lineWarranty({ start: "2024-11-01" }, today)?.light).toBe("orange");
+    expect(lineWarranty({ start: "2025-11-01" }, today)?.light).toBe("orange");
     const expired = lineWarranty({ start: "2024-09-01" }, today);
     expect(expired?.light).toBe("red");
     expect(expired?.coverage).toBe("EXPIREE");
@@ -67,7 +67,7 @@ describe("lineWarranty — le voyant", () => {
 
   it("keeps the longer of the two counters: a 36-month equipment warranty outlives the legal one", () => {
     const w = lineWarranty({ start: "2024-01-10", warrantyMonths: 36 }, today);
-    expect(w?.legalEnd).toBe("2026-01-10");
+    expect(w?.legalEnd).toBe("2025-01-10");
     expect(w?.commercialEnd).toBe("2027-01-10");
     expect(w?.end).toBe("2027-01-10");
     expect(w?.light).toBe("green");
@@ -75,12 +75,12 @@ describe("lineWarranty — le voyant", () => {
   });
 
   it("adds the 6 months of a replacement under warranty to the legal counter", () => {
-    const w = lineWarranty({ start: "2024-06-01", extensionMonths: 6 }, today);
+    const w = lineWarranty({ start: "2025-06-01", extensionMonths: 6 }, today);
     expect(w?.legalEnd).toBe("2026-12-01");
     expect(w?.light).toBe("orange");
   });
 
-  it("applies the presumption of an original defect during 24 months only", () => {
+  it("applies the presumption of an original defect during 12 months only", () => {
     const young = lineWarranty({ start: "2025-09-20", warrantyMonths: 60 }, today);
     const old = lineWarranty({ start: "2023-09-01", warrantyMonths: 60 }, today);
     expect(presumptionApplies(young as NonNullable<typeof young>, today)).toBe(true);

@@ -143,7 +143,7 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
               <WarrantyLight warranty={preset.warranty} />
               {presumptionApplies(preset.warranty) && (
                 <p className="sav-hint">
-                  Moins de 24 mois : le défaut est présumé exister à la délivrance. C&apos;est au vendeur de prouver le contraire — et
+                  Moins de 12 mois : le défaut est présumé exister à la délivrance. C&apos;est au vendeur de prouver le contraire — et
                   l&apos;interlocuteur du client, c&apos;est le magasin, pas l&apos;équipementier.
                 </p>
               )}
