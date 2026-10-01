@@ -7,9 +7,10 @@ const nextConfig = {
   // otherwise it emits ZERO node_modules and the Netlify function crashes with
   // "Cannot find module 'next/dist/server/lib/start-server.js'".
   outputFileTracingRoot: path.join(__dirname, "..", ".."),
-  // The deployed commit, attached to each line of the error journal (Netlify sets COMMIT_REF at build).
+  // The deployed commit, attached to each line of the error journal
+  // (Vercel sets VERCEL_GIT_COMMIT_SHA at build, Netlify COMMIT_REF).
   env: {
-    NEXT_PUBLIC_APP_VERSION: (process.env.COMMIT_REF || "").slice(0, 7) || "dev",
+    NEXT_PUBLIC_APP_VERSION: (process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_REF || "").slice(0, 7) || "dev",
   },
   // Extra dev origins (ngrok tunnels…): ALLOWED_DEV_ORIGINS="a.ngrok-free.app,b.ngrok-free.app"
   allowedDevOrigins: (process.env.ALLOWED_DEV_ORIGINS ?? "")

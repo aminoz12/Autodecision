@@ -4,12 +4,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { processSmsQueue, processSupplierReminders, type QueueResult } from "@/lib/sms-queue";
 
 export const dynamic = "force-dynamic";
+// A run sends up to a batch of e-mails and SMS: give it room on Vercel.
+export const maxDuration = 60;
 
 /**
  * Email fan-out for notifications + hourly scheduled reminders.
  *
- * Called either by a cron (header `x-cron-secret: $CRON_SECRET`) or
- * opportunistically by the in-app bell of any signed-in user (rate limited
+ * Called either by a cron — POST with `x-cron-secret: $CRON_SECRET`, or Vercel
+ * Cron (apps/web/vercel.json), which sends GET with `Authorization: Bearer
+ * $CRON_SECRET` — or opportunistically by the in-app bell of any signed-in user (rate limited
  * to one real run per minute per instance). Provider: Resend, env-gated —
  * without RESEND_API_KEY / EMAIL_FROM the emails are marked NO_PROVIDER so
  * the outbox does not grow forever and the in-app notification still works.
@@ -26,9 +29,20 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }
 
-export async function POST(request: Request) {
+function isCronCall(request: Request): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  const isCron = !!cronSecret && request.headers.get("x-cron-secret") === cronSecret;
+  if (!cronSecret) return false;
+  return request.headers.get("x-cron-secret") === cronSecret || request.headers.get("authorization") === `Bearer ${cronSecret}`;
+}
+
+/** Vercel Cron: a GET carrying the secret. Anyone else gets nothing from this door. */
+export async function GET(request: Request) {
+  if (!isCronCall(request)) return NextResponse.json({ error: "Non autorisé." }, { status: 401 });
+  return POST(request);
+}
+
+export async function POST(request: Request) {
+  const isCron = isCronCall(request);
   if (!isCron) {
     const supabase = await createClient();
     const {

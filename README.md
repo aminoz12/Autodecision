@@ -47,12 +47,16 @@ owner, bound to `platform_owners`).
 Supabase → Authentication → URL configuration must list `<site>/auth/callback`
 (password reset and invitation links land there).
 
-## Deployment (Netlify)
+## Deployment
 
-`netlify.toml` builds from the repo root (`npm --workspace web run build`, publish
-`apps/web/.next`, `@netlify/plugin-nextjs`). Set every variable of
-`apps/web/.env.example` in the Netlify site environment (server-only ones without
-`NEXT_PUBLIC_`). Health check: `GET /api/health`.
+Vercel is the target host: step-by-step in [docs/deploy-vercel.md](docs/deploy-vercel.md)
+(project root `apps/web`, functions in Frankfurt, daily cron in `apps/web/vercel.json`).
+
+Netlify still works during the switch: `netlify.toml` builds from the repo root
+(`npm --workspace web run build`, publish `apps/web/.next`, `@netlify/plugin-nextjs`).
+
+On either host, set every variable of `apps/web/.env.example` in the site environment
+(server-only ones without `NEXT_PUBLIC_`). Health check: `GET /api/health`.
 
 ## Project layout
 
