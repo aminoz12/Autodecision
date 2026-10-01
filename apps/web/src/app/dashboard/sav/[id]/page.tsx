@@ -29,6 +29,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fmtDate, fmtDateTime, fmtMoney, loadSupplierOptions, type SupplierOption } from "@/lib/data/saas";
 import {
   SavUnavailableError,
+  setSavCaseWarrantyMotif,
   addSavCaseFile,
   addSavCaseNote,
   loadSavCase,
@@ -52,12 +53,13 @@ import {
   lineWarranty,
   slaHoursLeft,
   supplierStatusTone,
+  WARRANTY_MOTIFS,
 } from "@/lib/sav";
 
 const FILE_KIND_LABEL: Record<string, string> = {
   DEFAUT: "Photo du défaut",
   PIECE: "Photo de la pièce",
-  FACTURE_POSE: "Facture de pose",
+  FACTURE_POSE: "Facture de montage",
   COEUR: "Cœur consigné",
   AUTRE: "Autre",
 };
@@ -90,6 +92,8 @@ export default function SavCasePage() {
   const [gestureCredit, setGestureCredit] = useState(true);
   const [fileKind, setFileKind] = useState("DEFAUT");
   const fileInput = useRef<HTMLInputElement>(null);
+  /** Facture de montage: imported as a file (it replaced the invoice-number field). */
+  const invoiceInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     if (!profile?.organization_id || !caseId) return;
@@ -108,7 +112,6 @@ export default function SavCasePage() {
           km_montage: c.kmMontage != null ? String(c.kmMontage) : "",
           km_panne: c.kmPanne != null ? String(c.kmPanne) : "",
           garage_poseur: c.garagePoseur ?? "",
-          pose_invoice_ref: c.poseInvoiceRef ?? "",
           serial_number: c.serialNumber ?? "",
           marque: c.marque ?? "",
           part_location_note: c.partLocationNote ?? "",
@@ -169,7 +172,6 @@ export default function SavCasePage() {
         km_montage: toNum(form.km_montage ?? ""),
         km_panne: toNum(form.km_panne ?? ""),
         garage_poseur: form.garage_poseur || null,
-        pose_invoice_ref: form.pose_invoice_ref || null,
         serial_number: form.serial_number || null,
         marque: form.marque || null,
         labor_rate: toNum(form.labor_rate ?? ""),
@@ -227,18 +229,19 @@ export default function SavCasePage() {
     }
   };
 
-  const upload = async (file: File | undefined) => {
+  const upload = async (file: File | undefined, kind: string = fileKind) => {
     if (!file || !profile?.organization_id) return;
     setBusy("file");
     setError(null);
     try {
-      await addSavCaseFile(createClient(), profile.organization_id, caseId, file, fileKind, null);
+      await addSavCaseFile(createClient(), profile.organization_id, caseId, file, kind, null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
       if (fileInput.current) fileInput.current.value = "";
+      if (invoiceInput.current) invoiceInput.current.value = "";
     }
   };
 
@@ -260,6 +263,19 @@ export default function SavCasePage() {
       .join("\n");
     return `mailto:${c.supplierEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   })();
+
+  const changeMotif = async (code: string) => {
+    setBusy("motif");
+    setError(null);
+    try {
+      await setSavCaseWarrantyMotif(createClient(), caseId, code || null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const TypeIcon = c.type === "GARANTIE" ? ShieldCheck : Scale;
   const labor = laborAmount(toNum(form.labor_rate ?? ""), toNum(form.labor_hours ?? ""));
@@ -285,6 +301,23 @@ export default function SavCasePage() {
           </p>
         </div>
         <div className="od-title-actions">
+          {c.type === "GARANTIE" && (
+            <select
+              className="od-input sav-motif-select"
+              value={c.warrantyMotif ?? ""}
+              disabled={busy !== null}
+              onChange={(e) => void changeMotif(e.target.value)}
+              aria-label="Motif de garantie"
+              title="Motif de garantie"
+            >
+              <option value="">— Motif de garantie —</option>
+              {WARRANTY_MOTIFS.map((m) => (
+                <option key={m.code} value={m.code}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          )}
           {sla != null && (
             <span className={`rt-badge rt-badge--${sla < 0 ? "red" : sla <= 12 ? "amber" : "blue"}`}>
               {sla < 0 ? `Délai de réponse dépassé de ${-sla} h` : `Réponse attendue sous ${sla} h`}
@@ -450,10 +483,36 @@ export default function SavCasePage() {
                     <span className="od-label">Garage qui a monté</span>
                     <input className="od-input" value={form.garage_poseur ?? ""} onChange={set("garage_poseur")} />
                   </label>
-                  <label className="od-field">
-                    <span className="od-label">Facture de pose</span>
-                    <input className="od-input" value={form.pose_invoice_ref ?? ""} onChange={set("pose_invoice_ref")} />
-                  </label>
+                  <div className="od-field">
+                    <span className="od-label">Pièce jointe</span>
+                    <div className="sav-attach">
+                      <input
+                        ref={invoiceInput}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,application/pdf"
+                        hidden
+                        onChange={(e) => void upload(e.target.files?.[0], "FACTURE_POSE")}
+                      />
+                      <button type="button" className="od-btn od-btn--ghost" disabled={busy !== null} onClick={() => invoiceInput.current?.click()}>
+                        {busy === "file" ? <Loader2 className="h-4 w-4 nc-spin" /> : <Paperclip className="h-4 w-4" />} Importer
+                      </button>
+                      {(() => {
+                        const invoice = detail?.files.find((f) => f.kind === "FACTURE_POSE");
+                        if (invoice?.url) {
+                          return (
+                            <a className="sav-attach-name sav-attach-name--on" href={invoice.url} target="_blank" rel="noreferrer">
+                              Facture de montage importée — ouvrir
+                            </a>
+                          );
+                        }
+                        return (
+                          <span className="sav-attach-name">
+                            {c.poseInvoiceRef ? `N° saisi : ${c.poseInvoiceRef}` : "Facture de montage (PDF ou photo)"}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
                 </div>
                 <div className="ga-modal-row">
                   <label className="od-field">

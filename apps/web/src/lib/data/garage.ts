@@ -71,6 +71,8 @@ export type GarageOrderLine = {
   lineTotal: number;
   /** Counter label on the line: A_PAYER / PAYE / OFFERT (null on the portal view or before migration 20260930030000). */
   reglement: string | null;
+  /** Amount taken off the order balance because the line is offered (null before migration 20261001030000: label only). */
+  offertAmount: number | null;
 };
 
 export type GarageOrder = {
@@ -84,6 +86,8 @@ export type GarageOrder = {
   total: number;
   paid: number;
   balance: number;
+  /** Value of the offered lines, already taken off the balance. */
+  offert: number;
   /** ESPECES / CARTE / VIREMENT / CHEQUE / EN_COMPTE (null on old rows). */
   modePaiement: string | null;
   /** Due date of an on-account order (yyyy-mm-dd). */
@@ -148,6 +152,7 @@ export async function loadGarageOrders(
           unitPrice: pv,
           lineTotal: qty * pv,
           reglement: null,
+          offertAmount: null,
         };
       },
     );
@@ -162,6 +167,7 @@ export async function loadGarageOrders(
       total: toNumber(row.montant_total),
       paid: toNumber(row.montant_paye),
       balance: toNumber(row.solde_restant),
+      offert: 0,
       modePaiement: (row.mode_paiement as string | null) ?? null,
       echeance: (row.echeance as string | null) ?? null,
       lines,
@@ -672,14 +678,24 @@ export async function loadGarageOrdersForStaff(
   orgId: string,
   clientId: string,
 ): Promise<GarageOrder[]> {
-  const select = (withReglement: boolean) =>
+  /** 2 = règlement + montant offert, 1 = règlement only, 0 = neither (older databases). */
+  const select = (level: 0 | 1 | 2) =>
     "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance," +
-    `order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire${withReglement ? ",reglement" : ""})`;
+    `order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire${level >= 1 ? ",reglement" : ""}${level === 2 ? ",offert_montant" : ""})`;
   const query = (sel: string) =>
     supabase.from("orders").select(sel).eq("organization_id", orgId).eq("client_id", clientId).eq("is_restock", false).order("createdAt", { ascending: false }).limit(500);
   // Line labels (migration 20260930030000); an older database still lists the orders.
-  let { data, error } = await query(select(true));
-  if (error && /reglement/i.test(error.message)) ({ data, error } = await query(select(false)));
+  let level: 0 | 1 | 2 = 2;
+  let { data, error } = await query(select(2));
+  // Offered amount (migration 20261001030000) missing: « Offert » stays a label.
+  if (error && /offert_montant/i.test(error.message)) {
+    level = 1;
+    ({ data, error } = await query(select(1)));
+  }
+  if (error && /reglement/i.test(error.message)) {
+    level = 0;
+    ({ data, error } = await query(select(0)));
+  }
   if (error) throw new Error(error.message);
   return (data ?? []).map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
@@ -698,6 +714,7 @@ export async function loadGarageOrdersForStaff(
         unitPrice: pv,
         lineTotal: qty * pv,
         reglement: (l.reglement as string | null) ?? null,
+        offertAmount: level === 2 ? toNumber(l.offert_montant) : null,
       };
     });
     return {
@@ -711,6 +728,7 @@ export async function loadGarageOrdersForStaff(
       total: toNumber(row.montant_total),
       paid: toNumber(row.montant_paye),
       balance: toNumber(row.solde_restant),
+      offert: Math.round(lines.reduce((s, l) => s + (l.offertAmount ?? 0), 0) * 100) / 100,
       modePaiement: (row.mode_paiement as string | null) ?? null,
       echeance: (row.echeance as string | null) ?? null,
       lines,

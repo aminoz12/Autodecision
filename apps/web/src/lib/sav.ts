@@ -224,12 +224,15 @@ export function formatPlate(raw: string | null | undefined): string {
 /* ------------------------------------------------------------------ */
 
 export type ReturnMotifCode =
-  | "ERREUR_VENDEUR"
-  | "MAUVAISE_IDENTIFICATION"
   | "ERREUR_CLIENT"
+  | "ERREUR_VENDEUR"
   | "NON_CONFORME"
-  | "DEFECTUEUSE"
-  | "ANNULATION";
+  | "ANNULATION"
+  | "PRIX_REPRISE"
+  | "AUTRE"
+  // Codes offered before 2026-10-01, kept so older returns still read.
+  | "MAUVAISE_IDENTIFICATION"
+  | "DEFECTUEUSE";
 
 export type ReturnMotifRule = {
   code: ReturnMotifCode;
@@ -243,14 +246,27 @@ export type ReturnMotifRule = {
   action: string;
   /** One-click switch offered on the return: a warranty case or a supplier dispute. */
   bascule: "GARANTIE" | "LITIGE" | null;
-  /** The shop's return window (politique commerciale) applies to this reason. */
+  /** The return fee schedule (conditions de retour) applies to this reason. */
   policyApplies: boolean;
 };
 
+const SCHEDULE_FEES = "Selon les conditions de retour (20 à 40 %)";
+
+/** The list offered at the counter and on the garage portal (2026-10-01). */
 export const RETURN_MOTIFS: ReturnMotifRule[] = [
   {
+    code: "ERREUR_CLIENT",
+    label: "Erreur client",
+    fault: "Le client",
+    reprise: "selon politique",
+    frais: SCHEDULE_FEES,
+    action: "Appliquer les conditions de retour.",
+    bascule: null,
+    policyApplies: true,
+  },
+  {
     code: "ERREUR_VENDEUR",
-    label: "Erreur de référence du vendeur",
+    label: "Erreur magasin",
     fault: "Le magasin",
     reprise: "oui",
     frais: "Aucuns",
@@ -258,6 +274,50 @@ export const RETURN_MOTIFS: ReturnMotifRule[] = [
     bascule: null,
     policyApplies: false,
   },
+  {
+    code: "NON_CONFORME",
+    label: "Pièce non conforme / HS",
+    fault: "Le fournisseur",
+    reprise: "oui",
+    frais: "Aucuns — refacturés au fournisseur",
+    action: "Ouvrir un dossier garantie ou un litige fournisseur.",
+    bascule: "GARANTIE",
+    policyApplies: false,
+  },
+  {
+    code: "ANNULATION",
+    label: "Annulation client",
+    fault: "Le client",
+    reprise: "oui",
+    frais: SCHEDULE_FEES,
+    action: "Remise en stock ou retour fournisseur.",
+    bascule: null,
+    policyApplies: true,
+  },
+  {
+    code: "PRIX_REPRISE",
+    label: "Prix / reprise commerciale",
+    fault: "Personne",
+    reprise: "selon politique",
+    frais: SCHEDULE_FEES,
+    action: "Geste commercial : appliquer les conditions de retour.",
+    bascule: null,
+    policyApplies: true,
+  },
+  {
+    code: "AUTRE",
+    label: "Autre",
+    fault: "Personne",
+    reprise: "selon politique",
+    frais: SCHEDULE_FEES,
+    action: "Préciser le motif dans le commentaire.",
+    bascule: null,
+    policyApplies: true,
+  },
+];
+
+/** Reasons no longer offered, still labelled on the returns coded with them. */
+const LEGACY_RETURN_MOTIFS: ReturnMotifRule[] = [
   {
     code: "MAUVAISE_IDENTIFICATION",
     label: "Mauvaise identification du véhicule",
@@ -269,49 +329,19 @@ export const RETURN_MOTIFS: ReturnMotifRule[] = [
     policyApplies: false,
   },
   {
-    code: "ERREUR_CLIENT",
-    label: "Le client s'est trompé",
-    fault: "Le client",
-    reprise: "selon politique",
-    frais: "Selon les conditions de retour (20 à 40 %)",
-    action: "Aucune obligation légale en boutique : appliquer la politique de reprise.",
-    bascule: null,
-    policyApplies: true,
-  },
-  {
-    code: "NON_CONFORME",
-    label: "Pièce non conforme à la commande",
-    fault: "Le fournisseur",
-    reprise: "oui",
-    frais: "Refacturés au fournisseur",
-    action: "Ouvrir un litige fournisseur.",
-    bascule: "LITIGE",
-    policyApplies: false,
-  },
-  {
     code: "DEFECTUEUSE",
     label: "Pièce défectueuse à la pose",
     fault: "L'équipementier",
     reprise: "oui",
-    frais: "Selon les conditions de retour (20 à 40 %)",
+    frais: SCHEDULE_FEES,
     action: "Basculer en dossier garantie.",
     bascule: "GARANTIE",
-    policyApplies: false,
-  },
-  {
-    code: "ANNULATION",
-    label: "Commande annulée avant retrait",
-    fault: "Personne",
-    reprise: "oui",
-    frais: "Selon les conditions de retour (20 à 40 %)",
-    action: "Remise en stock ou retour fournisseur.",
-    bascule: null,
-    policyApplies: false,
+    policyApplies: true,
   },
 ];
 
 export const RETURN_MOTIF_BY_CODE: Record<string, ReturnMotifRule> = Object.fromEntries(
-  RETURN_MOTIFS.map((m) => [m.code, m]),
+  [...RETURN_MOTIFS, ...LEGACY_RETURN_MOTIFS].map((m) => [m.code, m]),
 );
 
 export function motifLabel(code: string | null | undefined): string {
@@ -438,4 +468,54 @@ export function slaHoursLeft(slaDueAt: string | null, firstResponseAt: string | 
 /** Main d'œuvre perdue = taux horaire du garage × temps barémé. */
 export function laborAmount(rate: number | null | undefined, hours: number | null | undefined): number {
   return Math.round((rate ?? 0) * (hours ?? 0) * 100) / 100;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Motif de garantie                                                  */
+/* ------------------------------------------------------------------ */
+
+/** The closed list a warranty case is filed under (2026-10-01). */
+export const WARRANTY_MOTIFS = [
+  { code: "GA_DEFAILLANCE_RECURRENTE", label: "GA - Défaillance récurrente" },
+  { code: "GA_DEFAILLANCE_SOUDAINE", label: "GA - Défaillance soudaine" },
+  { code: "GA_DETERIORATION_RAPIDE", label: "GA - Détérioration rapide" },
+  { code: "GA_FUITE_LIQUIDES", label: "GA - Fuite de liquides" },
+  { code: "GA_MAUVAISE_QUALITE", label: "GA - Mauvaise qualité de fabrication" },
+  { code: "GA_NON_CONFORMITE", label: "GA - Non-conformité" },
+  { code: "GA_DEFECTUEUSE_ARRIVEE", label: "GA - Pièce défectueuse à l'arrivée" },
+  { code: "GARANTIE", label: "GARANTIE" },
+] as const;
+
+export type WarrantyMotifCode = (typeof WARRANTY_MOTIFS)[number]["code"];
+
+const WARRANTY_MOTIF_SEPARATOR = " — ";
+
+export function warrantyMotifLabel(code: string | null | undefined): string | null {
+  return WARRANTY_MOTIFS.find((m) => m.code === code)?.label ?? null;
+}
+
+/**
+ * The description as sent when a warranty case is opened: the motif label
+ * leads (« GA - Fuite de liquides — joint qui suinte… »). Migration
+ * 20261001010000 moves it into sav_cases.warranty_motif; a database without
+ * it keeps the motif readable at the start of the text.
+ */
+export function withWarrantyMotif(description: string, code: string | null | undefined): string {
+  const label = warrantyMotifLabel(code);
+  const text = description.trim();
+  if (!label) return text;
+  return text ? `${label}${WARRANTY_MOTIF_SEPARATOR}${text}` : label;
+}
+
+/** The reverse, for a description still carrying its motif (database before the migration). */
+export function splitWarrantyMotif(description: string | null | undefined): { code: string | null; description: string | null } {
+  const text = (description ?? "").trim();
+  if (!text) return { code: null, description: null };
+  for (const m of WARRANTY_MOTIFS) {
+    if (text === m.label) return { code: m.code, description: null };
+    if (text.startsWith(m.label + WARRANTY_MOTIF_SEPARATOR)) {
+      return { code: m.code, description: text.slice(m.label.length + WARRANTY_MOTIF_SEPARATOR.length).trim() || null };
+    }
+  }
+  return { code: null, description: text };
 }

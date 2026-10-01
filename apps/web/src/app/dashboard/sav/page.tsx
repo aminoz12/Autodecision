@@ -42,6 +42,7 @@ import {
   motifLabel,
   slaHoursLeft,
   supplierStatusTone,
+  warrantyMotifLabel,
 } from "@/lib/sav";
 import { QUEUED_SMS_LABEL, type QueuedSmsKind } from "@/lib/sms";
 
@@ -350,6 +351,7 @@ export default function SavPage() {
                         </Link>
                         <p className="sav-sub">
                           <span className={`rt-badge rt-badge--${c.type === "GARANTIE" ? "violet" : "amber"}`}>{CASE_TYPE_LABEL[c.type] ?? c.type}</span>
+                          {c.type === "GARANTIE" && c.warrantyMotif && <span className="sav-motif-tag">{warrantyMotifLabel(c.warrantyMotif)}</span>}
                         </p>
                       </td>
                       <td className="rl-muted-strong">{fmtDate(c.openedAt)}</td>

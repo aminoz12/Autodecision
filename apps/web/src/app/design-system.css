@@ -840,3 +840,17 @@ table .od-btn--primary:hover { background: var(--clr-primary-soft); box-shadow: 
 .gp-return-howto strong { font-size: 14px; }
 .gp-return-howto span { font-size: 13px; color: var(--text-muted); }
 @media (max-width: 720px) { .gp-return-howto { flex-wrap: wrap; } }
+
+/* Motif de garantie: the select in the case header, the tag in the case list */
+.sav-motif-select { width: auto; max-width: 300px; font-weight: 600; }
+.sav-motif-tag { display: block; margin-top: 4px; font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+
+/* Open-case dialog: imported attachment */
+.sav-attach { display: flex; align-items: center; gap: 10px; min-height: var(--control-h-lg); }
+.sav-attach-name { flex: 1; min-width: 0; font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.od-toggle-group { flex-wrap: wrap; }
+
+/* Garage file: offered parts */
+.ga-offert { display: block; font-size: 11.5px; font-weight: 500; color: var(--text-muted); }
+.sav-attach-name--on { color: var(--clr-primary); font-weight: 500; text-decoration: none; }
+.sav-attach-name--on:hover { text-decoration: underline; }

@@ -87,6 +87,7 @@ function isGarageFlow(row: ReturnRow): boolean {
 
 /** The label the counter reads: the garage flow words for garage returns, the pipeline words otherwise. */
 function treatmentLabelFor(row: ReturnRow): string {
+  if (row.compensation === "REMPLACEMENT") return "Remplacé";
   if (isGarageFlow(row)) {
     if (row.treatment === "A_TRAITER") return "Retour demandé";
     if (row.treatment === "A_RECUPERER") return row.legDone ? "Récupéré — à réceptionner" : "À récupérer";
@@ -154,7 +155,7 @@ export default function RetoursPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState("");
-  const [compensation, setCompensation] = useState<"REMBOURSEMENT" | "AVOIR">("REMBOURSEMENT");
+  const [compensation, setCompensation] = useState<"REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT">("REMBOURSEMENT");
 
   // Après-vente : motif codé, état de la pièce, fenêtre fournisseur, bascule en dossier.
   const router = useRouter();
@@ -505,7 +506,7 @@ export default function RetoursPage() {
         reason: [motifCode ? motifLabel(motifCode) : "", reason.trim()].filter(Boolean).join(" — "),
         lines,
         compensation,
-        feePcts: Object.fromEntries(lines.map((l) => [l.id, lineConditions.get(l.id)?.feePct ?? 0])),
+        feePcts: compensation === "REMPLACEMENT" ? {} : Object.fromEntries(lines.map((l) => [l.id, lineConditions.get(l.id)?.feePct ?? 0])),
       });
       if (savAvailable && motifCode) {
         await qualifyReturns(sb, { lineIds: lines.map((l) => l.id), motifCode, etat }).catch(() => {});
@@ -513,7 +514,8 @@ export default function RetoursPage() {
       setNotice(
         [
           avoirNum ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.` : null,
-          refundFees > 0 && !feesApplied ? `Frais de retour non retenus (${fmtMoney(refundFees)}) : la base attend la migration 20260930020000.` : null,
+          compensation === "REMPLACEMENT" ? `Remplacement enregistré pour ${lines.length} pièce${lines.length > 1 ? "s" : ""}.` : null,
+          compensation !== "REMPLACEMENT" && refundFees > 0 && !feesApplied ? `Frais de retour non retenus (${fmtMoney(refundFees)}) : la base attend la migration 20260930020000.` : null,
         ]
           .filter(Boolean)
           .join(" ") || null,
@@ -728,7 +730,7 @@ export default function RetoursPage() {
                       <td className="rt-decote">{row.amount > 0 ? fmtMoney(row.amount) : <span className="rl-muted">—</span>}</td>
                       <td>
                         {(() => {
-                          const settled = ["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment);
+                          const settled = ["REMBOURSE", "AVOIR", "REFUSE"].includes(row.treatment) || row.compensation === "REMPLACEMENT";
                           const garageFlow = isGarageFlow(row);
                           const awaitingValidation = garageFlow && row.treatment === "A_TRAITER";
                           const toReceive = garageFlow && row.treatment === "A_RECUPERER";
@@ -1167,21 +1169,14 @@ export default function RetoursPage() {
                     <span className="od-label">
                       Motif du retour <span className="od-req">*</span>
                     </span>
-                    <div className="sav-motifs" role="radiogroup">
+                    <select className="od-input" value={motifCode} onChange={(e) => setMotifCode(e.target.value)} aria-label="Motif du retour">
+                      <option value="">— Choisir le motif —</option>
                       {RETURN_MOTIFS.map((m) => (
-                        <button
-                          key={m.code}
-                          type="button"
-                          role="radio"
-                          aria-checked={motifCode === m.code}
-                          className={`sav-motif${motifCode === m.code ? " sav-motif--on" : ""}`}
-                          onClick={() => setMotifCode(m.code)}
-                        >
-                          <strong>{m.label}</strong>
-                          <span>Responsable : {m.fault.toLowerCase()}</span>
-                        </button>
+                        <option key={m.code} value={m.code}>
+                          {m.label}
+                        </option>
                       ))}
-                    </div>
+                    </select>
                     {RETURN_MOTIF_BY_CODE[motifCode] && (
                       <dl className="sav-rule">
                         <div><dt>Reprise</dt><dd>{RETURN_MOTIF_BY_CODE[motifCode].reprise}</dd></div>
@@ -1239,14 +1234,34 @@ export default function RetoursPage() {
                         <em>Bon d&apos;achat valable 1 an</em>
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      className={`od-toggle${compensation === "REMPLACEMENT" ? " od-toggle--on" : ""}`}
+                      onClick={() => setCompensation("REMPLACEMENT")}
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      <span>
+                        <strong>Remplacement</strong>
+                        <em>Le client repart avec une pièce, sans remboursement</em>
+                      </span>
+                    </button>
                   </div>
                 </div>
 
-                <div className="rt-refund-total">
-                  {compensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
-                  <strong>{fmtMoney(refundTotal)}</strong>
-                  {refundFees > 0 && <span className="rt-refund-fees">dont frais de retour retenus : {fmtMoney(refundFees)}</span>}
-                </div>
+                {compensation === "REMPLACEMENT" ? (
+                  <div className="rt-refund-total">
+                    Montant remboursé <strong>{fmtMoney(0)}</strong>
+                    <span className="rt-refund-fees">
+                      Échange pièce pour pièce : une pièce rentre, une pièce sort — le stock n&apos;est pas modifié.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="rt-refund-total">
+                    {compensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
+                    <strong>{fmtMoney(refundTotal)}</strong>
+                    {refundFees > 0 && <span className="rt-refund-fees">dont frais de retour retenus : {fmtMoney(refundFees)}</span>}
+                  </div>
+                )}
               </>
             )}
 
@@ -1268,7 +1283,9 @@ export default function RetoursPage() {
                 {submitting ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
                 {submitting
                   ? "Enregistrement…"
-                  : compensation === "AVOIR"
+                  : compensation === "REMPLACEMENT"
+                    ? "Enregistrer le remplacement"
+                    : compensation === "AVOIR"
                     ? "Émettre l'avoir"
                     : "Valider le remboursement"}
               </button>
@@ -1288,20 +1305,17 @@ export default function RetoursPage() {
             </div>
             <div className="ga-modal-form">
               <p className="st-cmd-hint">{qualifyRow.reference} · {qualifyRow.client} — « {qualifyRow.reason} »</p>
-              <div className="sav-motifs" role="radiogroup">
-                {RETURN_MOTIFS.map((m) => (
-                  <button
-                    key={m.code}
-                    type="button"
-                    role="radio"
-                    aria-checked={motifCode === m.code}
-                    className={`sav-motif${motifCode === m.code ? " sav-motif--on" : ""}`}
-                    onClick={() => setMotifCode(m.code)}
-                  >
-                    <strong>{m.label}</strong>
-                    <span>{m.action}</span>
-                  </button>
-                ))}
+              <div className="od-field">
+                <span className="od-label">Motif du retour <span className="od-req">*</span></span>
+                <select className="od-input" value={motifCode} onChange={(e) => setMotifCode(e.target.value)} aria-label="Motif du retour" autoFocus>
+                  <option value="">— Choisir le motif —</option>
+                  {RETURN_MOTIFS.map((m) => (
+                    <option key={m.code} value={m.code}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                {RETURN_MOTIF_BY_CODE[motifCode] && <span className="st-cmd-hint">{RETURN_MOTIF_BY_CODE[motifCode].action}</span>}
               </div>
               <div className="od-field">
                 <span className="od-label">État de la pièce</span>

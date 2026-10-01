@@ -1,12 +1,13 @@
 "use client";
 
-import { Check, Loader2, Scale, ShieldCheck, X } from "lucide-react";
-import { useState } from "react";
+import { Check, Loader2, Paperclip, Scale, ShieldCheck, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { WarrantyLight } from "@/components/sav/WarrantyLight";
 import { createClient } from "@/lib/supabase/client";
 import { fmtMoney } from "@/lib/data/saas";
-import { openSavCase } from "@/lib/data/sav";
-import { PART_LOCATION_LABEL, laborAmount, presumptionApplies, type LineWarranty } from "@/lib/sav";
+import { addSavCaseFile, openSavCase } from "@/lib/data/sav";
+import { PART_LOCATION_LABEL, laborAmount, presumptionApplies, type LineWarranty, WARRANTY_MOTIFS } from "@/lib/sav";
 
 /**
  * Ouvrir un dossier SAV (garantie ou litige) sans ressaisie : la vente, le
@@ -50,10 +51,14 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
   const [designation, setDesignation] = useState(preset.designation ?? "");
   const [plate, setPlate] = useState(preset.immatriculation ?? "");
   const [description, setDescription] = useState(preset.description ?? "");
+  const [motif, setMotif] = useState("");
   const [kmMontage, setKmMontage] = useState(preset.kmMontage != null ? String(preset.kmMontage) : "");
   const [kmPanne, setKmPanne] = useState("");
   const [poseur, setPoseur] = useState(preset.garagePoseur ?? "");
-  const [poseInvoice, setPoseInvoice] = useState("");
+  /** Facture de montage, imported as a file with the case (it replaced the invoice-number field). */
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const { profile } = useAuth();
   const [serial, setSerial] = useState(preset.serialNumber ?? "");
   const [rate, setRate] = useState("");
   const [hours, setHours] = useState("");
@@ -69,6 +74,7 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
 
   const submit = async () => {
     if (!designation.trim()) return setError("Indiquez la pièce concernée.");
+    if (type === "GARANTIE" && !motif) return setError("Choisissez le motif de garantie.");
     if (!description.trim()) return setError("Décrivez le problème : c'est ce que le fournisseur lira en premier.");
     setBusy(true);
     setError(null);
@@ -83,15 +89,24 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
         reference: preset.reference,
         immatriculation: plate.trim() || null,
         description: description.trim(),
+        warrantyMotif: type === "GARANTIE" ? motif : null,
         kmMontage: toNum(kmMontage),
         kmPanne: toNum(kmPanne),
         garagePoseur: poseur.trim() || null,
-        poseInvoiceRef: poseInvoice.trim() || null,
         serialNumber: serial.trim() || null,
         laborRate: toNum(rate),
         laborHours: toNum(hours),
         partLocation: location,
       });
+      if (attachment && profile?.organization_id) {
+        try {
+          await addSavCaseFile(createClient(), profile.organization_id, id, attachment, "FACTURE_POSE", null);
+        } catch (e) {
+          window.alert(
+            `Dossier ouvert, mais la pièce jointe n\u2019a pas pu être importée : ${e instanceof Error ? e.message : String(e)}. Rajoutez-la depuis le dossier.`,
+          );
+        }
+      }
       onCreated(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -196,10 +211,35 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
                   <span className="od-label">Garage qui a monté</span>
                   <input className="od-input" value={poseur} onChange={(e) => setPoseur(e.target.value)} placeholder="Garage du Centre" />
                 </label>
-                <label className="od-field">
-                  <span className="od-label">Facture de pose</span>
-                  <input className="od-input" value={poseInvoice} onChange={(e) => setPoseInvoice(e.target.value)} placeholder="N° de facture" />
-                </label>
+                <div className="od-field">
+                  <span className="od-label">Pièce jointe</span>
+                  <div className="sav-attach">
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      hidden
+                      onChange={(e) => setAttachment(e.target.files?.[0] ?? null)}
+                    />
+                    <button type="button" className="od-btn od-btn--ghost" onClick={() => fileInput.current?.click()}>
+                      <Paperclip className="h-4 w-4" /> Importer
+                    </button>
+                    <span className="sav-attach-name">{attachment ? attachment.name : "Facture de montage (PDF ou photo)"}</span>
+                    {attachment && (
+                      <button
+                        type="button"
+                        className="od-icon-btn"
+                        aria-label="Retirer la pièce jointe"
+                        onClick={() => {
+                          setAttachment(null);
+                          if (fileInput.current) fileInput.current.value = "";
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             </>
           ) : (
@@ -219,16 +259,32 @@ function OpenCaseForm({ preset, onClose, onCreated }: DialogProps & { preset: Op
             </div>
           )}
 
-          <label className="od-field">
-            <span className="od-label">Où est la pièce ?</span>
-            <select className="od-input" value={location} onChange={(e) => setLocation(e.target.value)}>
-              {Object.entries(PART_LOCATION_LABEL).map(([code, label]) => (
-                <option key={code} value={code}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {type === "GARANTIE" ? (
+            <label className="od-field">
+              <span className="od-label">
+                Motif de garantie <span className="od-req">*</span>
+              </span>
+              <select className="od-input" value={motif} onChange={(e) => setMotif(e.target.value)}>
+                <option value="">— Choisir le motif —</option>
+                {WARRANTY_MOTIFS.map((m) => (
+                  <option key={m.code} value={m.code}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="od-field">
+              <span className="od-label">Où est la pièce ?</span>
+              <select className="od-input" value={location} onChange={(e) => setLocation(e.target.value)}>
+                {Object.entries(PART_LOCATION_LABEL).map(([code, label]) => (
+                  <option key={code} value={code}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <div className="ga-modal-actions">
             <button type="button" className="od-btn od-btn--ghost" onClick={onClose} disabled={busy}>

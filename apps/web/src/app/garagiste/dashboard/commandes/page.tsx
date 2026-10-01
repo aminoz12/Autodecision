@@ -291,7 +291,7 @@ export default function GarageOrdersPage() {
                     <select value={motif} onChange={(e) => setMotif(e.target.value)}>
                       <option value="">— Choisir —</option>
                       {RETURN_MOTIFS.map((m) => (
-                        <option key={m.code} value={m.code}>{m.code === "ERREUR_CLIENT" ? "Erreur de notre part" : m.label}</option>
+                        <option key={m.code} value={m.code}>{m.label}</option>
                       ))}
                     </select>
                     <ChevronDown className="h-4 w-4" />

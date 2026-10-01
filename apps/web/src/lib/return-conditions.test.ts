@@ -51,7 +51,7 @@ describe("returnConditions — exceptions", () => {
   });
 
   it("applies the schedule to a client mistake, a defective part and a cancellation", () => {
-    for (const motifCode of ["ERREUR_CLIENT", "DEFECTUEUSE", "ANNULATION"]) {
+    for (const motifCode of ["ERREUR_CLIENT", "DEFECTUEUSE", "ANNULATION", "PRIX_REPRISE", "AUTRE"]) {
       expect(returnConditions({ saleDate: sold(10), origin: "COMMANDE", motifCode, today })).toMatchObject({ allowed: true, feePct: 40, waived: false });
     }
   });

@@ -11,6 +11,9 @@ import {
   parseDay,
   partFamily,
   presumptionApplies,
+  splitWarrantyMotif,
+  warrantyMotifLabel,
+  withWarrantyMotif,
   slaHoursLeft,
   toDayString,
   warrantyText,
@@ -105,10 +108,19 @@ describe("retours : six motifs, six règles", () => {
   it("covers the six reasons of the counter, each with its rule", () => {
     expect(RETURN_MOTIFS).toHaveLength(6);
     expect(RETURN_MOTIF_BY_CODE.DEFECTUEUSE.bascule).toBe("GARANTIE");
-    expect(RETURN_MOTIF_BY_CODE.NON_CONFORME.bascule).toBe("LITIGE");
-    expect(RETURN_MOTIFS.filter((m) => m.policyApplies).map((m) => m.code)).toEqual(["ERREUR_CLIENT"]);
+    expect(RETURN_MOTIF_BY_CODE.NON_CONFORME.bascule).toBe("GARANTIE");
+    expect(RETURN_MOTIFS.map((m) => m.label)).toEqual([
+      "Erreur client",
+      "Erreur magasin",
+      "Pièce non conforme / HS",
+      "Annulation client",
+      "Prix / reprise commerciale",
+      "Autre",
+    ]);
+    expect(RETURN_MOTIFS.filter((m) => m.policyApplies).map((m) => m.code)).toEqual(["ERREUR_CLIENT", "ANNULATION", "PRIX_REPRISE", "AUTRE"]);
     expect(motifLabel(null)).toBe("Motif non codé");
-    expect(motifLabel("ERREUR_VENDEUR")).toBe("Erreur de référence du vendeur");
+    expect(motifLabel("ERREUR_VENDEUR")).toBe("Erreur magasin");
+    expect(motifLabel("MAUVAISE_IDENTIFICATION")).toBe("Mauvaise identification du véhicule");
   });
 
   it("checks the shop's commercial return window", () => {
@@ -130,5 +142,26 @@ describe("litiges", () => {
     expect(slaHoursLeft("2026-09-20T10:00:00Z", null, now)).toBe(24);
     expect(slaHoursLeft("2026-09-19T04:00:00Z", null, now)).toBe(-6);
     expect(slaHoursLeft("2026-09-19T04:00:00Z", "2026-09-19T03:00:00Z", now)).toBeNull();
+  });
+});
+
+describe("motif de garantie", () => {
+  it("leads the description when the case is opened and splits back", () => {
+    const sent = withWarrantyMotif("  joint qui suinte après 3 mois ", "GA_FUITE_LIQUIDES");
+    expect(sent).toBe("GA - Fuite de liquides — joint qui suinte après 3 mois");
+    expect(splitWarrantyMotif(sent)).toEqual({ code: "GA_FUITE_LIQUIDES", description: "joint qui suinte après 3 mois" });
+  });
+
+  it("handles a bare label, the plain GARANTIE motif and a description without motif", () => {
+    expect(withWarrantyMotif("", "GARANTIE")).toBe("GARANTIE");
+    expect(splitWarrantyMotif("GARANTIE")).toEqual({ code: "GARANTIE", description: null });
+    expect(splitWarrantyMotif("Ne charge plus — voyant allumé")).toEqual({ code: null, description: "Ne charge plus — voyant allumé" });
+    expect(withWarrantyMotif("texte", null)).toBe("texte");
+    expect(splitWarrantyMotif(null)).toEqual({ code: null, description: null });
+  });
+
+  it("labels every code as given by the magasin", () => {
+    expect(warrantyMotifLabel("GA_DEFECTUEUSE_ARRIVEE")).toBe("GA - Pièce défectueuse à l'arrivée");
+    expect(warrantyMotifLabel("INCONNU")).toBeNull();
   });
 });

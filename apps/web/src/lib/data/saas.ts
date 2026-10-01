@@ -785,6 +785,8 @@ export type ReturnRow = {
   /** Requested by the garage from its portal (migration 20260930030000): validate → collect → receive. */
   requestedByGarage: boolean;
   receivedAt: string | null;
+  /** REMBOURSEMENT / AVOIR / REMPLACEMENT / FOURNISSEUR, as chosen at the counter (migration 20261001020000). */
+  compensation: string | null;
   /** Handed to the livreur: collect at the garage, or drop at the supplier (migration 20260919010000). */
   leg: "GARAGE_TO_STORE" | "STORE_TO_SUPPLIER" | null;
   legDone: boolean;
@@ -808,7 +810,9 @@ export async function loadReturns(
     supabase.from("sales_returns").select(select).eq("organization_id", orgId).order("created_at", { ascending: false }).limit(200);
   // Garage flow columns (migration 20260930030000); a database without them still lists the returns.
   const FLOW = ",quantity,requested_by,received_at";
-  let { data, error } = await query(BASE + LEGS + FLOW);
+  let { data, error } = await query(BASE + LEGS + FLOW + ",compensation");
+  // The compensation column (migration 20261001020000) may be missing on its own.
+  if (error && /compensation/i.test(error.message)) ({ data, error } = await query(BASE + LEGS + FLOW));
   if (error && /requested_by|received_at|quantity/i.test(error.message)) {
     ({ data, error } = await query(BASE + LEGS));
   }
@@ -851,6 +855,7 @@ export async function loadReturns(
       orderLineId: (row.order_line_id as string | null) ?? null,
       requestedByGarage: Boolean(row.requested_by),
       receivedAt: (row.received_at as string | null) ?? null,
+      compensation: (row.compensation as string | null) ?? null,
       reference: String(row.designation ?? line?.nom_produit ?? line?.reference ?? "—"),
       reason: String(row.motif ?? row.reason ?? "-"),
       type: String(row.type_retour ?? "RETOURNABLE"),
@@ -904,8 +909,18 @@ export async function settleClientReturn(
     p_reason: input.reason?.trim() || null,
     p_refund_mode: input.refundMode ?? "ESPECES",
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(offeredPartMessage(error.message));
   return typeof data === "string" ? data : null;
+}
+
+/** A part offered to the garage is not refunded (trigger sales_returns_offert_guard, migration 20261001030000). */
+function offeredPartMessage(message: string): string {
+  const m = /This part was offered: refund limited to ([\d.,]+) EUR/i.exec(message);
+  if (!m) return message;
+  const max = Number(m[1].replace(",", "."));
+  return max > 0
+    ? `Cette pièce a été en partie offerte : le remboursement est limité à ${fmtMoney(max)}.`
+    : "Cette pièce a été offerte au garage : il n\u2019y a rien à rembourser.";
 }
 
 /** Garage request: accept (→ « à récupérer », handed to the livreur on the tour) or refuse. Migration 20260930030000. */
@@ -1059,7 +1074,7 @@ export async function createWalkInReturn(
     clientId: string | null;
     reason: string;
     lines: RefundableLine[];
-    compensation?: "REMBOURSEMENT" | "AVOIR" | "FOURNISSEUR";
+    compensation?: "REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT" | "FOURNISSEUR";
     supplierId?: string | null;
     /** Return fee per line id, in percent (conditions de retour). */
     feePcts?: Record<string, number>;
@@ -1087,7 +1102,13 @@ export async function createWalkInReturn(
     feesApplied = false;
     ({ data, error } = await supabase.rpc("create_walk_in_return", base));
   }
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(
+      input.compensation === "REMPLACEMENT" && /Invalid return compensation/i.test(error.message)
+        ? "Le remplacement demande la migration 20261001020000 (npx supabase db push)."
+        : offeredPartMessage(error.message),
+    );
+  }
   return { avoirNum: typeof data === "string" ? data : null, feesApplied };
 }
 

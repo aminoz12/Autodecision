@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toNumber } from "@/lib/data/saas";
-import { lineWarranty, normalizePlate, type LineWarranty } from "@/lib/sav";
+import { lineWarranty, normalizePlate, type LineWarranty, splitWarrantyMotif, withWarrantyMotif } from "@/lib/sav";
 
 /* ------------------------------------------------------------------ */
 /*  Module après-vente — data access.                                  */
@@ -41,6 +41,7 @@ function translate(message: string): string {
   const map: [RegExp, string][] = [
     [/Staff access is required/i, "Accès réservé au personnel du magasin."],
     [/Only an organization administrator/i, "Seul un administrateur du magasin peut modifier ces réglages."],
+    [/Invalid return reason code/i, "Ce motif de retour demande la migration 20261001020000 (npx supabase db push)."],
     [/Case not found/i, "Dossier introuvable."],
     [/Order line not found/i, "Ligne de commande introuvable."],
     [/Order not found/i, "Commande introuvable."],
@@ -502,6 +503,8 @@ export type SavCaseRow = {
   fromStock: boolean | null;
   partValue: number | null;
   description: string | null;
+  /** Motif de garantie (code of WARRANTY_MOTIFS), GARANTIE cases. */
+  warrantyMotif: string | null;
   clientStatus: string;
   supplierStatus: string | null;
   supplierCaseNumber: string | null;
@@ -571,7 +574,9 @@ function parseCase(raw: unknown): SavCaseRow {
     lineExtensionMonths: toNumber(line?.warranty_extension_months),
     fromStock: line ? line.depuis_magasin === true : null,
     partValue: num(r.part_value),
-    description: str(r.description),
+    // The motif has its own column (migration 20261001010000); before it, it leads the description.
+    description: str(r.warranty_motif) ? str(r.description) : splitWarrantyMotif(str(r.description)).description,
+    warrantyMotif: str(r.warranty_motif) ?? splitWarrantyMotif(str(r.description)).code,
     clientStatus: String(r.client_status ?? "RECU"),
     supplierStatus: str(r.supplier_status),
     supplierCaseNumber: str(r.supplier_case_number),
@@ -707,6 +712,8 @@ export type OpenCaseInput = {
   laborRate?: number | null;
   laborHours?: number | null;
   partLocation?: string | null;
+  /** Motif de garantie (code of WARRANTY_MOTIFS), GARANTIE cases only. */
+  warrantyMotif?: string | null;
 };
 
 function casePayloadFrom(input: OpenCaseInput): Record<string, string> {
@@ -722,7 +729,7 @@ function casePayloadFrom(input: OpenCaseInput): Record<string, string> {
   put("designation", input.designation);
   put("reference", input.reference);
   put("immatriculation", input.immatriculation);
-  put("description", input.description);
+  put("description", input.type === "GARANTIE" ? withWarrantyMotif(input.description ?? "", input.warrantyMotif) : input.description);
   put("km_montage", input.kmMontage);
   put("km_panne", input.kmPanne);
   put("garage_poseur", input.garagePoseur);
@@ -738,6 +745,17 @@ export async function openSavCase(supabase: SupabaseClient, input: OpenCaseInput
   const { data, error } = await supabase.rpc("open_sav_case", { p: casePayloadFrom(input) });
   if (error) fail(error);
   return String(data);
+}
+
+/** Staff: set or change the motif de garantie of a case (migration 20261001010000). */
+export async function setSavCaseWarrantyMotif(supabase: SupabaseClient, caseId: string, motif: string | null): Promise<void> {
+  const { error } = await supabase.rpc("set_sav_case_warranty_motif", { p_case_id: caseId, p_motif: motif });
+  if (error) {
+    if (/set_sav_case_warranty_motif/i.test(error.message)) {
+      throw new Error("Le motif de garantie demande la migration 20261001010000 (npx supabase db push).");
+    }
+    fail(error);
+  }
 }
 
 /** Patch of a case; keys use the database column names (update_sav_case whitelist). */
@@ -1190,9 +1208,14 @@ export async function openGarageDispute(
     laborHours?: number | null;
     kmMontage?: number | null;
     kmPanne?: number | null;
+    /** Motif de garantie (code of WARRANTY_MOTIFS), GARANTIE cases only. */
+    warrantyMotif?: string | null;
   },
 ): Promise<string> {
-  const p: Record<string, string> = { type: input.type, description: input.description };
+  const p: Record<string, string> = {
+    type: input.type,
+    description: input.type === "GARANTIE" ? withWarrantyMotif(input.description, input.warrantyMotif) : input.description,
+  };
   const put = (k: string, v: unknown) => {
     if (v != null && v !== "") p[k] = String(v);
   };

@@ -228,22 +228,46 @@ export default function GarageDetailPage() {
     });
   }
   async function setReglement(order: GarageOrder, line: GarageOrder["lines"][number], code: LineReglement) {
-    if (code === "PAYE" && order.balance > 0.005) {
-      // Money first: the standard règlement, restricted to this order, prefilled with the line.
-      setPayLine({ orderId: order.id, lineId: line.id });
-      setAmount(Math.min(order.balance, line.lineTotal).toFixed(2));
-      setMode("VIREMENT");
-      setReference("");
-      setNote(`Règlement ${line.reference} — ${order.ref}`);
-      setSettleError(null);
-      setSettleOpen(true);
-      return;
+    const gifted = line.reglement === "OFFERT" ? line.offertAmount ?? 0 : 0;
+    if (code === "OFFERT") {
+      const off = Math.min(line.lineTotal, Math.max(0, order.balance));
+      const text =
+        line.offertAmount === null
+          ? "Marquer cette pièce « offerte » ? Le solde dû ne sera pas modifié tant que la migration 20261001030000 n\u2019est pas appliquée."
+          : off > 0.005
+            ? `Offrir cette pièce ? ${fmtMoney(off)} seront retirés du solde dû de la commande ${order.ref}.`
+            : "Cette commande est déjà réglée : la pièce sera seulement étiquetée « offerte ». Pour rendre de l\u2019argent, émettez un avoir.";
+      if (!window.confirm(text)) return;
     }
-    if (code === "OFFERT" && !window.confirm("Marquer cette pièce « offerte » ? Le solde dû de la commande n\u2019est pas modifié (à ajuster par une remise ou un avoir si besoin).")) return;
     setLineBusy(line.id);
     setError(null);
     try {
+      if (code === "PAYE") {
+        // An offered line comes back on the balance before it can be paid.
+        if (gifted > 0) {
+          await setLineReglement(supabase, line.id, "A_PAYER");
+          await load();
+        }
+        const due = order.balance + gifted;
+        if (due > 0.005) {
+          // Money first: the standard règlement, restricted to this order, prefilled with the line.
+          setPayLine({ orderId: order.id, lineId: line.id });
+          setAmount(Math.min(due, line.lineTotal).toFixed(2));
+          setMode("VIREMENT");
+          setReference("");
+          setNote(`Règlement ${line.reference} — ${order.ref}`);
+          setSettleError(null);
+          setSettleOpen(true);
+          return;
+        }
+      }
       await setLineReglement(supabase, line.id, code);
+      if (code === "OFFERT" && line.offertAmount !== null) {
+        const off = Math.min(line.lineTotal, Math.max(0, order.balance));
+        if (off > 0.005) setNotice(`Pièce offerte : ${fmtMoney(off)} retirés du solde de ${order.ref}.`);
+      } else if (gifted > 0) {
+        setNotice(`${fmtMoney(gifted)} remis dans le solde de ${order.ref}.`);
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -455,7 +479,10 @@ export default function GarageDetailPage() {
                       <td className="rl-muted-strong">{frDate(o.date)}</td>
                       <td><span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span></td>
                       <td className="rl-muted-strong">{o.balance > 0 ? frDate(o.echeance) : "—"}</td>
-                      <td className="stk-td-center">{fmtMoney(o.total)}</td>
+                      <td className="stk-td-center">
+                        {fmtMoney(o.total)}
+                        {o.offert > 0 && <span className="ga-offert">dont offert {fmtMoney(o.offert)}</span>}
+                      </td>
                       <td className="stk-td-center">{fmtMoney(o.paid)}</td>
                       <td className="stk-td-center" style={{ color: o.balance > 0 ? "#DC2626" : "#16A34A", fontWeight: 700 }}>{fmtMoney(o.balance)}</td>
                     </tr>
@@ -472,7 +499,10 @@ export default function GarageDetailPage() {
                                 <div key={l.id} className="ga-line">
                                   <div className="ga-line-main">
                                     <strong>{l.designation || l.reference}</strong>
-                                    <span className="rl-muted">{l.reference} · {l.quantity} × {fmtMoney(l.unitPrice)} = {fmtMoney(l.lineTotal)}</span>
+                                    <span className="rl-muted">
+                                      {l.reference} · {l.quantity} × {fmtMoney(l.unitPrice)} = {fmtMoney(l.lineTotal)}
+                                      {(l.offertAmount ?? 0) > 0 ? ` · offert : − ${fmtMoney(l.offertAmount ?? 0)}` : ""}
+                                    </span>
                                   </div>
                                   <div className="ga-line-state">
                                     <span className={`rt-badge rt-badge--${REGLEMENT_LABEL[reg].cls}`}>{REGLEMENT_LABEL[reg].label.toUpperCase()}</span>
@@ -491,7 +521,7 @@ export default function GarageDetailPage() {
                                           className={`rc-act ${reg === code ? "rc-act--retour" : "rc-act--quiet"}`}
                                           disabled={busyLine || reg === code}
                                           onClick={() => void setReglement(o, l, code)}
-                                          title={code === "PAYE" ? "Enregistrer le règlement de cette pièce" : code === "OFFERT" ? "Pièce offerte au garage" : "Reste à payer"}
+                                          title={code === "PAYE" ? "Enregistrer le règlement de cette pièce" : code === "OFFERT" ? "Pièce offerte au garage : son montant est retiré du solde dû" : "Reste à payer"}
                                         >
                                           {REGLEMENT_LABEL[code].label}
                                         </button>

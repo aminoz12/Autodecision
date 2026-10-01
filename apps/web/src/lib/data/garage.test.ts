@@ -12,6 +12,7 @@ function order(p: Partial<GarageOrder> & { id: string }): GarageOrder {
     total: 100,
     paid: 0,
     balance: 100,
+    offert: 0,
     modePaiement: "EN_COMPTE",
     echeance: null,
     lines: [],

@@ -12,7 +12,7 @@ import {
   openGarageDispute,
   type GarageCase,
 } from "@/lib/data/sav";
-import { CASE_TYPE_LABEL, CLIENT_STATUS_LABEL, GESTURE_LABEL, clientStatusTone, laborAmount, slaHoursLeft } from "@/lib/sav";
+import { CASE_TYPE_LABEL, CLIENT_STATUS_LABEL, GESTURE_LABEL, clientStatusTone, laborAmount, slaHoursLeft, WARRANTY_MOTIFS } from "@/lib/sav";
 
 function frDate(v: string | null) {
   if (!v) return "—";
@@ -53,6 +53,7 @@ export default function LitigesPage() {
   const [designation, setDesignation] = useState("");
   const [plate, setPlate] = useState("");
   const [description, setDescription] = useState("");
+  const [motif, setMotif] = useState("");
   const [rate, setRate] = useState("");
   const [hours, setHours] = useState("");
   const [kmMontage, setKmMontage] = useState("");
@@ -97,6 +98,7 @@ export default function LitigesPage() {
     if (orderId && !lineId) return setError("Choisissez la pièce concernée dans la commande.");
     if (!orderId && !designation.trim()) return setError("Indiquez la pièce concernée.");
     if (!description.trim()) return setError("Décrivez le problème rencontré.");
+    if (type === "GARANTIE" && !motif) return setError("Choisissez le motif de garantie.");
     setSaving(true);
     setError(null);
     setMsg(null);
@@ -107,6 +109,7 @@ export default function LitigesPage() {
         orderLineId: lineId || null,
         designation: orderId ? null : designation.trim(),
         description: description.trim(),
+        warrantyMotif: type === "GARANTIE" ? motif : null,
         immatriculation: plate.trim() || null,
         laborRate: toNum(rate),
         laborHours: toNum(hours),
@@ -118,6 +121,7 @@ export default function LitigesPage() {
       setDesignation("");
       setPlate("");
       setDescription("");
+      setMotif("");
       setHours("");
       setKmMontage("");
       setKmPanne("");
@@ -248,6 +252,21 @@ export default function LitigesPage() {
             </>
           )}
         </div>
+
+        {type === "GARANTIE" && (
+          <div className="od-field">
+            <span className="od-label">Motif de garantie *</span>
+            <div className="od-select">
+              <select value={motif} onChange={(e) => setMotif(e.target.value)}>
+                <option value="">— Choisir le motif —</option>
+                {WARRANTY_MOTIFS.map((m) => (
+                  <option key={m.code} value={m.code}>{m.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="h-4 w-4" />
+            </div>
+          </div>
+        )}
 
         <div className="od-field">
           <span className="od-label">Ce qui s&apos;est passé *</span>
