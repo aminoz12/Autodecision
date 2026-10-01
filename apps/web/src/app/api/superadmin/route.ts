@@ -1,52 +1,13 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { BUILTIN_SUPER_ADMINS } from "@/lib/superadmin";
+import { requireSuperAdmin } from "@/lib/superadmin-auth";
 
 /**
  * SaaS-owner console (server-only, service role).
- * Access: the signed-in user's email must be in the allowlist below
- * (extend with the SUPERADMIN_EMAILS env var, comma-separated).
+ * Access: requireSuperAdmin (lib/superadmin-auth.ts) — platform_owners, bootstrapped
+ * by the email allowlist (SUPERADMIN_EMAILS env var, comma-separated).
  *   GET  → all organizations with admins, volumes and billing status
  *   POST → { action: suspend | activate | extend_trial | reset_admin_password | create_org, ... }
  */
-
-function superAdminEmails(): Set<string> {
-  const extra = (process.env.SUPERADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return new Set([...BUILTIN_SUPER_ADMINS, ...extra]);
-}
-
-async function requireSuperAdmin() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
-  }
-  const admin = createAdminClient();
-  // Authority = a row in platform_owners (bound to the user id). The email
-  // allowlist only bootstraps: an allowlisted email that signs in is enrolled.
-  const { data: owner } = await admin
-    .from("platform_owners")
-    .select("user_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!owner) {
-    const allowlisted = !!user.email && superAdminEmails().has(user.email.toLowerCase());
-    if (!allowlisted) {
-      return NextResponse.json(
-        { error: "Accès réservé au propriétaire du SaaS." },
-        { status: 403 },
-      );
-    }
-    await admin.from("platform_owners").upsert({ user_id: user.id, email: user.email });
-  }
-  return { admin, email: user.email ?? "" };
-}
 
 export async function GET() {
   try {

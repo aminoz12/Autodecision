@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { reportEvent } from "@/lib/telemetry";
+
 /**
  * Last-resort boundary (errors thrown by the root layout itself). Renders its
  * own <html>/<body> because the app shell is unavailable here, so styles are
@@ -12,6 +15,10 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    reportEvent({ source: "render", message: `[layout] ${error.message}`, stack: error.stack, context: error.digest ? { digest: error.digest } : null });
+  }, [error]);
+
   return (
     <html lang="fr">
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#F6F8FA", color: "#1A1F36" }}>

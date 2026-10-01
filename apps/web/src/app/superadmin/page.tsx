@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  ScrollText,
   ShieldCheck,
   Users,
   X,
@@ -209,6 +210,10 @@ export default function SuperAdminPage() {
         <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
+        <Link href="/superadmin/journal" className="od-btn od-btn--outline">
+          <ScrollText className="h-4 w-4" />
+          Journal
+        </Link>
         <button type="button" className="od-btn od-btn--primary" onClick={() => { setCError(null); setCForm((f) => ({ ...f, password: generatePassword() })); setCreateOpen(true); }}>
           <Plus className="h-4 w-4" />
           Nouveau magasin

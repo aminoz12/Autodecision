@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { AuthProvider } from "@/components/providers/AuthProvider";
+import { ErrorReporter } from "@/components/providers/ErrorReporter";
 import { ThemeInitializer } from "@/components/theme/ThemeToggle";
 import "./globals.css";
 import "./design-system.css";
@@ -51,6 +52,7 @@ export default function RootLayout({
               "try{if(localStorage.getItem('sidebar')==='collapsed')document.documentElement.setAttribute('data-sidebar','collapsed')}catch(e){}",
           }}
         />
+        <ErrorReporter />
         <ThemeInitializer />
         <AuthProvider>{children}</AuthProvider>
       </body>

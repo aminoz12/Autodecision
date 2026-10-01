@@ -2,6 +2,7 @@
 
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
+import { reportEvent } from "@/lib/telemetry";
 
 /**
  * Route-level error boundary: a render/runtime error in any page shows this
@@ -15,8 +16,9 @@ export default function ErrorPage({
   reset: () => void;
 }) {
   useEffect(() => {
-    // Surface it in the console (and to an error tracker once one is wired).
+    // Surface it in the console and file it in the journal (/superadmin/journal).
     console.error("[page error]", error);
+    reportEvent({ source: "render", message: error.message, stack: error.stack, context: error.digest ? { digest: error.digest } : null });
   }, [error]);
 
   return (
