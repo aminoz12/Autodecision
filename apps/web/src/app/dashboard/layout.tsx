@@ -3,6 +3,7 @@ import { BillingGate } from "@/components/billing/BillingGate";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { NotificationsProvider } from "@/components/providers/NotificationsProvider";
+import { NewVersionNotice } from "@/components/ui/NewVersionNotice";
 
 export default function DashboardLayout({
   children,
@@ -18,6 +19,7 @@ export default function DashboardLayout({
           <Topbar />
           <BillingGate>{children}</BillingGate>
         </main>
+        <NewVersionNotice />
       </div>
       </NotificationsProvider>
     </DashboardGate>

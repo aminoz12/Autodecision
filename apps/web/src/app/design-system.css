@@ -967,3 +967,29 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 @media print {
   .tk-print-only { display: block; }
 }
+
+/* Nouvelle version déployée (NewVersionNotice) : bandeau fixe en bas, sous les
+   modales (z-index 50) pour ne jamais couvrir une saisie en cours. */
+.nv-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-card);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+}
+.nv-banner .od-btn { white-space: nowrap; }
+@media print {
+  .nv-banner { display: none; }
+}
