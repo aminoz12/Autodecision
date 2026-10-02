@@ -66,7 +66,7 @@ const REGLEMENT_LABEL: Record<Reglement, string> = {
 
 const NEW_CLIENT = "__new__";
 
-/** Counter client, garage, or client PRO (a professional account without a portal). */
+/** Counter client, garage, or client PRO (a professional served at the counter: no portal, no delivery). */
 type PourQui = "COMPTOIR" | "GARAGE" | "PRO";
 /** Rajout rapide can also order straight for the magasin stock. */
 type QuickPourQui = PourQui | "STOCK";
@@ -693,12 +693,13 @@ export default function NouvelleCommandePage() {
   // A garage order is always carried by its account; a walk-in client is
   // either paid or not paid at the counter. The choice follows the destination.
   useEffect(() => {
-    // A garage and a client PRO both buy on account.
-    if (destineA !== "COMPTOIR" && reglement !== "EN_COMPTE") setReglement("EN_COMPTE");
+    // A garage buys on account; a counter client pays at the counter; a client PRO does either.
+    if (destineA === "GARAGE" && reglement !== "EN_COMPTE") setReglement("EN_COMPTE");
     if (destineA === "COMPTOIR" && reglement === "EN_COMPTE") setReglement("NON_PAYEE");
   }, [reglement, destineA]);
   /** Choices offered for the current destination. */
-  const availableReglements: Reglement[] = destineA !== "COMPTOIR" ? ["EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
+  const availableReglements: Reglement[] =
+    destineA === "GARAGE" ? ["EN_COMPTE"] : destineA === "PRO" ? ["PAYEE", "NON_PAYEE", "EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
   /** Most the avoir can cover on this order. */
   const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
 
@@ -1285,7 +1286,7 @@ export default function NouvelleCommandePage() {
               {destineA === "COMPTOIR"
                 ? "Nouveau client : il sera créé dans Clients particuliers (le téléphone sert à le reconnaître la prochaine fois)."
                 : destineA === "PRO"
-                  ? "Ce client PRO sera enregistré dans Clients PRO (paiement en compte, 30 jours par défaut)."
+                  ? "Ce client PRO sera enregistré dans Clients PRO : servi au comptoir, il peut régler sur place ou en compte."
                   : "Ce garage sera enregistré dans votre fichier."}
             </p>
           )

@@ -77,6 +77,8 @@ export async function loadParticulierClients(
       .select("id,name,phone,email,city,immatriculation,vehicle_model,is_active,createdAt")
       .eq("organization_id", orgId)
       .eq("is_garage", false)
+      // Clients PRO have their own list (/dashboard/pros).
+      .neq("account_type", "PRO")
       .order("name")
       .limit(2000),
     supabase

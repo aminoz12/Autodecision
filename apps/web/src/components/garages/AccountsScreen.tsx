@@ -77,7 +77,7 @@ const WORDS = {
   PRO: {
     base: "/dashboard/pros",
     title: "Clients PRO",
-    subtitle: "Sociétés, flottes, taxis… qui achètent en compte : le même compte qu'un garage, sans accès au portail.",
+    subtitle: "Professionnels servis au comptoir (indépendants, sociétés…) : ni portail ni livraison, règlement au comptoir ou en compte.",
     search: "Rechercher un client PRO...",
     add: "Nouveau client PRO",
     total: "Total clients PRO",
@@ -88,7 +88,7 @@ const WORDS = {
     nameRequired: "Le nom de la société est obligatoire.",
     addressPlaceholder: "8 avenue de la Gare",
     emailPlaceholder: "compta@societe.fr",
-    termsOf: "de ce client",
+    termsOf: "de ce client PRO",
     create: "Créer le client PRO",
   },
 } as const;
@@ -176,7 +176,8 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
       setFormError(w.nameRequired);
       return;
     }
-    if (!form.address.trim() || !form.city.trim()) {
+    // A garage is delivered: its address is needed. A client PRO collects at the counter.
+    if (kind === "GARAGE" && (!form.address.trim() || !form.city.trim())) {
       setFormError("L'adresse de livraison et la ville sont obligatoires : le livreur en a besoin pour son itinéraire.");
       return;
     }
@@ -339,12 +340,12 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
                   <input className="od-input" placeholder="01 23 45 67 89" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
                 </div>
                 <div className="od-field">
-                  <span className="od-label">Ville *</span>
+                  <span className="od-label">Ville{kind === "GARAGE" ? " *" : ""}</span>
                   <input className="od-input" placeholder="Nanterre" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} />
                 </div>
               </div>
               <div className="od-field">
-                <span className="od-label">Adresse de livraison *</span>
+                <span className="od-label">{kind === "GARAGE" ? "Adresse de livraison *" : "Adresse"}</span>
                 <input className="od-input" placeholder={w.addressPlaceholder} value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
               </div>
               <div className="od-field">
@@ -352,7 +353,7 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
                 <input className="od-input" type="email" placeholder={w.emailPlaceholder} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
               </div>
               <div className="od-field">
-                <span className="od-label">Délai de paiement (en compte)</span>
+                <span className="od-label">{kind === "GARAGE" ? "Délai de paiement (en compte)" : "Délai de paiement quand il achète en compte"}</span>
                 <div className="nc-pay-quick" role="radiogroup" aria-label="Délai de paiement">
                   {PAYMENT_TERMS.map((d) => (
                     <button

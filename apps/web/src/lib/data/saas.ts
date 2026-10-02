@@ -659,12 +659,16 @@ export async function searchParts(
   return results.slice(0, 30);
 }
 
-/** A professional account: a garage (portal possible) or a client PRO (company, fleet, taxi… — no portal). */
+/**
+ * GARAGE: delivered, on account, may have a portal login.
+ * PRO: a professional served at the counter like any client (is_garage = false) —
+ * no portal, no delivery — who may also buy on account.
+ */
 export type AccountKind = "GARAGE" | "PRO";
 
 export type GarageSummary = {
   id: string;
-  /** GARAGE, or PRO (migration 20261002031524 ; every account is a garage before it). */
+  /** GARAGE, or PRO (clients.account_type ; every row is a garage on a database without the column). */
   kind: AccountKind;
   name: string;
   phone: string | null;
@@ -683,11 +687,11 @@ export async function loadGarages(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<GarageSummary[]> {
-  const accounts = (columns: string) =>
-    supabase.from("clients").select(columns).eq("organization_id", orgId).eq("is_garage", true).order("name");
   const BASE = "id,name,phone,email,city,rating,is_active,payment_terms_days";
+  const base = (columns: string) => supabase.from("clients").select(columns).eq("organization_id", orgId);
   const [withKind, ordersRes] = await Promise.all([
-    accounts(`${BASE},account_type`),
+    // Garages, plus the counter clients marked PRO.
+    base(`${BASE},is_garage,account_type`).or("is_garage.eq.true,account_type.eq.PRO").order("name"),
     supabase
       .from("orders")
       .select("client_id,montant_total,solde_restant")
@@ -697,7 +701,8 @@ export async function loadGarages(
   ]);
 
   // Database without the account type yet: every professional account is a garage.
-  const clientsRes = withKind.error && /account_type/i.test(withKind.error.message) ? await accounts(BASE) : withKind;
+  const clientsRes =
+    withKind.error && /account_type/i.test(withKind.error.message) ? await base(BASE).eq("is_garage", true).order("name") : withKind;
   if (clientsRes.error) throw new Error(clientsRes.error.message);
   if (ordersRes.error) throw new Error(ordersRes.error.message);
 
@@ -756,7 +761,8 @@ export async function createGarage(
     city: input.city?.trim() || null,
     address: input.address?.trim() || null,
     payment_terms_days: input.paymentTermsDays ?? 30,
-    is_garage: true,
+    // A client PRO is a counter client (no delivery, no portal) marked as a professional.
+    is_garage: input.kind !== "PRO",
     is_professional: true,
     // Only sent for a client PRO, so a garage is still created on a database without the column.
     ...(input.kind === "PRO" ? { account_type: "PRO" } : {}),
