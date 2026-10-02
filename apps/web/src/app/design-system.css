@@ -924,3 +924,46 @@ table .od-btn--primary:hover { background: var(--clr-primary-soft); box-shadow: 
 /* Garage portal: an avoir line keeps its number and amount on one line */
 .gp-credit strong { white-space: nowrap; }
 .gp-credit > :last-child { white-space: nowrap; }
+
+/* Order form — the lines table fits a laptop screen whatever the number of
+   lines and the size of the amounts: fixed columns, the designation takes what
+   is left, numbers are never clipped (no spin buttons, tabular figures). */
+.od-table-wrap:has(> table.nc-lines) { overflow-x: auto; }
+table.nc-lines { table-layout: fixed; width: 100%; min-width: 1000px; }
+table.nc-lines thead th, table.nc-lines tbody td { padding-left: 4px; padding-right: 4px; }
+table.nc-lines thead th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+table.nc-lines thead th:nth-child(1) { width: 34px; }
+table.nc-lines thead th:nth-child(2) { width: auto; min-width: 0; }
+table.nc-lines thead th:nth-child(3) { width: 122px; }
+table.nc-lines thead th:nth-child(4) { width: 158px; }
+table.nc-lines thead th:nth-child(5) { width: 62px; }
+table.nc-lines thead th:nth-child(6) { width: 104px; }
+table.nc-lines thead th:nth-child(7) { width: 60px; }
+table.nc-lines thead th:nth-child(8) { width: 50px; }
+table.nc-lines thead th:nth-child(9) { width: 82px; }
+table.nc-lines thead th:nth-child(10) { width: 50px; }
+table.nc-lines thead th:nth-child(11) { width: 112px; }
+table.nc-lines thead th:nth-child(12) { width: 36px; }
+table.nc-lines tbody td:nth-child(2) { width: auto; min-width: 0; }
+table.nc-lines .od-input, table.nc-lines .od-select, table.nc-lines .od-select select { width: 100%; min-width: 0; }
+table.nc-lines .nc-cell-input { padding-left: 8px; padding-right: 8px; }
+table.nc-lines .od-select select { padding-left: 8px; padding-right: 24px; text-overflow: ellipsis; }
+table.nc-lines .nc-cell-ref, table.nc-lines .nc-cell-select, table.nc-lines .nc-cell-num, table.nc-lines .nc-cell-pct { width: 100%; min-width: 0; }
+table.nc-lines .nc-cell-num { font-variant-numeric: tabular-nums; text-align: right; }
+table.nc-lines td.od-td-center .nc-cell-num { text-align: center; }
+table.nc-lines input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+table.nc-lines input[type="number"]::-webkit-outer-spin-button,
+table.nc-lines input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+table.nc-lines th.od-th-right:nth-last-child(2), table.nc-lines td.od-td-right.od-num-strong { text-align: right; }
+table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 14px; padding-left: 2px; padding-right: 8px; }
+.nc-count { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--bg-subtle); }
+
+/* Bon de commande (ticket): a long reference wraps instead of pushing the amounts
+   off the paper; printed alone from the order page. */
+.tk-table td.tk-ref { white-space: normal; overflow-wrap: anywhere; word-break: break-word; min-width: 62px; max-width: 118px; }
+.tk-table td.tk-ref--wide { max-width: none; }
+.tk-table td.tk-des { min-width: 56px; }
+.tk-print-only { display: none; }
+@media print {
+  .tk-print-only { display: block; }
+}

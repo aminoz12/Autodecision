@@ -483,6 +483,9 @@ export default function NouvelleCommandePage() {
     setClientId(NEW_CLIENT);
   }, []);
 
+  /** The vehicle last filled in from a client file — anything else was typed or read from a PDF. */
+  const autoVehicle = useRef({ plate: "", model: "" });
+
   /* ---- Pick an existing client → prefill snapshot fields ---- */
   const pickClient = useCallback(
     (value: string) => {
@@ -493,10 +496,20 @@ export default function NouvelleCommandePage() {
       setClientName(c.name);
       setClientPhone(c.phone ?? "");
       setClientEmail(c.email ?? "");
-      setImmatriculation(c.immatriculation ?? "");
-      setVehicleModel(c.vehicleModel ?? "");
+      // The vehicle follows the client file only while nobody typed (or imported)
+      // another one. A garage brings a different vehicle with every order: its
+      // file never replaces — and never erases — the plate of this order.
+      const fromFile = garageIds.has(value) ? { plate: "", model: "" } : { plate: c.immatriculation ?? "", model: c.vehicleModel ?? "" };
+      if (!immatriculation.trim() || immatriculation === autoVehicle.current.plate) {
+        setImmatriculation(fromFile.plate);
+        autoVehicle.current.plate = fromFile.plate;
+      }
+      if (!vehicleModel.trim() || vehicleModel === autoVehicle.current.model) {
+        setVehicleModel(fromFile.model);
+        autoVehicle.current.model = fromFile.model;
+      }
     },
-    [clients],
+    [clients, garageIds, immatriculation, vehicleModel],
   );
 
   /* ---- Particulier recognised by phone → the order joins their file ---- */
@@ -722,13 +735,12 @@ export default function NouvelleCommandePage() {
         return;
       }
       if (parsed.clientName) {
-        const existing = clients.find(
-          (c) =>
-            c.name.trim().toLowerCase() ===
-            parsed.clientName!.trim().toLowerCase(),
-        );
+        const wanted = parsed.clientName.trim().toLowerCase();
+        const existing = clients.find((c) => c.name.trim().toLowerCase() === wanted);
+        // A devis made out to a garage: the order goes to that garage.
+        if (existing && garageIds.has(existing.id)) setDestineA("GARAGE");
         setClientId(existing?.id ?? NEW_CLIENT);
-        setClientName(parsed.clientName);
+        setClientName(existing?.name ?? parsed.clientName);
       }
       if (parsed.phone) setClientPhone(parsed.phone);
       if (parsed.email) setClientEmail(parsed.email);
@@ -1273,6 +1285,9 @@ export default function NouvelleCommandePage() {
         <div className="od-card-title">
           <Package className="h-4 w-4" />
           Pièces
+          {lines.filter((l) => l.nom_produit.trim()).length > 1 && (
+            <span className="nc-count">{lines.filter((l) => l.nom_produit.trim()).length} lignes</span>
+          )}
         </div>
         <div className="od-table-wrap">
           <table className="od-table nc-lines">
@@ -1317,6 +1332,7 @@ export default function NouvelleCommandePage() {
                     <input
                       className="od-input nc-cell-input"
                       placeholder="Plaquette de frein"
+                      title={l.nom_produit || undefined}
                       value={l.nom_produit}
                       onChange={(e) =>
                         setLine(idx, "nom_produit", e.target.value)

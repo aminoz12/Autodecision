@@ -48,16 +48,21 @@ export type ParsedOrder = {
 
 /** One positioned text run from pdf.js (PDF user-space units, y grows upward). */
 export type PdfTextItem = { x: number; y: number; w: number; h: number; str: string };
-export type PdfCell = { x: number; text: string };
+/** `x2` is the right edge (absent on hand-written rows): numbers are matched to columns by it. */
+export type PdfCell = { x: number; text: string; x2?: number };
 export type PdfRow = { y: number; cells: PdfCell[] };
 
 const ROW_Y_TOLERANCE = 2.5;
+/** « 1 234,56 », « 45,00 € », « 20,00 % »: an amount that already has its decimals. */
+const COMPLETE_AMOUNT = /^[-+]?[\d\s.]*\d[.,]\d{2,3}\s*(?:€|%)?$/;
 
 /**
  * Group text runs into visual rows (top → bottom) and split each row into
  * cells (left → right) wherever the horizontal gap exceeds roughly one line
  * height — words inside a phrase sit a couple of points apart, table columns
- * and page columns are ≥ 12pt apart.
+ * and page columns are ≥ 12pt apart. One exception: an amount that already has
+ * its decimals is complete, so digits that follow start the next cell however
+ * close they are — two wide numbers in neighbouring columns nearly touch.
  */
 export function groupItemsIntoRows(items: PdfTextItem[]): PdfRow[] {
   const rows: { y: number; items: PdfTextItem[] }[] = [];
@@ -80,18 +85,21 @@ export function groupItemsIntoRows(items: PdfTextItem[]): PdfRow[] {
     for (const it of sorted) {
       const gap = it.x - end;
       const threshold = Math.max(8, it.h || 0);
-      if (cur && gap <= threshold) {
+      const nextColumn = cur !== null && COMPLETE_AMOUNT.test(cur.text.trim()) && /^[-+]?\d/.test(it.str.trim());
+      if (cur && gap <= threshold && !nextColumn) {
         cur.text += ` ${it.str}`;
       } else {
         cur = { x: it.x, text: it.str };
         cells.push(cur);
       }
-      end = Math.max(end, it.x + (it.w || 0));
+      const right = it.x + (it.w || 0);
+      cur.x2 = Math.max(cur.x2 ?? right, right);
+      end = Math.max(end, right);
     }
     return {
       y: r.y,
       cells: cells
-        .map((c) => ({ x: c.x, text: c.text.replace(/\s+/g, " ").trim() }))
+        .map((c) => ({ x: c.x, x2: c.x2, text: c.text.replace(/\s+/g, " ").trim() }))
         .filter((c) => c.text),
     };
   });
@@ -198,10 +206,13 @@ function valueFor(lines: string[], idx: number, label: string): string | undefin
  * "1 234,50 €" → 1234.5 · "120.833 €" → 120.833 · "1.234,00" → 1234
  * When both separators appear the last one is the decimal mark; a single
  * separator is always treated as the decimal mark (a repeated one is a
- * thousands separator).
+ * thousands separator). Only the FIRST amount of the text is read: when two
+ * columns ran together ("12 345,67 14 814,80") the second one is not glued on.
  */
 export function parseMoney(s: string): number {
-  let t = s.replace(/[^\d,.-]/g, "");
+  const first = s.match(/[-+]?(?:\d{1,3}(?:\s\d{3})+|\d+)(?:[.,]\d+)*/);
+  if (!first) return 0;
+  let t = first[0].replace(/\s/g, "");
   const lastComma = t.lastIndexOf(",");
   const lastDot = t.lastIndexOf(".");
   if (lastComma !== -1 && lastDot !== -1) {
@@ -217,6 +228,11 @@ export function parseMoney(s: string): number {
   }
   const n = parseFloat(t);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** A quantity as documents print it: "2", "1,00", "12.000", "1 500", "x 3" — at least 1. */
+export function parseQuantity(s: string): number {
+  return Math.max(1, Math.round(parseMoney(s)) || 1);
 }
 
 function round2(n: number): number {
@@ -444,7 +460,12 @@ type ColKey =
   | "qty"
   | "totalHt"
   | "totalTtc"
+  | "otherNum"
   | "other";
+
+/** Columns that hold numbers (a price, a quantity, a rate). */
+const NUMERIC_KEYS: ReadonlySet<ColKey> = new Set(["puHt", "puTtc", "achat", "vente", "qty", "totalHt", "totalTtc", "otherNum"]);
+const AMOUNT_KEYS: ColKey[] = ["qty", "puHt", "puTtc", "achat", "vente", "totalHt", "totalTtc"];
 
 function headerKey(text: string): ColKey | null {
   const n = norm(text).replace(/\s+/g, " ");
@@ -458,110 +479,261 @@ function headerKey(text: string): ColKey | null {
   if (/^(p\.?\s*u\.?|prix unitaire|pu)$/.test(n)) return "puTtc";
   if (/^(prix|p\.?)\s*(d')?achat$/.test(n) || n === "pa") return "achat";
   if (/^(prix|p\.?)\s*(de )?vente$/.test(n) || n === "pv") return "vente";
-  if (/^(tva|remise|fournisseur|stock|unite)$/.test(n)) return "other";
+  if (/^(tva|remise|stock)( ?%)?$/.test(n)) return "otherNum";
+  if (/^(fournisseur|unite|marque)$/.test(n)) return "other";
   return null;
 }
 
-type TableHeader = { rowIdx: number; cols: { key: ColKey; x: number }[] };
+type HeaderCol = { key: ColKey; x: number; x2?: number };
+type TableHeader = { rowIdx: number; cols: HeaderCol[] };
+
+/** The columns of a row when it is the table's header row, else null. */
+function headerCols(row: PdfRow): HeaderCol[] | null {
+  const cols: HeaderCol[] = [];
+  let unknown = 0;
+  for (const c of row.cells) {
+    const key = headerKey(c.text);
+    if (key) cols.push({ key, x: c.x, x2: c.x2 });
+    else unknown++;
+  }
+  const keys = new Set(cols.map((c) => c.key));
+  const hasPrice = (["puHt", "puTtc", "vente", "totalHt", "totalTtc"] as ColKey[]).some((k) => keys.has(k));
+  return keys.has("designation") && (keys.has("reference") || keys.has("qty")) && hasPrice && unknown <= 1 ? cols : null;
+}
 
 function findTableHeader(rows: PdfRow[]): TableHeader | null {
   for (let i = 0; i < rows.length; i++) {
-    const cols: { key: ColKey; x: number }[] = [];
-    let unknown = 0;
-    for (const c of rows[i].cells) {
-      const key = headerKey(c.text);
-      if (key) cols.push({ key, x: c.x });
-      else unknown++;
-    }
-    const keys = new Set(cols.map((c) => c.key));
-    const hasPrice = ["puHt", "puTtc", "vente", "totalHt", "totalTtc"].some((k) =>
-      keys.has(k as ColKey),
-    );
-    if (
-      keys.has("designation") &&
-      (keys.has("reference") || keys.has("qty")) &&
-      hasPrice &&
-      unknown <= 1
-    ) {
-      return { rowIdx: i, cols };
-    }
+    const cols = headerCols(rows[i]);
+    if (cols) return { rowIdx: i, cols };
   }
   return null;
 }
 
-/** Column whose left edge is the closest one at or before the cell. */
-function columnFor(header: TableHeader, x: number): ColKey {
-  let best = header.cols[0];
-  for (const col of header.cols) {
+function isNumericCell(text: string): boolean {
+  return /\d/.test(text) && /^[-+]?[\d\s.,]+\s*(?:€|%)?$/.test(text);
+}
+
+/** Column whose left edge is the closest one at or before the cell (text is left-aligned). */
+function columnByLeftEdge(cols: HeaderCol[], x: number): ColKey {
+  let best = cols[0];
+  for (const col of cols) {
     if (col.x <= x + 6 && col.x >= best.x) best = col;
   }
   return best.key;
 }
 
+/** The grand totals under the table: the table is over (until its header is printed again). */
 function isTableEnd(row: PdfRow): boolean {
   const first = norm(row.cells[0]?.text ?? "");
   return (
-    /^(sous[- ]?total|total|tva|net a payer|montant (total|ttc|ht)|remise|acompte|conditions|signature|bon pour accord|arrete)/.test(
-      first,
-    ) && row.cells.length <= 3
+    /^(total|tva|net a payer|montant (total|ttc|ht)|remise|acompte|conditions|signature|bon pour accord|arrete)/.test(first) &&
+    row.cells.length <= 3
   );
 }
 
-function parseDevisTable(rows: PdfRow[], header: TableHeader): ParsedOrderLine[] {
+/** A running total at the bottom or top of a page: the table goes on. */
+function isPageSubtotal(row: PdfRow): boolean {
+  return /^(sous[- ]?total|report\b|a reporter|total (de la )?page|total a reporter)/.test(norm(row.cells[0]?.text ?? ""));
+}
+
+/** Page furniture printed around the table: page numbers, legal mentions of the footer. */
+function isPageNoise(row: PdfRow): boolean {
+  const text = norm(row.cells.map((c) => c.text).join(" "));
+  return (
+    /^page\s*\d+/.test(text) ||
+    /^\d+\s*\/\s*\d+$/.test(text) ||
+    /\b(siret|siren|capital de|rcs|tva intracom|n° tva|iban|bic|code ape|naf)\b/.test(text)
+  );
+}
+
+/** Rows a page further down carry this much negative Y (see extractPdfRows). */
+const PAGE_GAP = 50000;
+
+type NumericAnchors = { mode: "right" | "left" | "center"; cols: { key: ColKey; at: number }[] };
+
+function anchorOf(cell: PdfCell, mode: NumericAnchors["mode"]): number {
+  const x2 = cell.x2 ?? cell.x;
+  return mode === "right" ? x2 : mode === "left" ? cell.x : (cell.x + x2) / 2;
+}
+
+function cluster(values: number[], tolerance: number): { center: number; n: number }[] {
+  const out: { center: number; n: number; sum: number }[] = [];
+  for (const v of [...values].sort((a, b) => a - b)) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(v - last.center) <= tolerance) {
+      last.sum += v;
+      last.n += 1;
+      last.center = last.sum / last.n;
+    } else {
+      out.push({ center: v, n: 1, sum: v });
+    }
+  }
+  return out;
+}
+
+/**
+ * Where the numeric columns really are, measured on the numbers themselves.
+ *
+ * A header label says little about it: "P.U. HT" may sit left, centred or right
+ * over numbers that are right-aligned, and a wide amount ("12 345,67") starts
+ * well to the left of a short one. But every number of one column shares an
+ * edge. So the numbers of the whole table are grouped by right edge (then left
+ * edge, then centre); when that gives exactly as many groups as the header has
+ * numeric columns, the groups ARE the columns, left to right.
+ */
+function inferNumericAnchors(rows: PdfRow[], header: TableHeader): NumericAnchors | null {
+  const numericCols = header.cols.filter((c) => NUMERIC_KEYS.has(c.key)).sort((a, b) => a.x - b.x);
+  const textCols = header.cols.filter((c) => !NUMERIC_KEYS.has(c.key));
+  if (numericCols.length === 0) return null;
+
+  const cells: PdfCell[] = [];
+  for (let i = header.rowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (headerCols(row) || isTableEnd(row) || isPageSubtotal(row) || isPageNoise(row)) continue;
+    for (const c of row.cells) {
+      if (c.x2 === undefined || !isNumericCell(c.text)) continue;
+      // An all-digit reference sits under its own (text) header, left-aligned.
+      if (textCols.some((t) => Math.abs(c.x - t.x) <= 6)) continue;
+      cells.push(c);
+    }
+  }
+  if (cells.length < numericCols.length * 2) return null;
+
+  let best: NumericAnchors | null = null;
+  let bestCover = 0;
+  for (const mode of ["right", "left", "center"] as const) {
+    const groups = cluster(cells.map((c) => anchorOf(c, mode)), 2.5);
+    const biggest = Math.max(...groups.map((g) => g.n));
+    const kept = groups.filter((g) => g.n >= Math.max(2, biggest * 0.25));
+    if (kept.length !== numericCols.length) continue;
+    const cover = kept.reduce((sum, g) => sum + g.n, 0) / cells.length;
+    if (cover > bestCover) {
+      bestCover = cover;
+      best = { mode, cols: kept.map((g, i) => ({ key: numericCols[i].key, at: g.center })) };
+    }
+  }
+  return best && bestCover >= 0.8 ? best : null;
+}
+
+/** The column of a cell: numbers by the measured anchors, text (and anything else) by the header. */
+function columnFor(header: TableHeader, anchors: NumericAnchors | null, cell: PdfCell): ColKey {
+  if (isNumericCell(cell.text) && cell.x2 !== undefined) {
+    const textCols = header.cols.filter((c) => !NUMERIC_KEYS.has(c.key));
+    const underText = textCols.some((t) => Math.abs(cell.x - t.x) <= 6);
+    if (!underText) {
+      if (anchors) {
+        const at = anchorOf(cell, anchors.mode);
+        const nearest = anchors.cols.reduce((a, b) => (Math.abs(b.at - at) < Math.abs(a.at - at) ? b : a));
+        if (Math.abs(nearest.at - at) <= 6) return nearest.key;
+      }
+      // No measured anchors: the header span the number overlaps most, else the nearest edge.
+      let best: HeaderCol | null = null;
+      let bestScore = -Infinity;
+      for (const col of header.cols) {
+        if (col.x2 === undefined) continue;
+        const overlap = Math.min(cell.x2, col.x2) - Math.max(cell.x, col.x);
+        const score = overlap > 0 ? overlap : -Math.min(Math.abs(cell.x - col.x), Math.abs(cell.x2 - col.x2));
+        if (score > bestScore) {
+          bestScore = score;
+          best = col;
+        }
+      }
+      if (best) return best.key;
+    }
+  }
+  return columnByLeftEdge(header.cols, cell.x);
+}
+
+function parseDevisTable(rows: PdfRow[], first: TableHeader): ParsedOrderLine[] {
   const out: ParsedOrderLine[] = [];
   type Draft = Partial<Record<ColKey, string>>;
+  let header = first;
+  const anchors = inferNumericAnchors(rows, first);
   let cur: Draft | null = null;
+  /** Left edge of the current line's designation: a wrapped line continues right under it. */
+  let curX: number | null = null;
+  /** False after the grand totals, until the header is printed again. */
+  let active = true;
+  let prevY: number | null = null;
 
   const emit = () => {
     if (!cur) return;
     const designation = (cur.designation ?? "").trim();
     const reference = (cur.reference ?? "").trim();
-    if (!designation && !reference) {
-      cur = null;
-      return;
+    if (designation || reference) {
+      const qty = parseQuantity(cur.qty ?? "1");
+      const pick = (k: ColKey) => (cur && cur[k] && /\d/.test(cur[k]!) ? parseMoney(cur[k]!) : undefined);
+      const vente =
+        pick("vente") ??
+        pick("puTtc") ??
+        pick("puHt") ??
+        (pick("totalTtc") !== undefined ? pick("totalTtc")! / qty : undefined) ??
+        (pick("totalHt") !== undefined ? pick("totalHt")! / qty : undefined) ??
+        0;
+      out.push({
+        designation: designation || reference,
+        reference,
+        quantity: qty,
+        prixAchat: round2(pick("achat") ?? 0),
+        prixVente: round2(vente),
+      });
     }
-    const qty = Math.max(1, parseInt((cur.qty ?? "1").replace(/[^\d]/g, ""), 10) || 1);
-    const pick = (k: ColKey) => (cur && cur[k] ? parseMoney(cur[k]!) : undefined);
-    const vente =
-      pick("vente") ??
-      pick("puTtc") ??
-      pick("puHt") ??
-      (pick("totalTtc") !== undefined ? pick("totalTtc")! / qty : undefined) ??
-      (pick("totalHt") !== undefined ? pick("totalHt")! / qty : undefined) ??
-      0;
-    out.push({
-      designation: designation || reference,
-      reference,
-      quantity: qty,
-      prixAchat: round2(pick("achat") ?? 0),
-      prixVente: round2(vente),
-    });
     cur = null;
+    curX = null;
   };
 
-  for (let i = header.rowIdx + 1; i < rows.length; i++) {
+  for (let i = first.rowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.cells.length === 0) continue;
-    if (isTableEnd(row)) break;
+    const newPage = prevY !== null && prevY - row.y > PAGE_GAP;
+    const gapY = prevY === null ? 0 : prevY - row.y;
+    prevY = row.y;
+    // A line never continues over a page break.
+    if (newPage) emit();
+
+    // The header printed again at the top of a page: the table goes on.
+    const again = headerCols(row);
+    if (again) {
+      emit();
+      header = { rowIdx: i, cols: again };
+      active = true;
+      continue;
+    }
+    if (isPageSubtotal(row)) {
+      emit();
+      continue;
+    }
+    if (isTableEnd(row)) {
+      emit();
+      active = false;
+      continue;
+    }
+    if (!active || isPageNoise(row)) continue;
 
     const cells: Draft = {};
+    let designationX: number | null = null;
     for (const c of row.cells) {
-      const key = columnFor(header, c.x);
+      const key = columnFor(header, anchors, c);
+      if (key === "designation" && designationX === null) designationX = c.x;
       cells[key] = cells[key] ? `${cells[key]} ${c.text}` : c.text;
     }
 
-    const onlyText =
-      !cells.reference && !cells.qty && !cells.puHt && !cells.puTtc && !cells.vente &&
-      !cells.totalHt && !cells.totalTtc;
-    if (onlyText && cur && cells.designation) {
-      // Wrapped designation → continuation of the previous line.
-      cur.designation = `${cur.designation ?? ""} ${cells.designation}`.trim();
+    // A line of the table carries at least one number (quantity, price or total).
+    const hasNumber = AMOUNT_KEYS.some((k) => cells[k] !== undefined && isNumericCell(cells[k]!));
+    if (!hasNumber) {
+      // Text only: the rest of a wrapped designation — right under it, same left
+      // edge — or something that is not part of the table (page header, footer).
+      const wraps =
+        cur !== null && cells.designation !== undefined && !cells.reference && gapY <= 30 &&
+        (curX === null || designationX === null || Math.abs(designationX - curX) <= 4);
+      if (wraps && cur) cur.designation = `${cur.designation ?? ""} ${cells.designation}`.trim();
       continue;
     }
-    if (onlyText && !cells.designation) continue;
+    if (!cells.reference && !cells.designation) continue;
 
     emit();
     cur = cells;
+    curX = designationX;
   }
   emit();
   return out;
@@ -693,6 +865,39 @@ export function parseDevisRows(rows: PdfRow[]): ParsedOrder {
           result.clientName = v;
           result.filled.push("client");
         }
+      }
+    }
+  }
+
+  // A devis made out to a garage prints the vehicle away from the client block:
+  // the labelled plate is taken wherever it stands, then a plate-shaped text.
+  if (!result.plate || !result.vehicle) {
+    for (const row of rows) {
+      for (const cell of row.cells) {
+        const n = norm(cell.text);
+        if (!result.plate && /^(immatriculation|immat\b\.?|plaque)/.test(n)) {
+          const v = labelValue(row, cell);
+          if (v) {
+            result.plate = cleanPlate(v);
+            result.filled.push("immatriculation");
+          }
+        } else if (!result.vehicle && /^vehicule\b/.test(n)) {
+          const v = labelValue(row, cell);
+          if (v) {
+            result.vehicle = v;
+            result.filled.push("véhicule");
+          }
+        }
+      }
+    }
+  }
+  if (!result.plate) {
+    for (const row of rows) {
+      const m = row.cells.map((c) => c.text).join("  ").match(/\b[A-HJ-NP-TV-Z]{2}[- ]\d{3}[- ][A-HJ-NP-TV-Z]{2}\b/);
+      if (m) {
+        result.plate = cleanPlate(m[0]);
+        result.filled.push("immatriculation");
+        break;
       }
     }
   }

@@ -220,8 +220,15 @@ export function OrderTicket({
               <tbody>
                 {s.rows.map((l, i) => (
                   <tr key={i}>
-                    <td>{l.reference}</td>
-                    <td>{l.designation}</td>
+                    {/* « Rajout rapide » stores one text as reference and designation: print it once. */}
+                    {l.designation.trim() && l.designation.trim().toLowerCase() !== l.reference.trim().toLowerCase() ? (
+                      <>
+                        <td className="tk-ref">{l.reference}</td>
+                        <td className="tk-des">{l.designation}</td>
+                      </>
+                    ) : (
+                      <td className="tk-ref tk-ref--wide" colSpan={2}>{l.reference}</td>
+                    )}
                     <td className="tk-num">{l.quantity}</td>
                     <td className="tk-num">{eur(l.prixVente)}</td>
                     <td className="tk-num">{eur(l.quantity * l.prixVente)}</td>

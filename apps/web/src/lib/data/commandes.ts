@@ -318,6 +318,8 @@ export type OrderDetailLine = {
   expectedAt: string | null;
   receivedAt: string | null;
   tourName: string | null;
+  /** Flagged non-returnable at the sale. */
+  retourImpossible: boolean;
   /** Net unit price (after the line discount). */
   prixVente: number;
   /** Gross unit price before the line discount. */
@@ -330,6 +332,8 @@ export type OrderDetail = {
   id: string;
   ref: string;
   date: string | null;
+  /** When the order was entered (date and time), for the bon de commande. */
+  createdAt: string | null;
   canal: string;
   workflow: string;
   devis: boolean;
@@ -393,7 +397,7 @@ export async function loadOrderDetail(
   const { data: orderRaw, error: oErr } = await supabase
     .from("orders")
     .select(
-      "id,ref_demande,date_commande,canal_vente,vendeur_id,client_id,client_phone,client_email," +
+      "id,ref_demande,date_commande,createdAt,canal_vente,vendeur_id,client_id,client_phone,client_email," +
         "immatriculation,vehicle_model,kilometrage,montant_total,devis,statut_paiement,montant_paye,avance_payee," +
         "solde_restant,envoyer_au_livreur,date_envoi,statut_livreur,consigne,workflow_status,bl,date_bl," +
         "is_restock,livreur_id,avoir_applique,mode_paiement,echeance,remise_montant,cancelled_at,cancel_reason," +
@@ -415,7 +419,7 @@ export async function loadOrderDetail(
       .from("order_lines")
       .select(
         "id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,prevue_le,received_at," +
-          "depuis_magasin,prix_vente_unitaire,prix_brut_unitaire,remise_pct,suppliers(name),delivery_tours(name)",
+          "depuis_magasin,retour_impossible,prix_vente_unitaire,prix_brut_unitaire,remise_pct,suppliers(name),delivery_tours(name)",
       )
       .eq("order_id", orderId)
       .eq("organization_id", orgId),
@@ -451,6 +455,7 @@ export async function loadOrderDetail(
       expectedAt: (row.prevue_le as string | null) ?? null,
       receivedAt: (row.received_at as string | null) ?? null,
       tourName: tour ? String(tour.name ?? "") : null,
+      retourImpossible: row.retour_impossible === true,
       prixVente: pv,
       prixBrut: row.prix_brut_unitaire == null ? pv : toNumber(row.prix_brut_unitaire),
       remisePct: toNumber(row.remise_pct),
@@ -462,6 +467,7 @@ export async function loadOrderDetail(
     id: String(order.id),
     ref: String(order.ref_demande ?? ""),
     date: (order.date_commande as string | null) ?? null,
+    createdAt: (order.createdAt as string | null) ?? null,
     canal: String(order.canal_vente ?? ""),
     workflow: String(order.workflow_status ?? "PENDING"),
     devis: Boolean(order.devis),

@@ -23,7 +23,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { OrderSavPanel } from "@/components/sav/OrderSavPanel";
+import { loadSavSettingsSafe } from "@/lib/data/sav";
+import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import { createClient } from "@/lib/supabase/client";
 import { workflowLabel } from "@/lib/data/dashboard";
 import {
@@ -114,6 +117,40 @@ function fmtDateTime(value: string | null): string {
 /*  Page                                                              */
 /* ------------------------------------------------------------------ */
 
+/** The bon de commande of an existing order, as it was printed at the counter. */
+function ticketOf(order: OrderDetail, returnPolicy: string | null): TicketData {
+  return {
+    ref: order.ref,
+    createdAt: order.createdAt ?? (order.date ? `${order.date}T00:00:00` : new Date().toISOString()),
+    vendeur: order.vendeurName && order.vendeurName !== "—" ? order.vendeurName : null,
+    tourName: order.lines.find((l) => l.tourName)?.tourName ?? null,
+    deliveryAt: order.dateEnvoi,
+    clientName: order.clientName,
+    clientPhone: order.clientPhone,
+    plate: order.plate,
+    vehicleModel: order.vehicle,
+    kilometrage: order.kilometrage,
+    lines: order.lines.map((l) => ({
+      reference: l.reference,
+      designation: l.designation,
+      quantity: l.quantity,
+      prixVente: l.prixVente,
+      retourPossible: !l.retourImpossible,
+      taken: l.fromStock && l.quantity > 0 && l.handedOver >= l.quantity,
+    })),
+    total: order.total,
+    avoirApplique: order.avoirApplique,
+    paye: order.paye + order.avance,
+    reste: order.solde,
+    statutPaiement: order.statutPaiement,
+    modePaiement: order.modePaiement,
+    echeance: order.echeance,
+    promisedDate: null,
+    returnPolicy: returnPolicy || RETURN_CONDITIONS_TEXT,
+    consigneDeadline: null,
+  };
+}
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const orderId = params?.id ?? "";
@@ -123,20 +160,25 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [org, setOrg] = useState<OrganizationSettings | null>(null);
   /** Which document the next window.print() renders. */
-  const [printMode, setPrintMode] = useState<"facture" | "bl" | null>(null);
+  const [printMode, setPrintMode] = useState<"facture" | "bl" | "ticket" | null>(null);
+  /** Return policy printed at the foot of the bon de commande (Paramètres → Après-vente). */
+  const [returnPolicy, setReturnPolicy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profile?.organization_id) return;
     loadOrganizationSettings(supabase, profile.organization_id)
       .then(setOrg)
       .catch(() => {});
+    loadSavSettingsSafe(supabase)
+      .then((s) => setReturnPolicy(s.available ? s.settings.returnPolicyText || null : null))
+      .catch(() => {});
   }, [supabase, profile?.organization_id]);
 
   const printDoc = useCallback(
-    (mode: "facture" | "bl") => {
+    (mode: "facture" | "bl" | "ticket") => {
       setPrintMode(mode);
       // Tab title becomes the suggested PDF file name (REQ-…-facture.pdf).
-      if (order?.ref) document.title = `${order.ref}-${mode === "facture" ? "facture" : "bon-livraison"}`;
+      if (order?.ref) document.title = mode === "ticket" ? order.ref : `${order.ref}-${mode === "facture" ? "facture" : "bon-livraison"}`;
       // Let React paint the .print-doc block before opening the dialog.
       window.setTimeout(() => window.print(), 60);
     },
@@ -431,14 +473,18 @@ export default function OrderDetailPage() {
             <ScrollText className="h-4 w-4" />
             Bon de livraison
           </button>
-          {invoice ? (
-            <Link href={`/dashboard/factures/${invoice.id}`} className="od-btn od-btn--primary">
+          {/* The bon de commande given at the counter: reprinted here when it was forgotten. */}
+          {!order.isRestock && (
+            <button type="button" className="od-btn od-btn--primary" onClick={() => printDoc("ticket")}>
               <Printer className="h-4 w-4" />
-              Facture {invoice.number}
-            </Link>
-          ) : !order.devis && !order.isRestock && !order.cancelledAt ? (
-            <button type="button" className="od-btn od-btn--primary" onClick={() => void doEmitInvoice()} disabled={invoiceBusy}>
-              {invoiceBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Printer className="h-4 w-4" />}
+              Bon de commande
+            </button>
+          )}
+          {/* Pas de bouton « Facture FA-… » ici : la facture émise se retrouve
+              dans Factures; cette page sert au caissier à réimprimer le bon. */}
+          {!invoice && !order.devis && !order.isRestock && !order.cancelledAt ? (
+            <button type="button" className="od-btn od-btn--ghost" onClick={() => void doEmitInvoice()} disabled={invoiceBusy}>
+              {invoiceBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <ScrollText className="h-4 w-4" />}
               Émettre la facture
             </button>
           ) : null}
@@ -1015,8 +1061,15 @@ export default function OrderDetailPage() {
         </div>
       </div>
 
+      {/* ---- Bon de commande (the ticket of the counter), printed alone ---- */}
+      {printMode === "ticket" && (
+        <div className="tk-print-only">
+          <OrderTicket org={org} data={ticketOf(order, returnPolicy)} />
+        </div>
+      )}
+
       {/* ---- Printable document (Facture / Bon de livraison) ---- */}
-      {printMode && (
+      {printMode && printMode !== "ticket" && (
         <div className="print-doc">
           <div className="print-head">
             <div>
