@@ -6,14 +6,18 @@ import { useEffect, useState } from "react";
 /* ------------------------------------------------------------------ */
 /*  Nouvelle version déployée — un onglet laissé ouvert (caisse, garage)
     garde l'ancien bundle jusqu'à un rechargement. Ce composant compare
-    régulièrement /api/version (figé au build) à la valeur lue au
-    chargement et propose de recharger. Jamais de reload automatique :
-    le caissier peut être en pleine saisie. */
+    la version compilée dans CE bundle (NEXT_PUBLIC_APP_VERSION) à celle
+    que /api/version publie (figée à chaque déploiement) et propose de
+    recharger. Jamais de reload automatique : le caissier peut être en
+    pleine saisie. */
 /* ------------------------------------------------------------------ */
 
 const CHECK_EVERY_MS = 5 * 60 * 1000;
 
-async function fetchBuild(): Promise<string | null> {
+/** Version du bundle que cet onglet exécute (inlinée au build). */
+const RUNNING = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+
+async function fetchDeployed(): Promise<string | null> {
   try {
     const res = await fetch("/api/version", { cache: "no-store" });
     if (!res.ok) return null;
@@ -28,17 +32,13 @@ export function NewVersionNotice() {
   const [stale, setStale] = useState(false);
 
   useEffect(() => {
-    let baseline: string | null = null;
+    if (RUNNING === "dev") return; // dev local : jamais de bandeau
     let stopped = false;
 
     const check = async () => {
-      const build = await fetchBuild();
-      if (stopped || !build || build === "dev") return;
-      if (baseline === null) {
-        baseline = build;
-        return;
-      }
-      if (build !== baseline) setStale(true);
+      const deployed = await fetchDeployed();
+      if (stopped || !deployed || deployed === "dev") return;
+      if (deployed !== RUNNING) setStale(true);
     };
 
     void check();
