@@ -300,7 +300,7 @@ export default function GarageOrdersPage() {
               </div>
               <label className="od-field">
                 <span className="od-label">Commentaire (facultatif)</span>
-                <textarea className="gp-textarea" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pièce non montée, emballage d\u2019origine…" />
+                <textarea className="gp-textarea" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pièce non montée, emballage d’origine…" />
               </label>
               <p className="sav-hint">Le magasin valide la demande, puis le livreur passe récupérer la pièce. Chaque étape est visible dans « Retours ».</p>
               <div className="ga-modal-actions">

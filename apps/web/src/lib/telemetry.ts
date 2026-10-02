@@ -167,6 +167,8 @@ export function installFetchReporter(): void {
       // Offline (the livreur page works without network) is not an error to file.
       if (!aborted && navigator.onLine) {
         reportEvent({
+          // The request never reached a server (connection dropped, PC asleep): worth knowing, not an app bug.
+          level: "warn",
           source: "network",
           message: `${target.method} ${target.path} — ${e instanceof Error ? e.message : String(e)}`,
           context: { ms: Date.now() - started },

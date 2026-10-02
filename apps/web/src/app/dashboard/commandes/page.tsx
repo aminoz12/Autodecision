@@ -273,6 +273,13 @@ export default function ReceptionCommandesPage() {
   const [returnError, setReturnError] = useState<string | null>(null);
   const [returnNotice, setReturnNotice] = useState<string | null>(null);
 
+  /**
+   * A stock line that has a supplier goes back to that supplier. A part sold
+   * from the shelf with no supplier on the line is a client return like any other
+   * (it used to be sent as a supplier return and was always refused).
+   */
+  const supplierReturn = !!returnLine?.fromStock && !!returnLine?.supplierId;
+
   const openReturn = useCallback((line: BoardLine) => {
     setReturnLine(line);
     setReturnReason("");
@@ -291,7 +298,7 @@ export default function ReceptionCommandesPage() {
         clientId: returnLine.clientId,
         reason: returnReason,
         // A stock part goes back to its supplier: no client compensation.
-        compensation: returnLine.fromStock ? "FOURNISSEUR" : returnCompensation,
+        compensation: supplierReturn ? "FOURNISSEUR" : returnCompensation,
         supplierId: returnLine.supplierId,
         lines: [
           {
@@ -309,7 +316,7 @@ export default function ReceptionCommandesPage() {
         ],
       });
       setReturnNotice(
-        returnLine.fromStock
+        supplierReturn
           ? `Retour fournisseur enregistré — ${returnLine.reference} à traiter dans Retours.`
           : avoirNum
             ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
@@ -322,7 +329,7 @@ export default function ReceptionCommandesPage() {
     } finally {
       setReturnSubmitting(false);
     }
-  }, [orgId, returnLine, returnReason, returnCompensation, supabase, load]);
+  }, [orgId, returnLine, returnReason, returnCompensation, supplierReturn, supabase, load]);
 
   // Group by tournée name (derived tournées have no tour_id but a real name).
   const tours = useMemo(() => {
@@ -1946,7 +1953,7 @@ export default function ReceptionCommandesPage() {
             <div className="ga-modal-head">
               <span className="ga-modal-title">
                 <RotateCcw className="h-4 w-4" style={{ verticalAlign: "-2px", marginRight: 6 }} />
-                {returnLine.fromStock ? "Retourner au fournisseur" : "Retourner une pièce"}
+                {supplierReturn ? "Retourner au fournisseur" : "Retourner une pièce"}
               </span>
               <button
                 type="button"
@@ -1966,7 +1973,7 @@ export default function ReceptionCommandesPage() {
                 <div>
                   <p className="rt-order-ref">
                     {returnLine.orderRef} ·{" "}
-                    {returnLine.fromStock
+                    {supplierReturn
                       ? `Stock magasin → ${returnLine.supplierName ?? "fournisseur"}`
                       : returnLine.clientName}
                   </p>
@@ -1990,7 +1997,7 @@ export default function ReceptionCommandesPage() {
                 />
               </div>
 
-              {!returnLine.fromStock && (
+              {!supplierReturn && (
               <div className="od-field">
                 <span className="od-label">Compensation</span>
                 <div className="od-toggle-group">
@@ -2021,7 +2028,7 @@ export default function ReceptionCommandesPage() {
 
               )}
 
-              {!returnLine.fromStock && (
+              {!supplierReturn && (
                 <div className="rt-refund-total">
                   {returnCompensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
                   <strong>{fmtMoney(returnLine.quantity * returnLine.unitPrice)}</strong>
@@ -2050,7 +2057,7 @@ export default function ReceptionCommandesPage() {
                   )}
                   {returnSubmitting
                     ? "Enregistrement…"
-                    : !returnLine.fromStock && returnCompensation === "AVOIR"
+                    : !supplierReturn && returnCompensation === "AVOIR"
                       ? "Émettre l'avoir"
                       : "Valider le retour"}
                 </button>

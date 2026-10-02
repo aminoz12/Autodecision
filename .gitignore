@@ -33,3 +33,6 @@ apps/web/dev.log
 
 # business documents (reference only, never commit)
 *.pdf
+
+# exports of the error journal dropped next to the app for analysis (user e-mails inside, never commit)
+apps/web/public/Audit/

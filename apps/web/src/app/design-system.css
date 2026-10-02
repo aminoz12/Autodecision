@@ -920,3 +920,7 @@ table .od-btn--primary:hover { background: var(--clr-primary-soft); box-shadow: 
   .sm-cols { grid-template-columns: 1fr; }
   .sm-stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Garage portal: an avoir line keeps its number and amount on one line */
+.gp-credit strong { white-space: nowrap; }
+.gp-credit > :last-child { white-space: nowrap; }

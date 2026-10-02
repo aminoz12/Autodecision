@@ -403,13 +403,11 @@ export async function loadRestockAlerts(
 
 /** « Déjà en stock » : the line leaves « Pièces à recommander » without a restock order. */
 export async function skipRestockAlert(supabase: SupabaseClient, lineId: string): Promise<void> {
-  const { error } = await supabase
-    .from("order_lines")
-    .update({ restock_skipped_at: new Date().toISOString() })
-    .eq("id", lineId);
+  // order_lines is written through functions only (a direct update is refused: 403).
+  const { error } = await supabase.rpc("skip_restock_alert", { p_line_id: lineId });
   if (error) {
-    if (/restock_skipped_at/.test(error.message)) {
-      throw new Error("« Déjà en stock » demande la migration 20260930010000 (npx supabase db push).");
+    if (/skip_restock_alert|restock_skipped_at/.test(error.message)) {
+      throw new Error("« Déjà en stock » demande la migration 20261002013738 (npx supabase db push).");
     }
     throw new Error(error.message);
   }
@@ -915,6 +913,7 @@ export async function settleClientReturn(
 
 /** A part offered to the garage is not refunded (trigger sales_returns_offert_guard, migration 20261001030000). */
 function offeredPartMessage(message: string): string {
+  if (/A supplier from this organization is required/i.test(message)) return "Ce retour fournisseur n\u2019a pas de fournisseur : choisissez-le, ou enregistrez un retour client.";
   const m = /This part was offered: refund limited to ([\d.,]+) EUR/i.exec(message);
   if (!m) return message;
   const max = Number(m[1].replace(",", "."));

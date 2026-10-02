@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { UserProfile, UserRole } from "@/lib/types/api";
@@ -140,12 +141,15 @@ export function AuthProvider({
   const [ready, setReady] = useState(false);
 
   const supabase = useMemo(() => createClient(storageKey), [storageKey]);
+  /** The user whose profile is loaded: a later failed reload must not erase it. */
+  const loadedFor = useRef<string | null>(null);
 
   const refreshProfile = useCallback(async () => {
     const {
       data: { user: u },
     } = await supabase.auth.getUser();
     if (!u) {
+      loadedFor.current = null;
       setUser(null);
       setProfile(null);
       setProfileLoadError(null);
@@ -155,6 +159,7 @@ export function AuthProvider({
     // signed-in user with a not-yet-loaded profile: `user && !profile` means
     // the account genuinely has no profile row.
     const { profile: p, errorMessage } = await loadProfile(supabase, u.id);
+    if (p) loadedFor.current = u.id;
     setUser(u);
     setProfile(p);
     setProfileLoadError(errorMessage);
@@ -176,21 +181,33 @@ export function AuthProvider({
     let seq = 0;
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       const mine = ++seq;
       const u = session?.user ?? null;
       if (!u) {
+        loadedFor.current = null;
         setUser(null);
         setProfile(null);
         setProfileLoadError(null);
         return;
       }
-      void loadProfile(supabase, u.id).then(({ profile: p, errorMessage }) => {
+      // A renewed token does not change who is signed in: nothing to reload.
+      if (event === "TOKEN_REFRESHED" && loadedFor.current === u.id) return;
+      // supabase-js must not be called from inside this callback: it runs while
+      // the auth lock is held, so the query can leave without the session (401
+      // on profiles, seen at sign-in in the journal) or never return. Defer it.
+      setTimeout(() => {
         if (cancelled || mine !== seq) return;
-        setUser(u);
-        setProfile(p);
-        setProfileLoadError(errorMessage);
-      });
+        void loadProfile(supabase, u.id).then(({ profile: p, errorMessage }) => {
+          if (cancelled || mine !== seq) return;
+          // A reload that failed never erases the profile already loaded for this user.
+          if (!p && loadedFor.current === u.id) return;
+          if (p) loadedFor.current = u.id;
+          setUser(u);
+          setProfile(p);
+          setProfileLoadError(errorMessage);
+        });
+      }, 0);
     });
 
     return () => {
@@ -263,6 +280,7 @@ export function AuthProvider({
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
+    loadedFor.current = null;
     setUser(null);
     setProfile(null);
     setProfileLoadError(null);

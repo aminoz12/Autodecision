@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
+import { checkSession } from "@/lib/supabase/middleware";
 
 // Deliberately the deprecated `middleware` convention, NOT Next 16's `proxy`:
 // proxy.ts runs on the Node.js runtime, which Netlify's Next adapter cannot
@@ -55,9 +55,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const { response, user, verified } = await updateSession(request, space.cookie);
-  // Supabase silent (verified = false): let the page load — its own gate and
-  // the database rules still apply — rather than bounce a signed-in user.
+  const { user, verified } = await checkSession(request, space.cookie);
+  // Not verified (Supabase silent, or a token the browser is about to renew):
+  // let the page load — its own gate and the database rules still apply —
+  // rather than bounce a signed-in user.
   if (verified && !user) {
     return NextResponse.redirect(new URL(space.login, request.url));
   }
@@ -65,7 +66,7 @@ export async function middleware(request: NextRequest) {
   // Role gating stays client-side (gates) + database-side (RLS): the session
   // cookie does not carry the role, and a profile lookup per request would
   // double the latency of every navigation.
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {
