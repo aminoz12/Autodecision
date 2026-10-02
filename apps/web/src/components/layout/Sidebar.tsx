@@ -23,6 +23,7 @@ import {
   type LucideIcon,
   Undo2,
   Users,
+  Briefcase,
   Warehouse,
   Wrench,
   X,
@@ -71,6 +72,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/dashboard/clients", label: "Clients particuliers", icon: Users },
       { href: "/dashboard/garages", label: "Garages", icon: Wrench },
+      { href: "/dashboard/pros", label: "Clients PRO", icon: Briefcase },
       { href: "/dashboard/livreurs", label: "Livreurs", icon: Truck },
     ],
   },

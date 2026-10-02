@@ -76,6 +76,11 @@ async function handle(request: Request) {
   if (!garage || garage.organization_id !== orgId || !garage.is_garage) {
     return NextResponse.json({ error: "Garage introuvable." }, { status: 404 });
   }
+  // A client PRO is an account without a portal login (column absent before migration 20261002031524).
+  const { data: kindRow } = await admin.from("clients").select("account_type").eq("id", garageId).maybeSingle();
+  if ((kindRow as { account_type?: string } | null)?.account_type === "PRO") {
+    return NextResponse.json({ error: "Un client PRO n'a pas d'accès au portail garage." }, { status: 400 });
+  }
 
   const appMeta = { organization_id: orgId, client_id: garageId };
   const profileRow = { organization_id: orgId, client_id: garageId, role: "CAISSIER" };

@@ -115,7 +115,8 @@ function AdminContent() {
     try {
       const [team, gars, livs, mag] = await Promise.all([
         loadTeam(),
-        loadGarages(supabase, orgId),
+        // A client PRO has no portal: only garages are offered an access.
+        loadGarages(supabase, orgId).then((all) => all.filter((g) => g.kind === "GARAGE")),
         loadLivreurs(supabase, orgId),
         loadMagasins().catch(() => ({ magasins: [] as MagasinRow[] })),
       ]);

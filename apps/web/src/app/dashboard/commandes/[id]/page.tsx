@@ -527,7 +527,7 @@ export default function OrderDetailPage() {
               <div className="od-info-card">
                 <div className="od-info-head">
                   <User className="h-4 w-4" />
-                  {order.isRestock ? "Réapprovisionnement" : order.isGarage ? "Garage" : "Client"}
+                  {order.isRestock ? "Réapprovisionnement" : order.accountKind === "PRO" ? "Client PRO" : order.isGarage ? "Garage" : "Client"}
                 </div>
                 <p className="od-info-name">{order.clientName}</p>
                 {order.isRestock && (
@@ -1089,7 +1089,7 @@ export default function OrderDetailPage() {
           </div>
 
           <div className="print-client">
-            <p className="print-section-title">{order.isGarage ? "Garage" : "Client"}</p>
+            <p className="print-section-title">{order.accountKind === "PRO" ? "Client PRO" : order.isGarage ? "Garage" : "Client"}</p>
             <p className="print-client-name">{order.clientName}</p>
             {order.clientPhone && <p className="print-org-line">{order.clientPhone}</p>}
             {(order.vehicle || order.plate) && (

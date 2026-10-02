@@ -659,8 +659,13 @@ export async function searchParts(
   return results.slice(0, 30);
 }
 
+/** A professional account: a garage (portal possible) or a client PRO (company, fleet, taxi… — no portal). */
+export type AccountKind = "GARAGE" | "PRO";
+
 export type GarageSummary = {
   id: string;
+  /** GARAGE, or PRO (migration 20261002031524 ; every account is a garage before it). */
+  kind: AccountKind;
   name: string;
   phone: string | null;
   email: string | null;
@@ -678,13 +683,11 @@ export async function loadGarages(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<GarageSummary[]> {
-  const [clientsRes, ordersRes] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id,name,phone,email,city,rating,is_active,payment_terms_days")
-      .eq("organization_id", orgId)
-      .eq("is_garage", true)
-      .order("name"),
+  const accounts = (columns: string) =>
+    supabase.from("clients").select(columns).eq("organization_id", orgId).eq("is_garage", true).order("name");
+  const BASE = "id,name,phone,email,city,rating,is_active,payment_terms_days";
+  const [withKind, ordersRes] = await Promise.all([
+    accounts(`${BASE},account_type`),
     supabase
       .from("orders")
       .select("client_id,montant_total,solde_restant")
@@ -693,6 +696,8 @@ export async function loadGarages(
       .is("cancelled_at", null),
   ]);
 
+  // Database without the account type yet: every professional account is a garage.
+  const clientsRes = withKind.error && /account_type/i.test(withKind.error.message) ? await accounts(BASE) : withKind;
   if (clientsRes.error) throw new Error(clientsRes.error.message);
   if (ordersRes.error) throw new Error(ordersRes.error.message);
 
@@ -710,10 +715,11 @@ export async function loadGarages(
   }
 
   return (clientsRes.data ?? []).map((raw) => {
-    const row = raw as Record<string, unknown>;
+    const row = raw as unknown as Record<string, unknown>;
     const t = totals.get(String(row.id)) ?? { orders: 0, revenue: 0, outstanding: 0 };
     return {
       id: String(row.id),
+      kind: row.account_type === "PRO" ? ("PRO" as const) : ("GARAGE" as const),
       name: String(row.name ?? ""),
       phone: (row.phone as string | null) ?? null,
       email: (row.email as string | null) ?? null,
@@ -738,9 +744,11 @@ export async function createGarage(
     address?: string;
     /** 7 / 10 / 15 / 30 — defaults to 30 days. */
     paymentTermsDays?: number;
+    /** GARAGE (default) or PRO. */
+    kind?: AccountKind;
   },
-): Promise<void> {
-  const { error } = await supabase.from("clients").insert({
+): Promise<string> {
+  const { data, error } = await supabase.from("clients").insert({
     organization_id: orgId,
     name: input.name.trim(),
     phone: input.phone?.trim() || null,
@@ -750,8 +758,17 @@ export async function createGarage(
     payment_terms_days: input.paymentTermsDays ?? 30,
     is_garage: true,
     is_professional: true,
-  });
-  if (error) throw new Error(error.message);
+    // Only sent for a client PRO, so a garage is still created on a database without the column.
+    ...(input.kind === "PRO" ? { account_type: "PRO" } : {}),
+  }).select("id").single();
+  if (error) {
+    throw new Error(
+      /account_type/i.test(error.message)
+        ? "Les clients PRO demandent la migration 20261002031524 (npx supabase db push)."
+        : error.message,
+    );
+  }
+  return String((data as { id: string }).id);
 }
 
 export type ReturnRow = {

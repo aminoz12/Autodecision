@@ -26,6 +26,7 @@ import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
 import {
   createClientRecord,
+  createGarage,
   loadClientCredits,
   loadClients,
   loadGarages,
@@ -65,7 +66,8 @@ const REGLEMENT_LABEL: Record<Reglement, string> = {
 
 const NEW_CLIENT = "__new__";
 
-type PourQui = "COMPTOIR" | "GARAGE";
+/** Counter client, garage, or client PRO (a professional account without a portal). */
+type PourQui = "COMPTOIR" | "GARAGE" | "PRO";
 /** Rajout rapide can also order straight for the magasin stock. */
 type QuickPourQui = PourQui | "STOCK";
 
@@ -229,7 +231,7 @@ export default function NouvelleCommandePage() {
   const isQuickRowValid = useCallback(
     (r: QuickRow) =>
       Boolean(r.ref.trim()) &&
-      (r.pourQui === "GARAGE"
+      (r.pourQui === "GARAGE" || r.pourQui === "PRO"
         ? Boolean(r.garageId)
         : r.pourQui === "STOCK"
           ? Boolean(r.fournisseur)
@@ -269,7 +271,7 @@ export default function NouvelleCommandePage() {
         const forStock = r.pourQui === "STOCK";
         if (forStock) {
           // Restock order: no client, the part goes on the shelf on reception.
-        } else if (r.pourQui === "GARAGE") {
+        } else if (r.pourQui === "GARAGE" || r.pourQui === "PRO") {
           clientIdForOrder = r.garageId;
           phoneForOrder = garages.find((g) => g.id === r.garageId)?.phone ?? "-";
         } else {
@@ -411,7 +413,7 @@ export default function NouvelleCommandePage() {
           const isGarage = gars.some((g) => g.id === wantedClient);
           const c = cls.find((x) => x.id === wantedClient);
           if (c) {
-            setDestineA(isGarage ? "GARAGE" : "COMPTOIR");
+            setDestineA(isGarage ? gars.find((g) => g.id === wantedClient)?.kind ?? "GARAGE" : "COMPTOIR");
             setClientId(c.id);
             setClientName(c.name);
             setClientPhone(c.phone ?? "");
@@ -460,8 +462,9 @@ export default function NouvelleCommandePage() {
     [garages],
   );
   const destRecords = useMemo(() => {
-    if (destineA === "GARAGE") {
-      return garages.map((g) => ({
+    if (destineA !== "COMPTOIR") {
+      // Garages or clients PRO, each in its own list.
+      return garages.filter((g) => g.kind === destineA).map((g) => ({
         id: g.id,
         name: g.name,
         sub: g.city ?? undefined,
@@ -676,7 +679,7 @@ export default function NouvelleCommandePage() {
       ? { label: "En compte", cls: "violet" }
       : PAIEMENT_LABEL[effectiveStatut];
   const selectedGarage = useMemo(
-    () => (destineA === "GARAGE" ? garages.find((g) => g.id === clientId) ?? null : null),
+    () => (destineA !== "COMPTOIR" ? garages.find((g) => g.id === clientId) ?? null : null),
     [destineA, garages, clientId],
   );
   /** Due date the DB will stamp on an on-account order (today + garage terms). */
@@ -690,11 +693,12 @@ export default function NouvelleCommandePage() {
   // A garage order is always carried by its account; a walk-in client is
   // either paid or not paid at the counter. The choice follows the destination.
   useEffect(() => {
-    if (destineA === "GARAGE" && reglement !== "EN_COMPTE") setReglement("EN_COMPTE");
-    if (destineA !== "GARAGE" && reglement === "EN_COMPTE") setReglement("NON_PAYEE");
+    // A garage and a client PRO both buy on account.
+    if (destineA !== "COMPTOIR" && reglement !== "EN_COMPTE") setReglement("EN_COMPTE");
+    if (destineA === "COMPTOIR" && reglement === "EN_COMPTE") setReglement("NON_PAYEE");
   }, [reglement, destineA]);
   /** Choices offered for the current destination. */
-  const availableReglements: Reglement[] = destineA === "GARAGE" ? ["EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
+  const availableReglements: Reglement[] = destineA !== "COMPTOIR" ? ["EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
   /** Most the avoir can cover on this order. */
   const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
 
@@ -738,7 +742,7 @@ export default function NouvelleCommandePage() {
         const wanted = parsed.clientName.trim().toLowerCase();
         const existing = clients.find((c) => c.name.trim().toLowerCase() === wanted);
         // A devis made out to a garage: the order goes to that garage.
-        if (existing && garageIds.has(existing.id)) setDestineA("GARAGE");
+        if (existing && garageIds.has(existing.id)) setDestineA(garages.find((g) => g.id === existing.id)?.kind ?? "GARAGE");
         setClientId(existing?.id ?? NEW_CLIENT);
         setClientName(existing?.name ?? parsed.clientName);
       }
@@ -835,14 +839,19 @@ export default function NouvelleCommandePage() {
       let resolvedClientId: string | undefined =
         clientId === NEW_CLIENT ? undefined : clientId;
       if (!resolvedClientId) {
-        const created = await createClientRecord(supabase, orgId, {
-          name: clientName,
-          phone: clientPhone,
-          email: clientEmail,
-          immatriculation,
-          vehicleModel,
-        });
-        resolvedClientId = created.id;
+        if (destineA === "COMPTOIR") {
+          const created = await createClientRecord(supabase, orgId, {
+            name: clientName,
+            phone: clientPhone,
+            email: clientEmail,
+            immatriculation,
+            vehicleModel,
+          });
+          resolvedClientId = created.id;
+        } else {
+          // A new garage or client PRO is a professional account (en compte, 30 days by default).
+          resolvedClientId = await createGarage(supabase, orgId, { name: clientName, phone: clientPhone, email: clientEmail, kind: destineA });
+        }
       }
 
       const payload: CreateOrderPayload = {
@@ -1134,6 +1143,7 @@ export default function NouvelleCommandePage() {
               >
                 <option value="COMPTOIR">Client comptoir</option>
                 <option value="GARAGE">Garage</option>
+                <option value="PRO">Client PRO</option>
               </select>
               <ChevronDown className="h-4 w-4" />
             </div>
@@ -1153,7 +1163,7 @@ export default function NouvelleCommandePage() {
           </div>
           <div className="od-field nc-col-2">
             <span className="od-label">
-              {destineA === "GARAGE" ? "Garage existant" : "Client existant"}
+              {destineA === "GARAGE" ? "Garage existant" : destineA === "PRO" ? "Client PRO existant" : "Client existant"}
             </span>
             <div className="od-select">
               <select
@@ -1161,7 +1171,7 @@ export default function NouvelleCommandePage() {
                 onChange={(e) => pickClient(e.target.value)}
               >
                 <option value={NEW_CLIENT}>
-                  {destineA === "GARAGE" ? "— Nouveau garage —" : "— Nouveau client —"}
+                  {destineA === "GARAGE" ? "— Nouveau garage —" : destineA === "PRO" ? "— Nouveau client PRO —" : "— Nouveau client —"}
                 </option>
                 {destRecords.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -1177,7 +1187,7 @@ export default function NouvelleCommandePage() {
             <span className="od-label">Nom du client <span className="od-req">*</span></span>
             <input
               className="od-input"
-              placeholder={destineA === "GARAGE" ? "GARAGE MARTIN" : "Jean Dupont"}
+              placeholder={destineA === "GARAGE" ? "GARAGE MARTIN" : destineA === "PRO" ? "TAXIS DUPONT SARL" : "Jean Dupont"}
               value={clientName}
               onChange={(e) => {
                 setClientName(e.target.value);
@@ -1274,7 +1284,9 @@ export default function NouvelleCommandePage() {
               <Info className="h-3.5 w-3.5" />
               {destineA === "COMPTOIR"
                 ? "Nouveau client : il sera créé dans Clients particuliers (le téléphone sert à le reconnaître la prochaine fois)."
-                : "Ce garage sera enregistré dans votre fichier."}
+                : destineA === "PRO"
+                  ? "Ce client PRO sera enregistré dans Clients PRO (paiement en compte, 30 jours par défaut)."
+                  : "Ce garage sera enregistré dans votre fichier."}
             </p>
           )
         )}
@@ -1807,20 +1819,23 @@ export default function NouvelleCommandePage() {
                     <div className="od-select">
                       <select
                         value={row.pourQui}
-                        onChange={(e) =>
-                          setQuickRow(idx, "pourQui", e.target.value as QuickPourQui)
-                        }
+                        onChange={(e) => {
+                          setQuickRow(idx, "pourQui", e.target.value as QuickPourQui);
+                          // A garage picked before does not follow to another destination.
+                          setQuickRow(idx, "garageId", "");
+                        }}
                       >
                         <option value="COMPTOIR">Client comptoir</option>
                         <option value="GARAGE">Garage</option>
+                        <option value="PRO">Client PRO</option>
                         <option value="STOCK">Stock magasin</option>
                       </select>
                       <ChevronDown className="h-4 w-4" />
                     </div>
                   </div>
-                  {row.pourQui === "GARAGE" && (
+                  {(row.pourQui === "GARAGE" || row.pourQui === "PRO") && (
                     <div className="od-field">
-                      <span className="od-label">Garage <span className="od-req">*</span></span>
+                      <span className="od-label">{row.pourQui === "PRO" ? "Client PRO" : "Garage"} <span className="od-req">*</span></span>
                       <div className="od-select">
                         <select
                           value={row.garageId}
@@ -1828,8 +1843,8 @@ export default function NouvelleCommandePage() {
                             setQuickRow(idx, "garageId", e.target.value)
                           }
                         >
-                          <option value="">— Choisir un garage —</option>
-                          {garages.map((g) => (
+                          <option value="">{row.pourQui === "PRO" ? "— Choisir un client PRO —" : "— Choisir un garage —"}</option>
+                          {garages.filter((g) => g.kind === row.pourQui).map((g) => (
                             <option key={g.id} value={g.id}>
                               {g.name}
                               {g.city ? ` · ${g.city}` : ""}
@@ -1838,10 +1853,10 @@ export default function NouvelleCommandePage() {
                         </select>
                         <ChevronDown className="h-4 w-4" />
                       </div>
-                      {garages.length === 0 && (
+                      {garages.filter((g) => g.kind === row.pourQui).length === 0 && (
                         <span className="nc-hint" style={{ marginTop: 6 }}>
                           <Info className="h-3.5 w-3.5" />
-                          Aucun garage enregistré.
+                          {row.pourQui === "PRO" ? "Aucun client PRO enregistré." : "Aucun garage enregistré."}
                         </span>
                       )}
                     </div>

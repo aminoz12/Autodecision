@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
@@ -81,6 +81,10 @@ function money(raw: string): number {
 export default function GarageDetailPage() {
   const params = useParams<{ id: string }>();
   const garageId = params?.id ?? "";
+  // The same file serves a garage (/dashboard/garages/…) and a client PRO (/dashboard/pros/…).
+  const isPro = (usePathname() ?? "").startsWith("/dashboard/pros");
+  const listHref = isPro ? "/dashboard/pros" : "/dashboard/garages";
+  const listLabel = isPro ? "Clients PRO" : "Garages";
   const { profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const orgId = profile?.organization_id;
@@ -312,9 +316,9 @@ export default function GarageDetailPage() {
     return (
       <div className="od-page">
         <nav className="od-breadcrumb">
-          <Link href="/dashboard/garages">Garages</Link>
+          <Link href={listHref}>{listLabel}</Link>
         </nav>
-        <div className="od-card rc-empty"><p>{error ?? "Garage introuvable."}</p></div>
+        <div className="od-card rc-empty"><p>{error ?? (isPro ? "Client PRO introuvable." : "Garage introuvable.")}</p></div>
       </div>
     );
   }
@@ -324,14 +328,14 @@ export default function GarageDetailPage() {
   return (
     <div className="od-page">
       <nav className="od-breadcrumb">
-        <Link href="/dashboard/garages" className="od-breadcrumb-back">
-          <ArrowLeft className="h-3.5 w-3.5" /> Garages
+        <Link href={listHref} className="od-breadcrumb-back">
+          <ArrowLeft className="h-3.5 w-3.5" /> {listLabel}
         </Link>
       </nav>
 
       <header className="rl-header rl-header--row">
         <div>
-          <h1 className="rl-title">{garage?.name ?? "Garage"}</h1>
+          <h1 className="rl-title">{garage?.name ?? (isPro ? "Client PRO" : "Garage")}</h1>
           <p className="rl-subtitle">
             <span className="ga-contact-row"><Phone className="h-3.5 w-3.5" />{garage?.phone ?? "—"}</span>
             {" · "}
@@ -446,7 +450,7 @@ export default function GarageDetailPage() {
                 </tr>
               ))}
               {!loading && payments.length === 0 && (
-                <tr><td colSpan={7} className="stk-empty">Aucun règlement enregistré pour ce garage.</td></tr>
+                <tr><td colSpan={7} className="stk-empty">Aucun règlement enregistré pour ce {isPro ? "client" : "garage"}.</td></tr>
               )}
             </tbody>
           </table>
@@ -560,7 +564,7 @@ export default function GarageDetailPage() {
                 );
               })}
               {!loading && orders.length === 0 && (
-                <tr><td colSpan={7} className="stk-empty">Aucune commande pour ce garage.</td></tr>
+                <tr><td colSpan={7} className="stk-empty">Aucune commande pour ce {isPro ? "client" : "garage"}.</td></tr>
               )}
             </tbody>
           </table>

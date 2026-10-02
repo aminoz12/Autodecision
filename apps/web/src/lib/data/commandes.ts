@@ -362,6 +362,8 @@ export type OrderDetail = {
   /** Stock replenishment order (no client). */
   isRestock: boolean;
   isGarage: boolean;
+  /** For a professional account: GARAGE or PRO (null for a counter client). */
+  accountKind: "GARAGE" | "PRO" | null;
   livreurName: string | null;
   /** Credit note amount consumed as payment on this order. */
   avoirApplique: number;
@@ -435,6 +437,13 @@ export async function loadOrderDetail(
 
   if (linesRes.error) throw new Error(linesRes.error.message);
 
+  // Garage or client PRO (the type is absent before migration 20261002031524: a garage then).
+  let accountKind: "GARAGE" | "PRO" | null = null;
+  if (client?.is_garage === true && order.client_id) {
+    const { data: kindRow } = await supabase.from("clients").select("account_type").eq("id", String(order.client_id)).maybeSingle();
+    accountKind = (kindRow as { account_type?: string } | null)?.account_type === "PRO" ? "PRO" : "GARAGE";
+  }
+
   const lines: OrderDetailLine[] = (linesRes.data ?? []).map((raw) => {
     const row = raw as unknown as Record<string, unknown>;
     const supplier = first(row.suppliers as Embedded<Record<string, unknown>>);
@@ -504,6 +513,7 @@ export async function loadOrderDetail(
     dateBl: (order.date_bl as string | null) ?? null,
     isRestock: order.is_restock === true,
     isGarage: client?.is_garage === true,
+    accountKind,
     avoirApplique: toNumber(order.avoir_applique),
     remiseMontant: toNumber(order.remise_montant),
     cancelledAt: (order.cancelled_at as string | null) ?? null,
