@@ -1181,7 +1181,7 @@ function AdminContent() {
               </div>
               <div className="od-note">
                 <Building2 className="h-4 w-4" />
-                <p>Le garage se connecte sur la page d&apos;accueil garagiste avec ces identifiants, puis peut changer son mot de passe lui-même. Si un accès existe déjà, seul ce que vous modifiez change : l&apos;email, ou le mot de passe si vous en saisissez un nouveau.</p>
+                <p>Le garage se connecte sur <strong>/garagiste/login</strong> avec ces identifiants, puis peut changer son mot de passe lui-même. Si un accès existe déjà, seul ce que vous modifiez change : l&apos;email, ou le mot de passe si vous en saisissez un nouveau.</p>
               </div>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setAccessModal(null)} disabled={gSaving}>Annuler</button>

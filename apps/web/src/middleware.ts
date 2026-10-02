@@ -18,7 +18,7 @@ const SPACES: Array<{ prefix: string; login: string; cookie?: string }> = [
   { prefix: "/admin", login: "/admin/login" },
   { prefix: "/superadmin", login: "/superadmin/login" },
   { prefix: "/livreur", login: "/livreur/login" },
-  { prefix: "/garagiste/dashboard", login: "/garagiste", cookie: "sb-garagiste-auth" },
+  { prefix: "/garagiste/dashboard", login: "/garagiste/login", cookie: "sb-garagiste-auth" },
 ];
 
 /** Public doors inside a protected space (besides each login page). */

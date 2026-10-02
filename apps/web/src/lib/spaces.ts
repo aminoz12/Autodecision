@@ -5,7 +5,7 @@ import { isBuiltinSuperAdmin } from "@/lib/superadmin";
  * One link per space, one space per account:
  *   superadmin → /superadmin   magasin ADMIN → /admin
  *   CAISSIER → /dashboard (alias /caissier)   LIVREUR → /livreur
- *   garagiste → /garagiste
+ *   garagiste → /garagiste/dashboard (door: /garagiste/login)
  * Each space has its OWN login page and only accepts its own accounts —
  * signing in on the wrong door is refused, never redirected.
  * (Client-side comfort only — real enforcement is RLS + APIs.)
@@ -25,7 +25,7 @@ export const SPACE_LOGIN: Record<AccountSpace, string> = {
   admin: "/admin/login",
   caissier: "/caissier/login",
   livreur: "/livreur/login",
-  garagiste: "/garagiste",
+  garagiste: "/garagiste/login",
 };
 
 type ProfileLike = Pick<UserProfile, "role" | "client_id"> | null | undefined;
@@ -46,7 +46,7 @@ export function accountSpace(
 export function homeSpace(profile: ProfileLike, email?: string | null): string {
   const space = accountSpace(profile, email);
   if (!space) return SPACE_LOGIN.caissier;
-  return space === "garagiste" ? "/garagiste" : SPACE_HOME[space];
+  return space === "garagiste" ? SPACE_LOGIN.garagiste : SPACE_HOME[space];
 }
 
 /** The login page of an account's space — where to land after logout. */

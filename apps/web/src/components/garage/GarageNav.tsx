@@ -37,7 +37,7 @@ export function GarageNav() {
 
   async function onLogout() {
     await logout();
-    router.replace("/garagiste");
+    router.replace("/garagiste/login");
   }
 
   return (

@@ -12,7 +12,7 @@ export function GarageGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     if (!user) {
-      router.replace("/garagiste");
+      router.replace("/garagiste/login");
       return;
     }
     // Staff (no client_id) belong in the management dashboard.
