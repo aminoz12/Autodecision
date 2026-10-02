@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Bug, Check, ChevronDown, ChevronRight, Copy, History, Loader2, RefreshCw, ScrollText, Search, ShieldCheck, Trash2, TriangleAlert, Users } from "lucide-react";
+import { ArrowLeft, Bug, Check, ChevronDown, ChevronRight, Copy, Download, History, Loader2, RefreshCw, ScrollText, Search, ShieldCheck, Trash2, TriangleAlert, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -8,42 +8,13 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
 import { homeSpace } from "@/lib/spaces";
+import { ACTION, ENTITY_LABEL, LEVEL, SOURCE_LABEL, activitySummary, browserOf, type Activity, type AppEvent } from "@/lib/superadmin-journal";
 
 /**
  * Journal du propriétaire du SaaS : les erreurs vues par les utilisateurs
  * (app_events, alimenté par lib/telemetry.ts) et l'activité des magasins
  * (audit_log : qui a créé, modifié ou supprimé quoi).
  */
-
-type AppEvent = {
-  id: number;
-  created_at: string;
-  level: "error" | "warn" | "info";
-  source: string;
-  message: string;
-  stack: string | null;
-  url: string | null;
-  context: Record<string, unknown> | null;
-  fingerprint: string;
-  organization_id: string | null;
-  user_id: string | null;
-  user_email: string | null;
-  user_role: string | null;
-  user_agent: string | null;
-  app_version: string | null;
-};
-
-type Activity = {
-  id: number;
-  created_at: string;
-  organization_id: string | null;
-  actor_id: string | null;
-  action: string;
-  entity: string;
-  entity_id: string | null;
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-};
 
 type OrgOption = { id: string; name: string };
 type Tab = "errors" | "activity";
@@ -68,48 +39,6 @@ type Group = {
   events: AppEvent[];
 };
 
-const LEVEL: Record<AppEvent["level"], { label: string; cls: string }> = {
-  error: { label: "Erreur", cls: "red" },
-  warn: { label: "Avertissement", cls: "amber" },
-  info: { label: "Info", cls: "blue" },
-};
-
-const SOURCE_LABEL: Record<string, string> = {
-  render: "Plantage de page",
-  client: "Erreur navigateur",
-  promise: "Erreur non gérée",
-  db: "Base de données",
-  schema: "Migration manquante",
-  rule: "Action refusée",
-  auth: "Connexion",
-  api: "Serveur",
-  network: "Réseau",
-};
-
-const ACTION: Record<string, { label: string; cls: string }> = {
-  INSERT: { label: "Création", cls: "green" },
-  UPDATE: { label: "Modification", cls: "blue" },
-  DELETE: { label: "Suppression", cls: "red" },
-};
-
-const ENTITY_LABEL: Record<string, string> = {
-  orders: "Commande",
-  order_lines: "Ligne de commande",
-  credit_notes: "Avoir",
-  sales_returns: "Retour",
-  consignment_entries: "Consigne",
-  stock_items: "Stock",
-  clients: "Client",
-  profiles: "Compte",
-  organizations: "Magasin",
-  loyalty_transactions: "Fidélité",
-  payments: "Règlement",
-  payment_allocations: "Affectation de règlement",
-  cash_sessions: "Caisse",
-  invoices: "Facture",
-  sav_cases: "Dossier SAV",
-};
-
 const PERIODS: { days: number; label: string }[] = [
   { days: 1, label: "24 heures" },
   { days: 7, label: "7 jours" },
@@ -130,36 +59,6 @@ function ago(v: string, now: number): string {
   return `il y a ${Math.floor(s / 86400)} j`;
 }
 
-/** « Chrome · Windows » from a user-agent string. */
-function browserOf(ua: string | null): string {
-  if (!ua) return "—";
-  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Navigateur";
-  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
-  return os ? `${browser} · ${os}` : browser;
-}
-
-function short(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "∅";
-  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
-  return text.length > 40 ? `${text.slice(0, 40)}…` : text;
-}
-
-/** One line telling what changed: the fields of an update, the reference of a creation. */
-function activitySummary(a: Activity): string {
-  if (a.action === "UPDATE" && a.after) {
-    const keys = Object.keys(a.after);
-    const shown = keys.slice(0, 3).map((k) => `${k} : ${short(a.before?.[k])} → ${short(a.after?.[k])}`);
-    return shown.join(" · ") + (keys.length > 3 ? ` · +${keys.length - 3}` : "");
-  }
-  const row = a.after ?? a.before ?? {};
-  // A payment has no reference: its amount and mode say what happened.
-  if (row.amount != null && row.mode) return `${Number(row.amount).toLocaleString("fr-FR", { minimumFractionDigits: 2 })} € · ${String(row.mode)}`;
-  for (const key of ["ref_demande", "ref", "num", "name", "nom_produit", "reference", "display_name"]) {
-    if (row[key]) return String(row[key]);
-  }
-  return a.entity_id ? a.entity_id.slice(0, 8) : "—";
-}
-
 async function call<T>(url: string, method: "GET" | "DELETE" = "GET"): Promise<T> {
   const res = await fetch(url, { method });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
@@ -171,9 +70,12 @@ export default function JournalPage() {
   const { user, profile, ready } = useAuth();
   const router = useRouter();
 
-  const [tab, setTab] = useState<Tab>("errors");
-  const [days, setDays] = useState(1);
-  const [org, setOrg] = useState("");
+  // The page renders nothing before the session is known, so reading the address here is safe.
+  const initial = () => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  const [tab, setTab] = useState<Tab>(() => (initial().get("tab") === "activity" ? "activity" : "errors"));
+  const [days, setDays] = useState(() => ([1, 7, 30].includes(Number(initial().get("days"))) ? Number(initial().get("days")) : 1));
+  const [org, setOrg] = useState(() => initial().get("org") ?? "");
+  const [actor, setActor] = useState("");
   const [level, setLevel] = useState("");
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
@@ -240,6 +142,17 @@ export default function JournalPage() {
   }, [ready, user, profile, router, load]);
 
   const orgName = useMemo(() => new Map(orgs.map((o) => [o.id, o.name])), [orgs]);
+  const shownActivity = useMemo(() => (actor ? activity.filter((a) => a.actor_id === actor) : activity), [activity, actor]);
+
+  /** The file holds the whole selection (up to 5 000 lines), not only what the screen shows. */
+  const exportUrl = (format: "csv" | "json") => {
+    const params = new URLSearchParams({ tab, days: String(days), format });
+    if (org) params.set("org", org);
+    if (level && tab === "errors") params.set("level", level);
+    if (actor && tab === "activity") params.set("actor", actor);
+    if (q) params.set("q", q);
+    return `/api/superadmin/journal?${params.toString()}`;
+  };
 
   /** The same error raised twenty times is one line with a counter. */
   const groups = useMemo(() => {
@@ -356,7 +269,7 @@ export default function JournalPage() {
         <button type="button" role="tab" aria-selected={tab === "errors"} className={`sj-tab${tab === "errors" ? " sj-tab--on" : ""}`} onClick={() => { setTab("errors"); setOpen(null); }}>
           <Bug className="h-4 w-4" /> Erreurs
         </button>
-        <button type="button" role="tab" aria-selected={tab === "activity"} className={`sj-tab${tab === "activity" ? " sj-tab--on" : ""}`} onClick={() => { setTab("activity"); setOpen(null); }}>
+        <button type="button" role="tab" aria-selected={tab === "activity"} className={`sj-tab${tab === "activity" ? " sj-tab--on" : ""}`} onClick={() => { setTab("activity"); setOpen(null); setActor(""); }}>
           <History className="h-4 w-4" /> Activité
         </button>
       </div>
@@ -389,6 +302,24 @@ export default function JournalPage() {
             placeholder={tab === "errors" ? "Message, page, e-mail…" : "Objet (orders, payments…) ou identifiant"}
           />
         </label>
+        {tab === "activity" && Object.keys(actors).length > 0 && (
+          <select className="od-input" value={actor} onChange={(e) => setActor(e.target.value)} aria-label="Utilisateur">
+            <option value="">Tous les utilisateurs</option>
+            {Object.entries(actors).map(([uid, label]) => (
+              <option key={uid} value={uid}>{label}</option>
+            ))}
+          </select>
+        )}
+        {(tab === "errors" ? events.length > 0 : activity.length > 0) && (
+          <>
+            <a className="od-btn od-btn--outline" href={exportUrl("csv")} download title="Toute la sélection, une ligne par événement, à ouvrir dans Excel">
+              <Download className="h-4 w-4" /> Excel (CSV)
+            </a>
+            <a className="od-btn od-btn--outline" href={exportUrl("json")} download title="Le détail complet (contexte, pile d'appels), problèmes regroupés : le fichier à transmettre pour analyse">
+              <Download className="h-4 w-4" /> JSON détaillé
+            </a>
+          </>
+        )}
         {tab === "errors" && events.length > 0 && (
           <button type="button" className="od-btn od-btn--ghost" onClick={() => void clearAll()} disabled={busy !== null}>
             <Trash2 className="h-4 w-4" /> Vider
@@ -506,7 +437,7 @@ export default function JournalPage() {
                   <tr><th>Quand</th><th>Magasin</th><th>Qui</th><th>Action</th><th>Objet</th><th>Détail</th></tr>
                 </thead>
                 <tbody>
-                  {activity.map((a) => {
+                  {shownActivity.map((a) => {
                     const key = `a${a.id}`;
                     const expanded = open === key;
                     const act = ACTION[a.action] ?? { label: a.action, cls: "blue" };
@@ -543,13 +474,13 @@ export default function JournalPage() {
                       </Fragment>
                     );
                   })}
-                  {!loading && activity.length === 0 && (
+                  {!loading && shownActivity.length === 0 && (
                     <tr><td colSpan={6} className="stk-empty">Aucune activité sur la période.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-            {activity.length >= 300 && <p className="sj-sub sj-foot">Les 300 dernières actions sont affichées : réduisez la période ou filtrez par magasin.</p>}
+            {activity.length >= 300 && <p className="sj-sub sj-foot">Les 300 dernières actions sont affichées : l&apos;export contient jusqu&apos;à 5 000 lignes.</p>}
           </section>
         ))}
     </div>

@@ -15,6 +15,8 @@ import {
   Plus,
   RefreshCw,
   ScrollText,
+  Search,
+  Settings2,
   ShieldCheck,
   Users,
   X,
@@ -34,6 +36,10 @@ type Org = {
   name: string;
   slug: string | null;
   plan: string;
+  /** Counter logins allowed (admins + caissiers). */
+  seatLimit: number;
+  /** Errors raised by this magasin over 7 days (null before the journal migration). */
+  errors7: number | null;
   status: string;
   trialEndsAt: string | null;
   createdAt: string;
@@ -108,13 +114,17 @@ export default function SuperAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "green" | "amber" | "red" | "errors">("all");
+  const [errors7, setErrors7] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<{ orgs: Org[] }>();
+      const data = await api<{ orgs: Org[]; errors7: number | null }>();
       setOrgs(data.orgs);
+      setErrors7(data.errors7 ?? null);
       setDenied(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -184,6 +194,17 @@ export default function SuperAdminPage() {
     [orgs],
   );
 
+  /** Magasins shown: the search matches the name, the city or an admin's name or e-mail. */
+  const visible = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return orgs.filter((o) => {
+      if (filter === "errors" && !(o.errors7 && o.errors7 > 0)) return false;
+      if (filter !== "all" && filter !== "errors" && statusInfo(o).cls !== filter) return false;
+      if (!term) return true;
+      return [o.name, o.city ?? "", ...o.admins.flatMap((a) => [a.name, a.email ?? ""])].some((v) => v.toLowerCase().includes(term));
+    });
+  }, [orgs, search, filter]);
+
   if (!ready) return null;
 
   if (denied) {
@@ -213,6 +234,7 @@ export default function SuperAdminPage() {
         <Link href="/superadmin/journal" className="od-btn od-btn--outline">
           <ScrollText className="h-4 w-4" />
           Journal
+          {errors7 !== null && errors7 > 0 && <span className="sa-count">{errors7}</span>}
         </Link>
         <button type="button" className="od-btn od-btn--primary" onClick={() => { setCError(null); setCForm((f) => ({ ...f, password: generatePassword() })); setCreateOpen(true); }}>
           <Plus className="h-4 w-4" />
@@ -246,11 +268,32 @@ export default function SuperAdminPage() {
         <div className="ga-stat"><span className="ga-stat-icon" style={{ background: "#D7F7C2", color: "#0E6245" }}><Check className="h-5 w-5" /></span><div><p className="ga-stat-value">{eur(stats.mrr)}</p><p className="ga-stat-label">MRR estimé ({stats.active} actifs × {MONTHLY_PRICE} €)</p></div></div>
       </div>
 
+      <div className="sj-filters">
+        <label className="sj-search">
+          <Search className="h-4 w-4" />
+          <input className="od-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Magasin, ville, administrateur, e-mail…" />
+        </label>
+        <div className="sa-chips" role="group" aria-label="Filtrer les magasins">
+          {([
+            ["all", `Tous · ${orgs.length}`],
+            ["green", `Actifs · ${stats.active}`],
+            ["amber", `En essai · ${stats.trial}`],
+            ["red", `Suspendus / expirés · ${stats.blocked}`],
+            ["errors", `Avec erreurs · ${orgs.filter((o) => (o.errors7 ?? 0) > 0).length}`],
+          ] as [typeof filter, string][]).map(([key, label]) => (
+            <button key={key} type="button" className={`sa-chip${filter === key ? " sa-chip--on" : ""}`} aria-pressed={filter === key} onClick={() => setFilter(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {loading && orgs.length === 0 ? (
         <TableSkeleton rows={5} cols={6} />
       ) : (
         <div className="sa-grid">
-          {orgs.map((o) => {
+          {visible.length === 0 && <p className="rl-muted">Aucun magasin ne correspond.</p>}
+          {visible.map((o) => {
             const st = statusInfo(o);
             const suspended = st.cls === "red" && BLOCKED.has(o.status.toLowerCase());
             return (
@@ -268,6 +311,14 @@ export default function SuperAdminPage() {
                     </p>
                   </div>
                   <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                </div>
+
+                <div className="sa-kpis sa-kpis--plan">
+                  <span>Plan <strong>{o.plan === "TRIAL" ? "Essai" : o.plan}</strong></span>
+                  <span>Accès comptoir <strong>{o.staff}</strong> / {o.seatLimit}</span>
+                  {o.errors7 !== null && o.errors7 > 0 && (
+                    <Link href={`/superadmin/journal?org=${o.id}&days=7`} className="sa-errors">{o.errors7} erreur{o.errors7 > 1 ? "s" : ""} sur 7 j</Link>
+                  )}
                 </div>
 
                 <div className="sa-kpis">
@@ -301,6 +352,9 @@ export default function SuperAdminPage() {
                 </div>
 
                 <div className="sa-actions">
+                  <Link href={`/superadmin/magasins/${o.id}`} className="rc-act rc-act--retour">
+                    <Settings2 className="h-3.5 w-3.5" /> Gérer
+                  </Link>
                   {suspended ? (
                     <button
                       type="button"

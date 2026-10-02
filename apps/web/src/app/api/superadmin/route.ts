@@ -6,7 +6,9 @@ import { requireSuperAdmin } from "@/lib/superadmin-auth";
  * Access: requireSuperAdmin (lib/superadmin-auth.ts) — platform_owners, bootstrapped
  * by the email allowlist (SUPERADMIN_EMAILS env var, comma-separated).
  *   GET  → all organizations with admins, volumes and billing status
- *   POST → { action: suspend | activate | extend_trial | reset_admin_password | create_org, ... }
+ *   POST → { action: suspend | activate | extend_trial | update_org | reset_admin_password |
+ *            reset_password | set_account_blocked | create_org, ... }
+ * One magasin in detail: /api/superadmin/magasins/[id].
  */
 
 export async function GET() {
@@ -18,7 +20,7 @@ export async function GET() {
     const [orgsRes, profilesRes] = await Promise.all([
       admin
         .from("organizations")
-        .select("id, name, slug, plan, subscription_status, trial_ends_at, current_period_end, created_at, phone, city, stripe_customer_id, stripe_subscription_id")
+        .select("id, name, slug, plan, subscription_status, trial_ends_at, current_period_end, seat_limit, created_at, phone, city, stripe_customer_id, stripe_subscription_id")
         .order("created_at", { ascending: true }),
       admin
         .from("profiles")
@@ -41,6 +43,14 @@ export async function GET() {
     );
 
     const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Errors of the last 7 days per magasin (null before migration 20261001040000).
+    const since7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const errorRows = await admin.from("app_events").select("organization_id").eq("level", "error").gte("created_at", since7).limit(5000);
+    const errorsByOrg = new Map<string, number>();
+    for (const r of errorRows.data ?? []) {
+      const key = String(r.organization_id ?? "");
+      errorsByOrg.set(key, (errorsByOrg.get(key) ?? 0) + 1);
+    }
     const orgs = await Promise.all(
       (orgsRes.data ?? []).map(async (o) => {
         const orgId = String(o.id);
@@ -84,6 +94,8 @@ export async function GET() {
           name: String(o.name ?? ""),
           slug: (o.slug as string | null) ?? null,
           plan: String(o.plan ?? ""),
+          seatLimit: Number(o.seat_limit ?? 0),
+          errors7: errorRows.error ? null : errorsByOrg.get(orgId) ?? 0,
           status: String(o.subscription_status ?? ""),
           trialEndsAt: (o.trial_ends_at as string | null) ?? null,
           createdAt: String(o.created_at ?? ""),
@@ -111,7 +123,7 @@ export async function GET() {
       }),
     );
 
-    return NextResponse.json({ orgs });
+    return NextResponse.json({ orgs, errors7: errorRows.error ? null : (errorRows.data ?? []).length });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur serveur.";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -133,6 +145,11 @@ export async function POST(request: Request) {
       name?: string;
       adminName?: string;
       email?: string;
+      plan?: string;
+      seatLimit?: number;
+      status?: string;
+      trialEndsAt?: string | null;
+      blocked?: boolean;
     };
     try {
       body = await request.json();
@@ -167,6 +184,69 @@ export async function POST(request: Request) {
         .eq("id", orgId);
       if (error) throw new Error(error.message);
       return NextResponse.json({ ok: true, trialEndsAt: ends });
+    }
+
+    if (action === "update_org") {
+      const orgId = (body.orgId ?? "").trim();
+      if (!orgId) return NextResponse.json({ error: "Organisation requise." }, { status: 400 });
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (body.name !== undefined) {
+        const name = body.name.trim();
+        if (!name) return NextResponse.json({ error: "Le nom du magasin est requis." }, { status: 400 });
+        patch.name = name;
+      }
+      if (body.plan !== undefined) {
+        if (!["TRIAL", "STARTER", "PRO", "ENTERPRISE"].includes(body.plan)) {
+          return NextResponse.json({ error: "Plan inconnu." }, { status: 400 });
+        }
+        patch.plan = body.plan;
+      }
+      if (body.seatLimit !== undefined) {
+        const seats = Math.floor(Number(body.seatLimit));
+        if (!Number.isFinite(seats) || seats < 1 || seats > 1000) {
+          return NextResponse.json({ error: "Nombre d'accès : entre 1 et 1000." }, { status: 400 });
+        }
+        patch.seat_limit = seats;
+      }
+      if (body.status !== undefined) {
+        if (!["active", "trialing", "canceled"].includes(body.status)) {
+          return NextResponse.json({ error: "Statut inconnu." }, { status: 400 });
+        }
+        patch.subscription_status = body.status;
+      }
+      if (body.trialEndsAt !== undefined) {
+        if (body.trialEndsAt === null || body.trialEndsAt === "") {
+          patch.trial_ends_at = null;
+        } else {
+          // A day typed in the form means « until the end of that day ».
+          const end = new Date(`${body.trialEndsAt.slice(0, 10)}T23:59:59`);
+          if (Number.isNaN(end.getTime())) return NextResponse.json({ error: "Date de fin d'essai invalide." }, { status: 400 });
+          patch.trial_ends_at = end.toISOString();
+        }
+      }
+      const { error } = await admin.from("organizations").update(patch).eq("id", orgId);
+      if (error) throw new Error(error.message);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Any login of a magasin (admin, caissier, garage, livreur) — never an owner account.
+    if (action === "reset_password" || action === "set_account_blocked") {
+      const userId = (body.userId ?? "").trim();
+      if (!userId) return NextResponse.json({ error: "Utilisateur requis." }, { status: 400 });
+      const { data: prof } = await admin.from("profiles").select("user_id").eq("user_id", userId).maybeSingle();
+      if (!prof) return NextResponse.json({ error: "Ce compte n'appartient à aucun magasin." }, { status: 404 });
+      if (action === "reset_password") {
+        const password = body.password ?? "";
+        if (password.length < 8) return NextResponse.json({ error: "Mot de passe : 8 caractères au moins." }, { status: 400 });
+        const { error } = await admin.auth.admin.updateUserById(userId, { password });
+        if (error) throw new Error(error.message);
+        return NextResponse.json({ ok: true });
+      }
+      // A blocked login can no longer sign in or renew its session; a session
+      // already open ends when its token expires (an hour at most).
+      const { error } = await admin.auth.admin.updateUserById(userId, { ban_duration: body.blocked ? "876000h" : "none" });
+      if (error) throw new Error(error.message);
+      return NextResponse.json({ ok: true });
     }
 
     if (action === "reset_admin_password") {

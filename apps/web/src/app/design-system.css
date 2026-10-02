@@ -892,3 +892,31 @@ table .od-btn--primary:hover { background: var(--clr-primary-soft); box-shadow: 
   .sj-stats { grid-template-columns: repeat(2, 1fr); }
   .sj-detail--split { flex-direction: column; }
 }
+
+/* Owner console: search, filter chips, magasin page */
+.sa-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 2px; border-radius: 9px; font-size: 11px; font-weight: 700; background: #DF1B41; color: #fff; }
+.sa-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sa-chip { padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--text-muted); background: #fff; border: 1px solid var(--border-card); border-radius: 999px; cursor: pointer; }
+.sa-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.sa-chip--on { color: var(--clr-primary); border-color: var(--clr-primary-border); background: var(--clr-primary-soft); font-weight: 600; }
+.sa-kpis--plan { border-bottom: 0; padding-bottom: 0; }
+.sa-errors { color: #B3093C; font-weight: 600; text-decoration: none; }
+.sa-errors:hover { text-decoration: underline; }
+.sm-stats { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
+.sm-stat-link { text-decoration: none; color: inherit; }
+.sm-stat-link:hover { border-color: var(--clr-primary-border); }
+.sm-cols { display: grid; grid-template-columns: minmax(340px, 5fr) 7fr; gap: 16px; margin-bottom: 16px; align-items: start; }
+.sm-card { display: flex; flex-direction: column; gap: 14px; }
+.sm-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+.sm-form .sm-wide { grid-column: 1 / -1; }
+.sm-form-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.sm-warn { font-size: 13px; color: #B3093C; font-weight: 500; }
+.sm-gap { margin-left: 6px; }
+.sm-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 16px 18px 0; }
+.sm-tabs { margin-bottom: 0; border-bottom: 0; }
+.sm-filters { padding: 12px 18px 0; margin-bottom: 12px; }
+.sm-spacer { flex: 1; }
+@media (max-width: 1100px) {
+  .sm-cols { grid-template-columns: 1fr; }
+  .sm-stats { grid-template-columns: repeat(2, 1fr); }
+}
