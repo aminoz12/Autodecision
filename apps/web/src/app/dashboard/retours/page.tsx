@@ -38,7 +38,7 @@ import {
   type ReturnRow,
   type ReturnTreatment,
 } from "@/lib/data/saas";
-import { addDays, assignReturnLeg, ensureSupplierTour, nextWorkingDay, parisDate, STANDARD_TOURS, type ReturnLeg, nextTourFromNow } from "@/lib/data/tournees";
+import { addDays, assignReturnLeg, daySlots, DEFAULT_TOUR_SCHEDULE, ensureSupplierTour, loadTourSchedule, nextDayWord, nextOpenDay, parisDate, type ReturnLeg, type TourSchedule, nextTourFromNow } from "@/lib/data/tournees";
 import { OpenCaseDialog, type OpenCasePreset } from "@/components/sav/OpenCaseDialog";
 import { loadReturnQualifications, loadSavSettingsSafe, qualifyReturns } from "@/lib/data/sav";
 import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay } from "@/lib/sav";
@@ -106,19 +106,19 @@ function treatmentTone(status: string) {
 
 type TourChoice = { key: string; label: string; date: string; name: string; slot: string };
 
-/** Today's and tomorrow's standard tournées, the next departure first (today's gone tours last). */
-function tourChoicesFrom(now: Date): TourChoice[] {
+/** Today's and the next open day's tournées (Paramètres → Tournées), the next departure first (today's gone tours last). */
+function tourChoicesFrom(now: Date, schedule: TourSchedule): TourChoice[] {
   const today = parisDate(now);
-  // The next tour day: never a Sunday.
-  const tomorrow = nextWorkingDay(addDays(today, 1));
+  const next = nextOpenDay(addDays(today, 1), schedule);
+  const nextWord = nextDayWord(next, today);
   const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  const all = [today, tomorrow].flatMap((date) =>
-    STANDARD_TOURS.map((t) => ({
+  const all = [today, next].flatMap((date) =>
+    daySlots(schedule, date).map((t) => ({
       key: `${date}|${t.name}`,
       date,
       name: t.name,
       slot: t.slot,
-      label: `${date === today ? "Aujourd'hui" : "Demain"} · ${t.name} (${t.slot.replace(":", "h")})`,
+      label: `${date === today ? "Aujourd'hui" : nextWord.charAt(0).toUpperCase() + nextWord.slice(1)} · ${t.name} (${t.slot.replace(":", "h")})`,
     })),
   );
   const upcoming = all.filter((c) => c.date !== today || c.slot > hhmm);
@@ -188,6 +188,7 @@ export default function RetoursPage() {
     try {
       const sb = createClient();
       setRows(await loadReturns(sb, profile.organization_id));
+      void loadTourSchedule(sb).then(setSchedule).catch(() => {});
       void Promise.all([loadReturnQualifications(sb, profile.organization_id), loadSavSettingsSafe(sb)])
         .then(([q, s]) => {
           setQuals(q);
@@ -236,7 +237,7 @@ export default function RetoursPage() {
         const sb = createClient();
         let tourId: string | null = null;
         if (accept) {
-          const next = nextTourFromNow(new Date());
+          const next = nextTourFromNow(new Date(), schedule);
           tourId = await ensureSupplierTour(sb, { date: next.date, name: next.name, slot: next.slot });
         }
         await validateGarageReturn(sb, row.id, accept, tourId);
@@ -276,7 +277,8 @@ export default function RetoursPage() {
   const [legNote, setLegNote] = useState("");
   const [legBusy, setLegBusy] = useState(false);
   const [legError, setLegError] = useState<string | null>(null);
-  const tourChoices = useMemo(() => tourChoicesFrom(new Date()), []);
+  const [schedule, setSchedule] = useState<TourSchedule>(DEFAULT_TOUR_SCHEDULE);
+  const tourChoices = useMemo(() => tourChoicesFrom(new Date(), schedule), [schedule]);
 
   const openLeg = (row: ReturnRow) => {
     setLegModal(row);

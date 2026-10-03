@@ -29,7 +29,7 @@ import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 import { fmtMoney, receiveGarageReturn, validateGarageReturn } from "@/lib/data/saas";
-import { ensureSupplierTour, nextTourFromNow } from "@/lib/data/tournees";
+import { ensureSupplierTour, nextTourFromServer } from "@/lib/data/tournees";
 import { LINE_RETURN_LABEL, REGLEMENT_LABEL, lineReglement, lineReturnState, type LineReglement } from "@/lib/garage-line-state";
 import {
   buildGarageStatement,
@@ -285,7 +285,7 @@ export default function GarageDetailPage() {
     try {
       let tourId: string | null = null;
       if (accept) {
-        const next = nextTourFromNow(new Date());
+        const next = await nextTourFromServer(supabase);
         tourId = await ensureSupplierTour(supabase, { date: next.date, name: next.name, slot: next.slot });
       }
       await validateGarageReturn(supabase, ret.id, accept, tourId);

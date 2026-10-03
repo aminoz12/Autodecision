@@ -66,7 +66,7 @@ export function GarageNav() {
               className={`gp-nav-item${active ? " gp-nav-item--active" : ""}`}
             >
               <Icon className="h-[18px] w-[18px]" />
-              {item.label}
+              <span>{item.label}</span>
             </Link>
           );
         })}
@@ -75,11 +75,11 @@ export function GarageNav() {
       <div className="gp-nav-foot">
         <button type="button" className="gp-logout" onClick={() => setPwdOpen(true)}>
           <KeyRound className="h-[18px] w-[18px]" />
-          Mon mot de passe
+          <span>Mon mot de passe</span>
         </button>
         <button type="button" className="gp-logout" onClick={onLogout}>
           <LogOut className="h-[18px] w-[18px]" />
-          Se déconnecter
+          <span>Se déconnecter</span>
         </button>
       </div>
       <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />

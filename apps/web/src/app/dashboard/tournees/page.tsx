@@ -45,6 +45,8 @@ import {
   pickupState,
   PICKUP_STATE_LABEL,
   scheduleSlots,
+  daySlots,
+  DEFAULT_TOUR_SCHEDULE,
   setLinePickup,
   setSupplierTourStatus,
   slotLabel,
@@ -261,7 +263,7 @@ export default function TourneesPage() {
   const today = parisDate(now);
   const isToday = date === today;
   const lines = useMemo(() => board?.lines ?? [], [board]);
-  const slots = useMemo(() => scheduleSlots(board?.tours ?? [], true), [board]);
+  const slots = useMemo(() => scheduleSlots(board?.tours ?? [], true, daySlots(board?.schedule ?? DEFAULT_TOUR_SCHEDULE, date)), [board, date]);
   const colors = useMemo(() => vendeurColors(team, lines), [team, lines]);
   const visibleSlots = useMemo(
     () => (tourFilter ? slots.filter((s) => s.key === tourFilter) : slots),
@@ -707,7 +709,7 @@ export default function TourneesPage() {
                 "Aucune pièce ne correspond aux filtres."
               ) : upcoming.length > 0 ? (
                 <>
-                  Aucune pièce fournisseur {dayWord}. Une commande passée après 17 h part sur la Tournée 1 du jour suivant (jamais le dimanche : le samedi soir, c&apos;est lundi), plus
+                  Aucune pièce fournisseur {dayWord}. Une commande passée après l&apos;heure limite de la dernière tournée part sur la première tournée du jour ouvert suivant (Paramètres → Tournées), plus
                   tard encore si le fournisseur a un délai :{" "}
                   <strong>
                     {upcoming[0].count} pièce{upcoming[0].count > 1 ? "s" : ""} {fmtRelativeDay(upcoming[0].date, date).toLowerCase()} (
@@ -720,7 +722,7 @@ export default function TourneesPage() {
                   </button>
                 </>
               ) : (
-                `Aucune pièce fournisseur ${dayWord}. Chaque commande passée au comptoir s'ajoute ici, dans la tournée de son créneau (après 17 h : Tournée 1 du jour suivant, le lundi après un samedi — pas de tournée le dimanche).`
+                `Aucune pièce fournisseur ${dayWord}. Chaque commande passée au comptoir s'ajoute ici, dans la tournée de son créneau ; après l'heure limite de la dernière tournée, la première du jour ouvert suivant (horaires : Paramètres → Tournées).`
               )}
             </div>
           )}

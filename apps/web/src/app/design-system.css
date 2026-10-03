@@ -993,3 +993,66 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 @media print {
   .nv-banner { display: none; }
 }
+
+/* Paramètres → Tournées */
+.ts-week { display: flex; flex-direction: column; gap: 10px; }
+.ts-day { border: 1px solid var(--border-card); border-radius: 8px; padding: 10px 14px 12px; }
+.ts-day--closed { background: var(--bg-subtle); }
+.ts-day-head { display: flex; align-items: center; gap: 10px; }
+.ts-day-head strong { min-width: 84px; font-size: 14px; }
+.ts-day-acts { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.ts-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ts-row { display: grid; grid-template-columns: minmax(140px, 1fr) 130px 130px 36px; gap: 8px; align-items: center; }
+.ts-row--head { font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.ts-row .od-input { width: 100%; }
+.ts-problems { margin: 10px 0 0; padding: 10px 14px 10px 28px; border-radius: 6px; background: var(--clr-danger-bg); color: var(--clr-danger); font-size: 13px; }
+@media (max-width: 720px) {
+  .ts-row { grid-template-columns: 1fr 1fr; }
+  .ts-row--head { display: none; }
+  .ts-row > :first-child { grid-column: 1 / -1; }
+}
+
+/* Garage portal on a phone: the side navigation becomes a sticky top bar with
+   a scrollable row of tabs; lines and cards stack. */
+@media (max-width: 760px) {
+  .gp-shell { flex-direction: column; }
+  .gp-nav {
+    width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand foot" "items items";
+    padding: 10px 12px 8px; gap: 8px 10px; position: sticky; top: 0; z-index: 40;
+  }
+  .gp-brand { grid-area: brand; padding: 0; gap: 10px; min-width: 0; }
+  .gp-brand-icon { width: 34px; height: 34px; border-radius: 10px; }
+  .gp-brand-text { display: flex; }
+  .gp-brand-name { font-size: 14px; }
+  .gp-brand-sub { display: none; }
+  .gp-nav-foot { grid-area: foot; flex-direction: row; margin-top: 0; gap: 0; }
+  .gp-logout { padding: 8px; }
+  .gp-logout span { display: none; }
+  .gp-nav-items {
+    grid-area: items; flex-direction: row; gap: 4px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; margin: 0 -12px; padding: 0 12px;
+  }
+  .gp-nav-items::-webkit-scrollbar { display: none; }
+  .gp-nav-item { flex: 0 0 auto; padding: 8px 11px; font-size: 13px; gap: 7px; white-space: nowrap; }
+  .gp-nav-item span { display: inline; }
+  .gp-main { width: 100%; }
+  .gp-page { padding: 14px 14px 40px; }
+  .gp-title { font-size: 22px; }
+  .gp-stats, .gp-stats--3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .gp-stat { padding: 12px 14px; }
+  .gp-stat-value { font-size: 20px; }
+  .gp-card { padding: 16px 14px; border-radius: 12px; }
+  .gp-order-head, .gp-order-foot { flex-wrap: wrap; gap: 6px 12px; padding: 12px 14px; }
+  .gp-order-lines { padding: 4px 14px; }
+  .gp-order-line {
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "ref qty" "desig status" "return return";
+    gap: 2px 10px; padding: 10px 0;
+  }
+  .gp-ol-ref { grid-area: ref; }
+  .gp-ol-desig { grid-area: desig; }
+  .gp-ol-qty { grid-area: qty; text-align: right; }
+  .gp-ol-status { grid-area: status; }
+  .gp-ol-return { grid-area: return; margin-left: 0; margin-top: 4px; flex-wrap: wrap; white-space: normal; }
+  .ga-modal { width: calc(100vw - 20px); max-width: none; max-height: calc(100vh - 20px); overflow: auto; }
+  .stk-table th, .stk-table td { padding: 8px 8px; font-size: 13px; }
+}

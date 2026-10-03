@@ -10,8 +10,12 @@ import {
   focusSlot,
   nextStandardTour,
   nextTourFromNow,
-  nextWorkingDay,
+  nextOpenDay,
   nextDayWord,
+  daySlots,
+  parseTourSchedule,
+  DEFAULT_TOUR_SCHEDULE,
+  type TourSchedule,
   parisDate,
   parisDateTime,
   overviewCellKind,
@@ -104,7 +108,7 @@ describe("parseSupplierTourBoard", () => {
     expect(board.lines[0]).toMatchObject({ reference: "K1125", quantity: 2, pickupStatus: "PICKED_UP", supplier: "AZ" });
     expect(board.lines[1].pickupStatus).toBeNull();
     expect(board.defaults).toEqual({ "Tournée 1": { livreurId: "lv1", livreurName: "Rachid" } });
-    expect(parseSupplierTourBoard(null)).toEqual({ date: "", tours: [], lines: [], defaults: {}, upcoming: [], returns: [] });
+    expect(parseSupplierTourBoard(null)).toEqual({ date: "", tours: [], lines: [], defaults: {}, upcoming: [], returns: [], schedule: DEFAULT_TOUR_SCHEDULE });
   });
 
   it("keeps the upcoming days with parts, in date order", () => {
@@ -341,8 +345,8 @@ describe("livreur view", () => {
     expect(nextStandardTour("17:30", "2026-10-03")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true, date: "2026-10-05" });
     expect(nextStandardTour("17:30", "2026-10-02")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true, date: "2026-10-03" });
     expect(nextStandardTour("13:00", "2026-10-03")).toEqual({ name: "Tournée 3", slot: "15:00", nextDay: false, date: "2026-10-03" });
-    expect(nextWorkingDay("2026-10-04")).toBe("2026-10-05");
-    expect(nextWorkingDay("2026-10-03")).toBe("2026-10-03");
+    expect(nextOpenDay("2026-10-04")).toBe("2026-10-05");
+    expect(nextOpenDay("2026-10-03")).toBe("2026-10-03");
     expect(nextDayWord("2026-10-04", "2026-10-03")).toBe("demain");
     expect(nextDayWord("2026-10-05", "2026-10-03")).toBe("lundi");
   });
@@ -353,6 +357,25 @@ describe("livreur view", () => {
     expect(nextTourFromNow(new Date("2026-10-03T16:00:00Z"))).toEqual({ date: "2026-10-05", name: "Tournée 1", slot: "10:00" });
     expect(nextTourFromNow(new Date("2026-10-04T09:00:00Z"))).toEqual({ date: "2026-10-05", name: "Tournée 1", slot: "10:00" });
     expect(nextTourFromNow(new Date("2026-10-02T16:00:00Z"))).toEqual({ date: "2026-10-03", name: "Tournée 1", slot: "10:00" });
+  });
+
+  it("follows the magasin's own week: two tournées on Saturday, nothing on Sunday, a late one on Monday", () => {
+    const week: TourSchedule = parseTourSchedule([
+      { weekday: 1, name: "Matin", slot: "09:00", cutoff: "08:30" },
+      { weekday: 1, name: "Soir", slot: "19:00", cutoff: "18:30" },
+      { weekday: 6, name: "Tournée 1", slot: "10:00", cutoff: "09:30" },
+      { weekday: 6, name: "Tournée 2", slot: "13:00", cutoff: "12:00" },
+    ]);
+    expect(daySlots(week, "2026-10-03").map((s) => s.slot)).toEqual(["10:00", "13:00"]);
+    expect(daySlots(week, "2026-10-04")).toEqual([]);
+    expect(nextOpenDay("2026-10-04", week)).toBe("2026-10-05");
+    // Saturday 14:30 Paris: both Saturday tournées have left → Monday « Matin ».
+    expect(nextTourFromNow(new Date("2026-10-03T12:30:00Z"), week)).toEqual({ date: "2026-10-05", name: "Matin", slot: "09:00" });
+    expect(nextStandardTour("13:00", "2026-10-03", week)).toEqual({ name: "Matin", slot: "09:00", nextDay: true, date: "2026-10-05" });
+    expect(nextStandardTour("09:00", "2026-10-05", week)).toEqual({ name: "Soir", slot: "19:00", nextDay: false, date: "2026-10-05" });
+    // Tuesday is closed in this week: Monday evening defers to the next open day.
+    expect(nextStandardTour("19:00", "2026-10-05", week)).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true, date: "2026-10-10" });
+    expect(parseTourSchedule([])).toBe(DEFAULT_TOUR_SCHEDULE);
   });
 
   it("shows a return done offline on top of the last board", () => {
@@ -373,6 +396,7 @@ describe("livreur view", () => {
       defaults: {},
       upcoming: [],
       returns: [],
+      schedule: DEFAULT_TOUR_SCHEDULE,
       tours: [tour({ id: "t1", name: "Tournée 1" })],
       lines: [line({ id: "a" }), line({ id: "b" })],
     };

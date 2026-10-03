@@ -8,6 +8,7 @@ import { Building2, FileText, MessageSquare, Save, Settings } from "lucide-react
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { SavSettingsCard } from "@/components/sav/SavSettingsCard";
+import { TourScheduleCard } from "@/components/settings/TourScheduleCard";
 import { createClient } from "@/lib/supabase/client";
 import {
   loadOrganizationSettings,
@@ -82,6 +83,7 @@ const SECTIONS = [
   { id: "tva", label: "TVA & facturation" },
   { id: "sms", label: "SMS aux clients" },
   { id: "apres-vente", label: "Après-vente" },
+  { id: "tournees", label: "Tournées" },
   { id: "abonnement", label: "Abonnement" },
 ];
 
@@ -286,6 +288,8 @@ export default function ParametresPage() {
         />
         </div>
       )}
+
+      <TourScheduleCard isAdmin={isAdmin} />
 
       <section className="od-card st-rajout" id="abonnement">
         <div className="od-card-title">Abonnement</div>

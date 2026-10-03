@@ -34,6 +34,47 @@ export const STANDARD_TOURS: ReadonlyArray<{ name: string; slot: string }> = [
   { name: "Tournée 4", slot: "17:30" },
 ];
 
+/** One tournée of the magasin's week: isodow weekday (1 = lundi … 7 = dimanche), departure and order cutoff "HH:MM". */
+export type TourScheduleSlot = { weekday: number; name: string; slot: string; cutoff: string };
+export type TourSchedule = TourScheduleSlot[];
+
+export const WEEKDAY_LABELS = ["", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"] as const;
+
+/** The week every magasin starts with: the four standard tournées Monday to Saturday, Sunday closed. */
+export const DEFAULT_TOUR_SCHEDULE: TourSchedule = [1, 2, 3, 4, 5, 6].flatMap((weekday) =>
+  STANDARD_TOURS.map((t, i) => ({ weekday, name: t.name, slot: t.slot, cutoff: ["09:30", "12:00", "14:30", "17:00"][i] })),
+);
+
+const HHMM = /^\d{2}:\d{2}$/;
+
+/** The week as the server sends it (supplier_tour_board.schedule, tour_schedule rows); the default when empty. */
+export function parseTourSchedule(json: unknown): TourSchedule {
+  const out: TourSchedule = [];
+  for (const raw of Array.isArray(json) ? json : []) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const weekday = Number(r.weekday);
+    const slot = String(r.slot ?? r.slot_start ?? "").slice(0, 5);
+    const cutoff = String(r.cutoff ?? "").slice(0, 5);
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    if (weekday >= 1 && weekday <= 7 && name && HHMM.test(slot)) out.push({ weekday, name, slot, cutoff: HHMM.test(cutoff) ? cutoff : slot });
+  }
+  out.sort((a, b) => a.weekday - b.weekday || a.slot.localeCompare(b.slot));
+  return out.length > 0 ? out : DEFAULT_TOUR_SCHEDULE;
+}
+
+/** isodow of a yyyy-mm-dd: 1 = lundi … 7 = dimanche. */
+export function weekdayOf(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const js = new Date(Date.UTC(y, (m || 1) - 1, d || 1)).getUTCDay();
+  return js === 0 ? 7 : js;
+}
+
+/** The tournées of one day, in departure order. */
+export function daySlots(schedule: TourSchedule, ymd: string): TourScheduleSlot[] {
+  const weekday = weekdayOf(ymd);
+  return schedule.filter((s) => s.weekday === weekday).sort((a, b) => a.slot.localeCompare(b.slot));
+}
+
 /** One colour per tournée of the day (by departure order). */
 export const TOUR_COLORS = ["#0570DE", "#DF1B41", "#1EA672", "#ED6704", "#7C3AED", "#0E9CA5"];
 
@@ -129,6 +170,8 @@ export type SupplierTourBoard = {
   upcoming: Array<{ date: string; count: number }>;
   /** Returns the counter handed to the day's tournées. */
   returns: TourReturn[];
+  /** The magasin's week (Paramètres → Tournées). */
+  schedule: TourSchedule;
 };
 
 /* ------------------------------------------------------------------ */
@@ -208,6 +251,7 @@ export function parseSupplierTourBoard(json: unknown): SupplierTourBoard {
     defaults,
     upcoming,
     returns: parseReturns(r.returns),
+    schedule: parseTourSchedule(r.schedule),
     tours: tours
       .map((raw) => {
         const t = (raw ?? {}) as Record<string, unknown>;
@@ -306,10 +350,13 @@ export function addDays(ymd: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-/** No tournée on a Sunday: a date that falls on one moves to the Monday. Saturday is a tour day. */
-export function nextWorkingDay(ymd: string): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(Date.UTC(y, (m || 1) - 1, d || 1)).getUTCDay() === 0 ? addDays(ymd, 1) : ymd;
+/** The first day from `ymd` on which the magasin runs a tournée (a closed day is skipped), `ymd` itself if nothing within two weeks. */
+export function nextOpenDay(ymd: string, schedule: TourSchedule = DEFAULT_TOUR_SCHEDULE): string {
+  for (let i = 0; i < 14; i++) {
+    const day = addDays(ymd, i);
+    if (daySlots(schedule, day).length > 0) return day;
+  }
+  return ymd;
 }
 
 /** « demain » when `ymd` is the day after `from`, else the weekday (« lundi »). */
@@ -406,11 +453,15 @@ export type TourSlot = {
  * tournées even when nothing is ordered yet; the livreur only the tours
  * the server returned for them.
  */
-export function scheduleSlots(tours: SupplierTour[], withStandard: boolean): TourSlot[] {
+export function scheduleSlots(
+  tours: SupplierTour[],
+  withStandard: boolean,
+  standard: ReadonlyArray<{ name: string; slot: string }> = STANDARD_TOURS,
+): TourSlot[] {
   const used = new Set<string>();
   const slots: Omit<TourSlot, "index">[] = [];
   if (withStandard) {
-    for (const s of STANDARD_TOURS) {
+    for (const s of standard) {
       const tour = tours.find((t) => t.name === s.name && !used.has(t.id)) ?? null;
       if (tour) used.add(tour.id);
       slots.push({ key: tour?.id ?? s.name, name: s.name, slot: tour?.slot ?? s.slot, tour });
@@ -433,12 +484,23 @@ export function tourColor(index: number): string {
  * next tour day (never a Sunday). A tour without a slot goes to the next
  * morning. With `date` given, `date` in the result says which day that is.
  */
-export function nextStandardTour(slot: string | null, date?: string): { name: string; slot: string; nextDay: boolean; date?: string } {
-  const sameDay = (name: string, next: string) => ({ name, slot: next, nextDay: false, ...(date ? { date } : {}) });
-  if (slot && slot < "13:00") return sameDay("Tournée 2", "13:00");
-  if (slot && slot < "15:00") return sameDay("Tournée 3", "15:00");
-  if (slot && slot < "17:30") return sameDay("Tournée 4", "17:30");
-  return { name: "Tournée 1", slot: "10:00", nextDay: true, ...(date ? { date: nextWorkingDay(addDays(date, 1)) } : {}) };
+export function nextStandardTour(
+  slot: string | null,
+  date?: string,
+  schedule: TourSchedule = DEFAULT_TOUR_SCHEDULE,
+): { name: string; slot: string; nextDay: boolean; date?: string } {
+  if (!date) {
+    // No day known: the historical fixed sequence.
+    if (slot && slot < "13:00") return { name: "Tournée 2", slot: "13:00", nextDay: false };
+    if (slot && slot < "15:00") return { name: "Tournée 3", slot: "15:00", nextDay: false };
+    if (slot && slot < "17:30") return { name: "Tournée 4", slot: "17:30", nextDay: false };
+    return { name: "Tournée 1", slot: "10:00", nextDay: true };
+  }
+  const later = slot ? daySlots(schedule, date).find((s) => s.slot > slot) : undefined;
+  if (later) return { name: later.name, slot: later.slot, nextDay: false, date };
+  const day = nextOpenDay(addDays(date, 1), schedule);
+  const first = daySlots(schedule, day)[0] ?? STANDARD_TOURS[0];
+  return { name: first.name, slot: first.slot, nextDay: true, date: day };
 }
 
 /**
@@ -446,12 +508,36 @@ export function nextStandardTour(slot: string | null, date?: string): { name: st
  * first one of the next tour day (never a Sunday). Where a validated garage
  * return is handed to the livreur.
  */
-export function nextTourFromNow(now: Date = new Date()): { date: string; name: string; slot: string } {
+export function nextTourFromNow(now: Date = new Date(), schedule: TourSchedule = DEFAULT_TOUR_SCHEDULE): { date: string; name: string; slot: string } {
   const today = parisDate(now);
   const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
-  const upcoming = nextWorkingDay(today) === today ? STANDARD_TOURS.find((tour) => tour.slot > hhmm) : undefined;
+  const upcoming = daySlots(schedule, today).find((tour) => tour.slot > hhmm);
   if (upcoming) return { date: today, name: upcoming.name, slot: upcoming.slot };
-  return { date: nextWorkingDay(addDays(today, 1)), name: STANDARD_TOURS[0].name, slot: STANDARD_TOURS[0].slot };
+  const day = nextOpenDay(addDays(today, 1), schedule);
+  const first = daySlots(schedule, day)[0] ?? STANDARD_TOURS[0];
+  return { date: day, name: first.name, slot: first.slot };
+}
+
+/** The tournée the server would give an order placed right now (same rule as the counter). */
+export async function nextTourFromServer(supabase: SupabaseClient): Promise<{ date: string; name: string; slot: string }> {
+  const { data, error } = await supabase.rpc("next_tournee");
+  if (error) throw toTourError(error.message, error.code);
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  if (!row?.tour_date) throw new Error("Aucune tournée programmée : réglez les horaires dans Paramètres → Tournées.");
+  return { date: String(row.tour_date), name: String(row.tour_name ?? "Tournée"), slot: String(row.tour_slot ?? "").slice(0, 5) };
+}
+
+/** Paramètres → Tournées: the magasin's week (the default one before it was ever saved). */
+export async function loadTourSchedule(supabase: SupabaseClient): Promise<TourSchedule> {
+  const { data, error } = await supabase.from("tour_schedule").select("weekday,name,slot_start,cutoff").order("weekday").order("slot_start");
+  if (error) throw new Error(error.message);
+  return parseTourSchedule(data);
+}
+
+export async function saveTourSchedule(supabase: SupabaseClient, week: TourSchedule): Promise<TourSchedule> {
+  const { data, error } = await supabase.rpc("set_tour_schedule", { p_week: week });
+  if (error) throw new Error(/administrator/i.test(error.message) ? "Seul l'administrateur du magasin peut modifier les tournées." : error.message);
+  return parseTourSchedule(data);
 }
 
 export type ReturnStats = { total: number; done: number; left: number };

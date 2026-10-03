@@ -130,7 +130,7 @@ export function TourTab({
   const kinds = countKinds(lines);
   const overview = board ? buildDayOverview(slots, board.lines) : null;
   const others = slots.filter((s) => s.tour && s.tour.id !== tour?.id);
-  const standard = nextStandardTour(current?.slot ?? null, day);
+  const standard = nextStandardTour(current?.slot ?? null, day, board?.schedule);
   const next: NextTour = { ...standard, word: standard.date ? nextDayWord(standard.date, day) : "demain" };
   // « demain », or « lundi » when tomorrow is a Sunday.
   const nextWord = nextDayWord(tomorrow, today);
