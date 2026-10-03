@@ -9,6 +9,9 @@ import {
   fmtRelativeDay,
   focusSlot,
   nextStandardTour,
+  nextTourFromNow,
+  nextWorkingDay,
+  nextDayWord,
   parisDate,
   parisDateTime,
   overviewCellKind,
@@ -332,6 +335,24 @@ describe("livreur view", () => {
     expect(nextStandardTour("15:00")).toEqual({ name: "Tournée 4", slot: "17:30", nextDay: false });
     expect(nextStandardTour("17:30")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true });
     expect(nextStandardTour(null)).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true });
+  });
+
+  it("never defers a part to a Sunday: Saturday's last tournée goes to Monday morning", () => {
+    expect(nextStandardTour("17:30", "2026-10-03")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true, date: "2026-10-05" });
+    expect(nextStandardTour("17:30", "2026-10-02")).toEqual({ name: "Tournée 1", slot: "10:00", nextDay: true, date: "2026-10-03" });
+    expect(nextStandardTour("13:00", "2026-10-03")).toEqual({ name: "Tournée 3", slot: "15:00", nextDay: false, date: "2026-10-03" });
+    expect(nextWorkingDay("2026-10-04")).toBe("2026-10-05");
+    expect(nextWorkingDay("2026-10-03")).toBe("2026-10-03");
+    expect(nextDayWord("2026-10-04", "2026-10-03")).toBe("demain");
+    expect(nextDayWord("2026-10-05", "2026-10-03")).toBe("lundi");
+  });
+
+  it("hands a garage return to the next tournée, Monday after a Saturday evening or a Sunday", () => {
+    // Paris is UTC+2 in early October.
+    expect(nextTourFromNow(new Date("2026-10-03T12:30:00Z"))).toEqual({ date: "2026-10-03", name: "Tournée 3", slot: "15:00" });
+    expect(nextTourFromNow(new Date("2026-10-03T16:00:00Z"))).toEqual({ date: "2026-10-05", name: "Tournée 1", slot: "10:00" });
+    expect(nextTourFromNow(new Date("2026-10-04T09:00:00Z"))).toEqual({ date: "2026-10-05", name: "Tournée 1", slot: "10:00" });
+    expect(nextTourFromNow(new Date("2026-10-02T16:00:00Z"))).toEqual({ date: "2026-10-03", name: "Tournée 1", slot: "10:00" });
   });
 
   it("shows a return done offline on top of the last board", () => {

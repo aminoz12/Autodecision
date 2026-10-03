@@ -2,7 +2,7 @@
 
 import { Building2, Check, CheckCircle2, CloudOff, Loader2, MapPin, Navigation, Phone, RotateCcw, Store, Wrench } from "lucide-react";
 import { mapsLink } from "@/lib/data/delivery";
-import { fmtHour, returnStats, slotLabel, type SupplierTour, type SupplierTourBoard, type TourReturn } from "@/lib/data/tournees";
+import { fmtHour, nextDayWord, returnStats, slotLabel, type SupplierTour, type SupplierTourBoard, type TourReturn } from "@/lib/data/tournees";
 
 type Props = {
   board: SupplierTourBoard | null;
@@ -24,6 +24,9 @@ type Props = {
  */
 export function ReturnsTab({ board, day, today, tomorrow, onDay, loading, error, queued, onComplete }: Props) {
   const isToday = day === today;
+  // « demain », or « lundi » when tomorrow is a Sunday.
+  const nextWord = nextDayWord(tomorrow, today);
+  const NextWord = nextWord.charAt(0).toUpperCase() + nextWord.slice(1);
   const returns = board?.returns ?? [];
   const garage = returns.filter((r) => r.leg === "GARAGE_TO_STORE");
   const supplier = returns.filter((r) => r.leg === "STORE_TO_SUPPLIER");
@@ -36,7 +39,7 @@ export function ReturnsTab({ board, day, today, tomorrow, onDay, loading, error,
           Aujourd&apos;hui
         </button>
         <button type="button" className={`nc-chip${day === tomorrow ? " nc-chip--on" : ""}`} onClick={() => onDay(tomorrow)}>
-          Demain
+          {NextWord}
         </button>
         {loading && <Loader2 className="h-4 w-4 nc-spin lpt-days-spin" />}
       </div>
@@ -53,7 +56,7 @@ export function ReturnsTab({ board, day, today, tomorrow, onDay, loading, error,
       {board && returns.length === 0 && (
         <div className="lp-empty">
           <CheckCircle2 className="h-8 w-8" />
-          <p>Aucun retour confié pour {isToday ? "aujourd'hui" : "demain"}.</p>
+          <p>Aucun retour confié pour {isToday ? "aujourd'hui" : nextWord}.</p>
         </div>
       )}
 

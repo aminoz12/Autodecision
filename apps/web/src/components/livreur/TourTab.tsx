@@ -23,6 +23,7 @@ import {
   fmtHour,
   focusSlot,
   KIND_LABEL,
+  nextDayWord,
   nextStandardTour,
   pct,
   pickupState,
@@ -43,7 +44,8 @@ import {
 } from "@/lib/data/tournees";
 import { cellKey, DayOverviewGrid } from "./DayOverviewGrid";
 
-export type NextTour = { name: string; slot: string; nextDay: boolean };
+/** `word` names the day of a next-day tournée: « demain », or « lundi » after a Saturday. */
+export type NextTour = { name: string; slot: string; nextDay: boolean; date?: string; word?: string };
 
 type Props = {
   board: SupplierTourBoard | null;
@@ -128,7 +130,11 @@ export function TourTab({
   const kinds = countKinds(lines);
   const overview = board ? buildDayOverview(slots, board.lines) : null;
   const others = slots.filter((s) => s.tour && s.tour.id !== tour?.id);
-  const next = nextStandardTour(current?.slot ?? null);
+  const standard = nextStandardTour(current?.slot ?? null, day);
+  const next: NextTour = { ...standard, word: standard.date ? nextDayWord(standard.date, day) : "demain" };
+  // « demain », or « lundi » when tomorrow is a Sunday.
+  const nextWord = nextDayWord(tomorrow, today);
+  const NextWord = nextWord.charAt(0).toUpperCase() + nextWord.slice(1);
   const firstOpen = Math.max(0, stops.findIndex((s) => s.left > 0));
   const tomorrowCount = isToday ? (board?.upcoming.find((u) => u.date === tomorrow)?.count ?? 0) : 0;
 
@@ -159,7 +165,7 @@ export function TourTab({
           Aujourd&apos;hui
         </button>
         <button type="button" className={`nc-chip${day === tomorrow ? " nc-chip--on" : ""}`} onClick={() => changeDay(tomorrow)}>
-          Demain{tomorrowCount > 0 ? ` (${tomorrowCount})` : ""}
+          {NextWord}{tomorrowCount > 0 ? ` (${tomorrowCount})` : ""}
         </button>
         {loading && <Loader2 className="h-4 w-4 nc-spin lpt-days-spin" />}
       </div>
@@ -181,8 +187,8 @@ export function TourTab({
         <div className="lp-empty">
           <CheckCircle2 className="h-8 w-8" />
           <p>
-            Rien à récupérer chez les fournisseurs {isToday ? "aujourd'hui" : "demain"}.
-            {tomorrowCount > 0 && ` ${tomorrowCount} pièce${tomorrowCount > 1 ? "s" : ""} à récupérer demain.`}
+            Rien à récupérer chez les fournisseurs {isToday ? "aujourd'hui" : nextWord}.
+            {tomorrowCount > 0 && ` ${tomorrowCount} pièce${tomorrowCount > 1 ? "s" : ""} à récupérer ${nextWord}.`}
           </p>
         </div>
       )}
@@ -259,7 +265,7 @@ export function TourTab({
           {others.length > 0 && (
             <section aria-label="Autres tournées du jour">
               <p className="lv-section-title">
-                <Clock3 /> Autres tournées {isToday ? "du jour" : "de demain"}
+                <Clock3 /> Autres tournées {isToday ? "du jour" : `de ${nextWord}`}
               </p>
               <div className="lv-next-grid">
                 {others.map((s) => {
@@ -441,7 +447,7 @@ function PartRow({
               >
                 {deferring ? <Loader2 className="nc-spin" /> : <Clock3 />}
                 Reporter à {next.slot.replace(":", "H")}
-                {next.nextDay ? " demain" : ""}
+                {next.nextDay ? ` ${next.word ?? "demain"}` : ""}
               </button>
             )}
           </div>

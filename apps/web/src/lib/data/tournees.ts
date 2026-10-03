@@ -306,6 +306,19 @@ export function addDays(ymd: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
+/** No tournée on a Sunday: a date that falls on one moves to the Monday. Saturday is a tour day. */
+export function nextWorkingDay(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1)).getUTCDay() === 0 ? addDays(ymd, 1) : ymd;
+}
+
+/** « demain » when `ymd` is the day after `from`, else the weekday (« lundi »). */
+export function nextDayWord(ymd: string, from: string): string {
+  if (ymd === addDays(from, 1)) return "demain";
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Intl.DateTimeFormat("fr-FR", { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(y, (m || 1) - 1, d || 1)));
+}
+
 /** The instant of a Paris wall-clock time (whatever the browser time zone). */
 export function parisDateTime(ymd: string, hhmm: string): Date {
   const [y, m, d] = ymd.split("-").map(Number);
@@ -417,25 +430,28 @@ export function tourColor(index: number): string {
 /**
  * The standard tournée that follows one leaving at `slot` — the same rule as
  * next_standard_tour() in the database: 10h → 13h → 15h → 17h30 → 10h the
- * next day. A tour without a slot goes to the next morning.
+ * next tour day (never a Sunday). A tour without a slot goes to the next
+ * morning. With `date` given, `date` in the result says which day that is.
  */
-export function nextStandardTour(slot: string | null): { name: string; slot: string; nextDay: boolean } {
-  if (slot && slot < "13:00") return { name: "Tournée 2", slot: "13:00", nextDay: false };
-  if (slot && slot < "15:00") return { name: "Tournée 3", slot: "15:00", nextDay: false };
-  if (slot && slot < "17:30") return { name: "Tournée 4", slot: "17:30", nextDay: false };
-  return { name: "Tournée 1", slot: "10:00", nextDay: true };
+export function nextStandardTour(slot: string | null, date?: string): { name: string; slot: string; nextDay: boolean; date?: string } {
+  const sameDay = (name: string, next: string) => ({ name, slot: next, nextDay: false, ...(date ? { date } : {}) });
+  if (slot && slot < "13:00") return sameDay("Tournée 2", "13:00");
+  if (slot && slot < "15:00") return sameDay("Tournée 3", "15:00");
+  if (slot && slot < "17:30") return sameDay("Tournée 4", "17:30");
+  return { name: "Tournée 1", slot: "10:00", nextDay: true, ...(date ? { date: nextWorkingDay(addDays(date, 1)) } : {}) };
 }
 
 /**
- * The next standard tournée from a moment: the next departure today, else
- * tomorrow's first one. Where a validated garage return is handed to the livreur.
+ * The next standard tournée from a moment: the next departure today, else the
+ * first one of the next tour day (never a Sunday). Where a validated garage
+ * return is handed to the livreur.
  */
 export function nextTourFromNow(now: Date = new Date()): { date: string; name: string; slot: string } {
   const today = parisDate(now);
   const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
-  const upcoming = STANDARD_TOURS.find((tour) => tour.slot > hhmm);
+  const upcoming = nextWorkingDay(today) === today ? STANDARD_TOURS.find((tour) => tour.slot > hhmm) : undefined;
   if (upcoming) return { date: today, name: upcoming.name, slot: upcoming.slot };
-  return { date: addDays(today, 1), name: STANDARD_TOURS[0].name, slot: STANDARD_TOURS[0].slot };
+  return { date: nextWorkingDay(addDays(today, 1)), name: STANDARD_TOURS[0].name, slot: STANDARD_TOURS[0].slot };
 }
 
 export type ReturnStats = { total: number; done: number; left: number };

@@ -31,6 +31,7 @@ import { ChangePasswordDialog } from "@/components/auth/ChangePasswordDialog";
 import { createClient } from "@/lib/supabase/client";
 import {
   addDays,
+  nextWorkingDay,
   applyQueuedTourActions,
   loadSupplierTourBoard,
   parisDate,
@@ -311,7 +312,8 @@ export default function LivreurPage() {
   const queuedReturns = useMemo(() => new Set(outbox.flatMap((i) => (i.kind === "return" && i.returnId ? [i.returnId] : []))), [outbox]);
   const shownPickups = useMemo(() => (pickups ? applyQueuedTourActions(pickups, outbox) : null), [pickups, outbox]);
   const pickupToday = parisDate(today);
-  const pickupTomorrow = addDays(pickupToday, 1);
+  // The next tour day: Sunday has no tournée, so a Saturday shows Monday.
+  const pickupTomorrow = nextWorkingDay(addDays(pickupToday, 1));
   const pickupsLeft = useMemo(() => {
     if (!shownPickups || pickupDay !== pickupToday) return 0;
     return shownPickups.lines.filter((l) => l.receptionStatus !== "RECEIVED" && l.receptionStatus !== "NOT_RECEIVED" && !l.pickupStatus).length;

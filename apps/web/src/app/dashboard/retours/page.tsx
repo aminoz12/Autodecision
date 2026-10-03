@@ -38,7 +38,7 @@ import {
   type ReturnRow,
   type ReturnTreatment,
 } from "@/lib/data/saas";
-import { addDays, assignReturnLeg, ensureSupplierTour, parisDate, STANDARD_TOURS, type ReturnLeg, nextTourFromNow } from "@/lib/data/tournees";
+import { addDays, assignReturnLeg, ensureSupplierTour, nextWorkingDay, parisDate, STANDARD_TOURS, type ReturnLeg, nextTourFromNow } from "@/lib/data/tournees";
 import { OpenCaseDialog, type OpenCasePreset } from "@/components/sav/OpenCaseDialog";
 import { loadReturnQualifications, loadSavSettingsSafe, qualifyReturns } from "@/lib/data/sav";
 import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay } from "@/lib/sav";
@@ -109,7 +109,8 @@ type TourChoice = { key: string; label: string; date: string; name: string; slot
 /** Today's and tomorrow's standard tournées, the next departure first (today's gone tours last). */
 function tourChoicesFrom(now: Date): TourChoice[] {
   const today = parisDate(now);
-  const tomorrow = addDays(today, 1);
+  // The next tour day: never a Sunday.
+  const tomorrow = nextWorkingDay(addDays(today, 1));
   const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
   const all = [today, tomorrow].flatMap((date) =>
     STANDARD_TOURS.map((t) => ({
