@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   loadRestockAlerts,
   loadSupplierOptions,
+  RESTOCK_COUNT_EVENT,
   reorderStockLines,
   skipRestockAlert,
   type RestockAlert,
@@ -98,6 +99,11 @@ export default function StockPage() {
     void load();
   }, [load]);
 
+  // The « Stock » counter in the menu follows this list right away.
+  useEffect(() => {
+    if (loading || error) return;
+    window.dispatchEvent(new CustomEvent(RESTOCK_COUNT_EVENT, { detail: alerts.length }));
+  }, [alerts, loading, error]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();

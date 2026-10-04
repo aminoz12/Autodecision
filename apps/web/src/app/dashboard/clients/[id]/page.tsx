@@ -2,6 +2,7 @@
 
 import {
   Award,
+  Briefcase,
   Car,
   Check,
   ChevronRight,
@@ -18,11 +19,12 @@ import {
   RotateCcw,
   ShoppingCart,
   Star,
+  Trash2,
   Wallet,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { ClientSavStrip } from "@/components/sav/ClientSavStrip";
@@ -32,6 +34,8 @@ import { fmtMoney } from "@/lib/data/saas";
 import { workflowLabel } from "@/lib/data/dashboard";
 import {
   adjustLoyaltyPoints,
+  convertClientToPro,
+  deleteParticulierClient,
   loadClientProfile,
   LOYALTY,
   pointsValue,
@@ -87,6 +91,7 @@ export default function ClientProfilePage() {
   const { profile } = useAuth();
   const orgId = profile?.organization_id;
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
 
   const [client, setClient] = useState<ClientProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,6 +111,11 @@ export default function ClientProfilePage() {
   const [loyaltyReason, setLoyaltyReason] = useState("");
   const [loyaltyBusy, setLoyaltyBusy] = useState(false);
   const [loyaltyError, setLoyaltyError] = useState<string | null>(null);
+
+  // « Passer en client PRO » / « Supprimer le client » — both confirmed in a dialog.
+  const [fileAction, setFileAction] = useState<"PRO" | "DELETE" | null>(null);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId || !clientId) return;
@@ -192,6 +202,29 @@ export default function ClientProfilePage() {
       setLoyaltyError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoyaltyBusy(false);
+    }
+  }
+
+  function openFileAction(action: "PRO" | "DELETE") {
+    setFileError(null);
+    setFileAction(action);
+  }
+
+  async function submitFileAction() {
+    if (!orgId || !client || !fileAction) return;
+    setFileBusy(true);
+    setFileError(null);
+    try {
+      if (fileAction === "PRO") {
+        await convertClientToPro(supabase, orgId, client.id);
+        router.push(`/dashboard/pros/${client.id}`);
+      } else {
+        await deleteParticulierClient(supabase, orgId, client.id);
+        router.push("/dashboard/clients");
+      }
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : String(err));
+      setFileBusy(false);
     }
   }
 
@@ -293,6 +326,12 @@ export default function ClientProfilePage() {
                 </Link>
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => void toggleActive()}>
                   {client.active ? "Désactiver" : "Réactiver"}
+                </button>
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => openFileAction("PRO")}>
+                  <Briefcase className="h-4 w-4" /> Passer en client PRO
+                </button>
+                <button type="button" className="od-btn od-btn--ghost od-btn--danger" onClick={() => openFileAction("DELETE")}>
+                  <Trash2 className="h-4 w-4" /> Supprimer
                 </button>
               </div>
             </div>
@@ -540,6 +579,57 @@ export default function ClientProfilePage() {
             </table>
           </div>
         </section>
+      )}
+
+      {fileAction && (
+        <div className="ga-modal-overlay" onClick={() => !fileBusy && setFileAction(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="file-action-title" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title" id="file-action-title">
+                {fileAction === "PRO" ? <Briefcase className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+                {fileAction === "PRO" ? `Passer ${client.name} en client PRO` : `Supprimer ${client.name}`}
+              </span>
+              <button type="button" className="ga-modal-close" onClick={() => setFileAction(null)} aria-label="Fermer" disabled={fileBusy}><X className="h-4 w-4" /></button>
+            </div>
+            <div className="ga-modal-form">
+              {fileAction === "PRO" ? (
+                <p className="od-hint">
+                  Le client garde son historique et reste servi au comptoir (pas de portail, pas de livraison). Il pourra
+                  aussi acheter « en compte », avec paiement à 30 jours. Sa fiche passe dans{" "}
+                  <strong>Clients PRO</strong>.
+                </p>
+              ) : (
+                <p className="od-hint">
+                  La fiche, les points de fidélité et les coordonnées sont effacés définitivement.
+                  {client.orders > 0
+                    ? ` Ses ${client.orders} commande(s) restent dans l'historique, sans fiche client.`
+                    : ""}{" "}
+                  Impossible si le client a une commande non réglée, un avoir, une facture ou une consigne en cours : désactivez-le
+                  alors à la place.
+                </p>
+              )}
+              {fileError && <div className="nc-error">{fileError}</div>}
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setFileAction(null)} disabled={fileBusy}>Annuler</button>
+                <button
+                  type="button"
+                  className={`od-btn ${fileAction === "DELETE" ? "od-btn--danger" : "od-btn--primary"}`}
+                  onClick={() => void submitFileAction()}
+                  disabled={fileBusy}
+                >
+                  {fileBusy ? (
+                    <Loader2 className="h-4 w-4 nc-spin" />
+                  ) : fileAction === "PRO" ? (
+                    <Briefcase className="h-4 w-4" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {fileAction === "PRO" ? "Passer en client PRO" : "Supprimer définitivement"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {loyaltyMode && (

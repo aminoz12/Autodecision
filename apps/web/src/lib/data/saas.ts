@@ -354,29 +354,39 @@ export type RestockAlert = {
   clientName: string;
 };
 
+/** The sale lines still waiting in « Pièces à recommander » (the list and the menu counter share it). */
+function restockAlertsQuery(
+  supabase: SupabaseClient,
+  orgId: string,
+  columns: string,
+  withSkipFilter: boolean,
+  options?: { count: "exact"; head: true },
+) {
+  let q = supabase
+    .from("order_lines")
+    .select(columns, options)
+    .eq("organization_id", orgId)
+    .eq("depuis_magasin", true)
+    .is("supplier_id", null)
+    // Already re-ordered → a restock order exists for this sale line.
+    .is("restock_line_id", null)
+    .eq("retour_stock_fait", false)
+    .eq("orders.devis", false)
+    .eq("orders.is_restock", false);
+  // « Déjà en stock » (migration 20260930010000): the alert was dismissed at the counter.
+  if (withSkipFilter) q = q.is("restock_skipped_at", null);
+  return q;
+}
+
 export async function loadRestockAlerts(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<RestockAlert[]> {
-  const query = (withSkipFilter: boolean) => {
-    let q = supabase
-      .from("order_lines")
-      .select(
-        "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
-          "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))",
-      )
-      .eq("organization_id", orgId)
-      .eq("depuis_magasin", true)
-      .is("supplier_id", null)
-      // Already re-ordered → a restock order exists for this sale line.
-      .is("restock_line_id", null)
-      .eq("retour_stock_fait", false)
-      .eq("orders.devis", false)
-      .eq("orders.is_restock", false);
-    // « Déjà en stock » (migration 20260930010000): the alert was dismissed at the counter.
-    if (withSkipFilter) q = q.is("restock_skipped_at", null);
-    return q.limit(500);
-  };
+  const columns =
+    "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
+    "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))";
+  const query = (withSkipFilter: boolean) =>
+    restockAlertsQuery(supabase, orgId, columns, withSkipFilter).limit(500);
   let { data, error } = await query(true);
   if (error && /restock_skipped_at/.test(error.message)) ({ data, error } = await query(false));
   if (error) throw new Error(error.message);
@@ -399,6 +409,21 @@ export async function loadRestockAlerts(
       ),
     };
   });
+}
+
+/** Window event (detail = count) the stock page fires so the menu counter follows it at once. */
+export const RESTOCK_COUNT_EVENT = "restock-alerts-count";
+
+/** How many parts wait in « Pièces à recommander » — the counter next to « Stock » in the menu. */
+export async function countRestockAlerts(supabase: SupabaseClient, orgId: string): Promise<number> {
+  const columns = "id,orders!inner(devis,is_restock)";
+  const query = (withSkipFilter: boolean) =>
+    restockAlertsQuery(supabase, orgId, columns, withSkipFilter, { count: "exact", head: true });
+  let { count, error } = await query(true);
+  // A HEAD answer carries no error text: retry without the « Déjà en stock » filter on any error.
+  if (error) ({ count, error } = await query(false));
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
 /** « Déjà en stock » : the line leaves « Pièces à recommander » without a restock order. */

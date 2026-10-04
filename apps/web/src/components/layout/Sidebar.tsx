@@ -33,10 +33,14 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { countByDestination, useNotifications } from "@/components/providers/NotificationsProvider";
+import { countRestockAlerts, RESTOCK_COUNT_EVENT } from "@/lib/data/saas";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
+
+/** « Stock » counts the parts waiting in « Pièces à recommander », not notifications. */
+const STOCK_HREF = "/dashboard/stock";
 type NavGroup = { label: string; items: NavItem[] };
 
 const navGroups: NavGroup[] = [
@@ -52,7 +56,7 @@ const navGroups: NavGroup[] = [
   {
     label: "Pièces",
     items: [
-      { href: "/dashboard/stock", label: "Stock", icon: Boxes },
+      { href: STOCK_HREF, label: "Stock", icon: Boxes },
       { href: "/dashboard/recherche-piece", label: "Recherche pièce", icon: Search },
     ],
   },
@@ -126,6 +130,7 @@ export function Sidebar() {
     () => countByDestination(feed?.unreadHrefs ?? [], groups.flatMap((g) => g.items.map((i) => i.href))),
     [feed?.unreadHrefs, groups],
   );
+  const [restockCount, setRestockCount] = useState(0);
 
   function toggleCollapsed() {
     const next = !collapsed;
@@ -152,6 +157,35 @@ export function Sidebar() {
       cancelled = true;
     };
   }, [profile?.organization_id]);
+
+  // Parts to re-order: re-read on every page change and each minute; the stock
+  // page also pushes its own count as soon as a part is ordered or dismissed.
+  useEffect(() => {
+    const orgId = profile?.organization_id;
+    if (!orgId) return;
+    let cancelled = false;
+    const refresh = () =>
+      countRestockAlerts(createClient(), orgId).then(
+        (n) => {
+          if (!cancelled) setRestockCount(n);
+        },
+        () => {
+          /* best-effort counter */
+        },
+      );
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    const onCount = (e: Event) => {
+      const n = (e as CustomEvent<unknown>).detail;
+      if (typeof n === "number") setRestockCount(n);
+    };
+    window.addEventListener(RESTOCK_COUNT_EVENT, onCount);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener(RESTOCK_COUNT_EVENT, onCount);
+    };
+  }, [profile?.organization_id, pathname]);
 
   const brand = orgName ?? "Mon magasin";
 
@@ -223,6 +257,11 @@ export function Sidebar() {
                 {group.items.map((item) => {
                   const Icon = item.icon;
                   const active = isActive(item.href);
+                  const badge = item.href === STOCK_HREF ? restockCount : counts[item.href];
+                  const badgeTitle =
+                    item.href === STOCK_HREF
+                      ? `${badge} pièce(s) à recommander`
+                      : `${badge} notification(s) non lue(s)`;
                   return (
                     <Link
                       key={item.href}
@@ -234,9 +273,9 @@ export function Sidebar() {
                     >
                       <Icon className="sidebar-nav-icon" />
                       <span className="sidebar-nav-label flex-1">{item.label}</span>
-                      {counts[item.href] ? (
-                        <span className="sidebar-nav-badge" title={`${counts[item.href]} notification(s) non lue(s)`}>
-                          {counts[item.href]}
+                      {badge ? (
+                        <span className="sidebar-nav-badge" title={badgeTitle}>
+                          {badge}
                         </span>
                       ) : null}
                     </Link>

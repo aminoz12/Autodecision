@@ -76,6 +76,8 @@ button, input, select, textarea { font-family: inherit; }
 .topbar-actions .nb-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
 .topbar-actions .nb-panel { left: auto; right: 0; top: 44px; border-radius: 8px; box-shadow: var(--shadow-pop); }
 .topbar-actions .nb-badge { top: -5px; right: -5px; }
+/* A long part reference in a notification wraps instead of widening the panel. */
+.nb-title, .nb-body { overflow-wrap: anywhere; }
 .topbar-new { white-space: nowrap; }
 .topbar-new svg { width: 16px; height: 16px; }
 .topbar-divider { width: 1px; height: 24px; background: var(--border-card); margin: 0 4px; }
@@ -1035,6 +1037,10 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
   .gp-nav-items::-webkit-scrollbar { display: none; }
   .gp-nav-item { flex: 0 0 auto; padding: 8px 11px; font-size: 13px; gap: 7px; white-space: nowrap; }
   .gp-nav-item span { display: inline; }
+  /* The bell sits mid-bar: anchored to it, the panel ran off the left edge.
+     On a phone it opens as a full-width sheet under the brand row. */
+  .gp-nav .nb-panel { position: fixed; top: 54px; left: 10px; right: 10px; width: auto; max-width: none; }
+  .gp-nav .nb-list { max-height: calc(100dvh - 130px); }
   .gp-main { width: 100%; }
   .gp-page { padding: 14px 14px 40px; }
   .gp-title { font-size: 22px; }
@@ -1056,3 +1062,14 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
   .ga-modal { width: calc(100vw - 20px); max-width: none; max-height: calc(100vh - 20px); overflow: auto; }
   .stk-table th, .stk-table td { padding: 8px 8px; font-size: 13px; }
 }
+
+/* Rajout rapide: the orders just created, each with its own ticket (one shown at a time). */
+.nc-quick-done { list-style: none; margin: 4px 0 0; padding: 0; width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.nc-quick-done li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-card); border-radius: 8px; background: var(--bg-card, #fff); }
+.nc-quick-done li.is-shown { border-color: var(--clr-primary); box-shadow: 0 0 0 3px var(--clr-primary-ring); }
+.nc-quick-done-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.nc-quick-done-main:disabled { cursor: default; }
+.nc-quick-done-main strong { font-size: 14px; color: var(--text-primary); }
+.nc-quick-done-main span { font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.nc-quick-done-none { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+@media (max-width: 560px) { .nc-quick-done li { flex-wrap: wrap; } }

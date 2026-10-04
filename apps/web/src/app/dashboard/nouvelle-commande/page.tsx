@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
@@ -40,6 +41,7 @@ import {
 } from "@/lib/data/saas";
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
+import { PAYMENT_MODE_LABEL, PAYMENT_MODES, type PaymentMode } from "@/lib/data/payments";
 import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
@@ -113,6 +115,21 @@ interface QuickRow {
   consigne: boolean;
   consignePrice: number;
   clientAPris: boolean;
+  /** Unit sale price TTC, as typed (« 12,50 »). Not asked for a stock replenishment. */
+  price: string;
+  /** Chosen by the cashier for every client row ("" = not chosen yet); a garage is always en compte. */
+  reglement: Reglement | "";
+  /** How a « Payée » row was paid. */
+  mode: PaymentMode | "";
+}
+
+/** A quick order once created, for the ticket screen (no ticket for a stock replenishment). */
+interface QuickResult {
+  ref: string;
+  who: string;
+  total: number;
+  reglementLabel: string;
+  ticket: TicketData | null;
 }
 
 const emptyQuickRow: QuickRow = {
@@ -127,7 +144,52 @@ const emptyQuickRow: QuickRow = {
   consigne: false,
   consignePrice: 0,
   clientAPris: false,
+  price: "",
+  reglement: "",
+  mode: "",
 };
+
+/** Money typed at the counter (« 12,50 » or « 12.5 »); NaN when it is not a number. */
+function parseMoney(raw: string): number {
+  const n = Number(raw.replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+}
+
+/** A garage buys on account, a counter client pays at the counter, a client PRO does either. */
+function quickReglements(pourQui: QuickPourQui): Reglement[] {
+  if (pourQui === "GARAGE") return ["EN_COMPTE"];
+  if (pourQui === "PRO") return ["PAYEE", "NON_PAYEE", "EN_COMPTE"];
+  return ["PAYEE", "NON_PAYEE"];
+}
+
+/** Order total of a quick row: parts + consigne, rounded like the database. */
+function quickRowTotal(r: QuickRow): number {
+  const unit = parseMoney(r.price);
+  if (!(unit >= 0)) return 0;
+  const consigne = r.consigne ? Math.max(0, r.consignePrice || 0) : 0;
+  return Math.round((r.qty || 1) * (unit + consigne) * 100) / 100;
+}
+
+/** Something was typed in the row — an untouched row is simply ignored. */
+function isQuickRowFilled(r: QuickRow): boolean {
+  return Boolean(r.ref.trim() || r.price.trim() || r.clientName.trim() || r.clientPhone.trim() || r.garageId);
+}
+
+/** First missing field of a row (null when the row can be created). */
+function quickRowProblem(r: QuickRow): string | null {
+  if (!r.ref.trim()) return "la référence";
+  if (r.pourQui === "STOCK") return r.fournisseur ? null : "le fournisseur";
+  if (r.pourQui === "GARAGE" || r.pourQui === "PRO") {
+    if (!r.garageId) return r.pourQui === "PRO" ? "le client PRO" : "le garage";
+  } else {
+    if (!r.clientName.trim()) return "le nom du client";
+    if (!r.clientPhone.trim()) return "le téléphone du client";
+  }
+  if (!(parseMoney(r.price) > 0)) return "le prix de vente";
+  if (!r.reglement) return "le règlement";
+  if (r.reglement === "PAYEE" && !r.mode) return "le mode de paiement";
+  return null;
+}
 
 /** Today's date in the user's local timezone (yyyy-mm-dd), not UTC. */
 function todayISO(): string {
@@ -195,9 +257,17 @@ export default function NouvelleCommandePage() {
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickRows, setQuickRows] = useState<QuickRow[]>([{ ...emptyQuickRow }]);
   const [quickSaving, setQuickSaving] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
+  /** Orders already created by a run that stopped half-way (a retry adds the rest). */
+  const [quickPending, setQuickPending] = useState<QuickResult[]>([]);
+  /** Ticket screen shown once the quick orders are created. */
+  const [quickDone, setQuickDone] = useState<QuickResult[] | null>(null);
+  const [quickTicketIdx, setQuickTicketIdx] = useState(0);
 
   const openQuick = useCallback(() => {
     setQuickRows([{ ...emptyQuickRow }]);
+    setQuickError(null);
+    setQuickPending([]);
     setQuickOpen(true);
   }, []);
 
@@ -208,13 +278,23 @@ export default function NouvelleCommandePage() {
     return () => window.clearTimeout(id);
   }, [openQuick]);
 
+  /** Closing the modal after a run that stopped half-way still shows the tickets of the orders created. */
+  const closeQuick = useCallback(() => {
+    if (quickSaving) return;
+    setQuickOpen(false);
+    if (quickPending.length > 0) {
+      setQuickDone(quickPending);
+      setQuickPending([]);
+      setQuickTicketIdx(0);
+    }
+  }, [quickSaving, quickPending]);
+
+  const patchQuickRow = useCallback((idx: number, patch: Partial<QuickRow>) => {
+    setQuickRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }, []);
   const setQuickRow = useCallback(
-    (idx: number, field: keyof QuickRow, value: string | number | boolean) => {
-      setQuickRows((prev) =>
-        prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)),
-      );
-    },
-    [],
+    (idx: number, field: keyof QuickRow, value: string | number | boolean) => patchQuickRow(idx, { [field]: value }),
+    [patchQuickRow],
   );
   const addQuickRow = useCallback(
     () => setQuickRows((prev) => [...prev, { ...emptyQuickRow }]),
@@ -228,58 +308,69 @@ export default function NouvelleCommandePage() {
     [],
   );
 
-  const isQuickRowValid = useCallback(
-    (r: QuickRow) =>
-      Boolean(r.ref.trim()) &&
-      (r.pourQui === "GARAGE" || r.pourQui === "PRO"
-        ? Boolean(r.garageId)
-        : r.pourQui === "STOCK"
-          ? Boolean(r.fournisseur)
-          : Boolean(r.clientName.trim()) && Boolean(r.clientPhone.trim())),
-    [],
-  );
-
   // Rajout rapide creates ONE standalone order per row: each row carries its
-  // own client/garage, so it cannot share the single-client main form. Rows
-  // are inserted straight into the database.
+  // own client/garage, price and règlement, so it cannot share the single-client
+  // main form. Rows are inserted straight into the database.
   const handleQuickAdd = useCallback(async () => {
-    const valid = quickRows.filter(isQuickRowValid);
-    if (valid.length === 0) return;
+    const filled = quickRows.filter(isQuickRowFilled);
+    if (filled.length === 0) return;
+    // A half-filled row is never skipped silently: say what is missing.
+    const problems = quickRows
+      .map((r, i) => {
+        if (!isQuickRowFilled(r)) return null;
+        const missing = quickRowProblem(r);
+        return missing ? `Pièce ${i + 1} : indiquez ${missing}.` : null;
+      })
+      .filter(Boolean);
+    if (problems.length > 0) {
+      setQuickError(problems.join(" "));
+      return;
+    }
 
     const {
       data: { user: liveUser },
     } = await supabase.auth.getUser();
     const userId = liveUser?.id ?? user?.id;
     if (!userId) {
-      setError("Session expirée. Reconnectez-vous puis réessayez.");
+      setQuickError("Session expirée. Reconnectez-vous puis réessayez.");
       return;
     }
     if (!profile?.organization_id) {
-      setError("Aucun magasin associé à ce compte.");
+      setQuickError("Aucun magasin associé à ce compte.");
       return;
     }
     const orgId = profile.organization_id;
 
     setQuickSaving(true);
-    setError(null);
-    try {
-      const createdRefs: string[] = [];
-      for (const r of valid) {
+    setQuickError(null);
+    const results: QuickResult[] = [];
+    let failedAt = -1;
+    let failure = "";
+    // Particuliers are recognised by phone, as in the main form; a client created
+    // by an earlier row of this run is reused by the next ones.
+    const accountIds = new Set(garages.map((g) => g.id));
+    const particuliers: { id: string; phone: string | null }[] = clients.filter((c) => !accountIds.has(c.id));
+    for (let k = 0; k < filled.length; k++) {
+      const r = filled[k];
+      try {
         // Resolve the client for this quick order.
         let clientIdForOrder: string | undefined;
         let phoneForOrder = "-";
+        let who = "Réappro stock";
+        let termsDays = 30;
         const forStock = r.pourQui === "STOCK";
         if (forStock) {
           // Restock order: no client, the part goes on the shelf on reception.
         } else if (r.pourQui === "GARAGE" || r.pourQui === "PRO") {
+          const account = garages.find((g) => g.id === r.garageId);
           clientIdForOrder = r.garageId;
-          phoneForOrder = garages.find((g) => g.id === r.garageId)?.phone ?? "-";
+          phoneForOrder = account?.phone ?? "-";
+          who = account?.name ?? "Client";
+          termsDays = account?.paymentTermsDays ?? 30;
         } else {
           phoneForOrder = r.clientPhone.trim() || "-";
-          const existing = clients.find(
-            (c) =>
-              c.name.trim().toLowerCase() === r.clientName.trim().toLowerCase(),
-          );
+          who = r.clientName.trim();
+          const existing = matchClientByPhone(particuliers, r.clientPhone);
           if (existing) {
             clientIdForOrder = existing.id;
           } else {
@@ -288,8 +379,22 @@ export default function NouvelleCommandePage() {
               phone: r.clientPhone.trim(),
             });
             clientIdForOrder = created.id;
+            particuliers.push({ id: created.id, phone: r.clientPhone.trim() });
           }
         }
+
+        const qty = r.qty || 1;
+        const unit = forStock ? 0 : parseMoney(r.price);
+        const total = forStock ? 0 : quickRowTotal(r);
+        const reglement: Reglement | null = forStock
+          ? null
+          : r.pourQui === "GARAGE"
+            ? "EN_COMPTE"
+            : r.reglement || "NON_PAYEE";
+        const mode = reglement === "PAYEE" && r.mode ? r.mode : null;
+        const paid = reglement === "PAYEE" ? total : 0;
+        const statut = paid > 0 && paid >= total ? "PAYÉ" : "NON_PAYÉ";
+        const taken = !forStock && !r.fournisseur && r.clientAPris;
 
         const payload: CreateOrderPayload = {
           date_commande: todayISO(),
@@ -301,21 +406,22 @@ export default function NouvelleCommandePage() {
               nom_produit: r.ref.trim(),
               reference: r.ref.trim(),
               fournisseur_id: r.fournisseur || undefined,
-              quantity: r.qty || 1,
+              quantity: qty,
               a_commander_pour_livreur: Boolean(r.fournisseur),
               depuis_magasin: forStock || !r.fournisseur,
               retour_impossible: r.retoursImpossible,
               consigne: r.consigne,
               consigne_price: r.consigne ? r.consignePrice || 0 : undefined,
-              qte_remise:
-                !forStock && !r.fournisseur && r.clientAPris ? r.qty || 1 : 0,
+              qte_remise: taken ? qty : 0,
               prix_achat_unitaire: 0,
-              prix_vente_unitaire: 0,
+              prix_brut_unitaire: unit,
+              prix_vente_unitaire: unit,
             },
           ],
           devis: false,
-          statut_paiement: "NON_PAYÉ",
-          montant_paye: 0,
+          statut_paiement: statut,
+          mode_paiement: reglement === "EN_COMPTE" ? "EN_COMPTE" : (mode ?? undefined),
+          montant_paye: paid,
           avance_payee: 0,
           // Client / garage rows go straight to the delivery flow; a stock
           // replenishment has nothing to deliver.
@@ -326,33 +432,94 @@ export default function NouvelleCommandePage() {
           is_restock: forStock,
         };
         const order = await createOrderWithLines(supabase, userId, orgId, payload);
-        createdRefs.push(order.ref_demande);
         if (!forStock) void finalizeOrderSav(supabase, order.id).catch(() => {});
-      }
 
-      setQuickOpen(false);
-      setQuickRows([{ ...emptyQuickRow }]);
-      setPdfInfo(
-        `Rajout rapide — ${createdRefs.length} commande(s) créée(s) : ${createdRefs.join(", ")}.`,
-      );
-      void loadClients(supabase, orgId).then(setClients).catch(() => {});
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Erreur lors de la création des commandes rapides.",
-      );
-    } finally {
-      setQuickSaving(false);
+        results.push({
+          ref: order.ref_demande,
+          who,
+          total,
+          reglementLabel:
+            reglement === "PAYEE" && mode
+              ? `Payée · ${PAYMENT_MODE_LABEL[mode]}`
+              : reglement
+                ? REGLEMENT_LABEL[reglement]
+                : "",
+          ticket: forStock
+            ? null
+            : {
+                ref: order.ref_demande,
+                createdAt: new Date().toISOString(),
+                vendeur: profile.display_name || null,
+                tourName: order.tourName || null,
+                deliveryAt: order.deliveryAt,
+                clientName: who,
+                clientPhone: phoneForOrder !== "-" ? phoneForOrder : null,
+                plate: null,
+                vehicleModel: null,
+                kilometrage: null,
+                lines: [
+                  {
+                    reference: r.ref.trim(),
+                    designation: r.ref.trim(),
+                    quantity: qty,
+                    prixVente: unit,
+                    retourPossible: !r.retoursImpossible,
+                    taken,
+                  },
+                ],
+                total,
+                avoirApplique: 0,
+                paye: paid,
+                reste: Math.max(0, total - paid),
+                statutPaiement: statut,
+                modePaiement: reglement === "EN_COMPTE" ? "EN_COMPTE" : mode,
+                echeance:
+                  reglement === "EN_COMPTE"
+                    ? new Date(Date.now() + termsDays * 86_400_000).toISOString().slice(0, 10)
+                    : null,
+                promisedDate: null,
+                returnPolicy: savSettings?.returnPolicyText || RETURN_CONDITIONS_TEXT,
+                consigneDeadline:
+                  savSettings && r.consigne
+                    ? new Date(Date.now() + savSettings.consigneClientDays * 86_400_000).toISOString().slice(0, 10)
+                    : null,
+              },
+        });
+      } catch (err) {
+        failedAt = k;
+        failure = err instanceof Error ? err.message : "Erreur lors de la création de la commande.";
+        break;
+      }
     }
+
+    setQuickSaving(false);
+    void loadClients(supabase, orgId).then(setClients).catch(() => {});
+    if (failedAt >= 0) {
+      // Rows already created leave the modal: a retry never creates them twice.
+      setQuickRows(filled.slice(failedAt));
+      setQuickPending((prev) => [...prev, ...results]);
+      setQuickError(
+        results.length > 0
+          ? `${results.map((x) => x.ref).join(", ")} créée(s). La pièce suivante n'a pas pu être créée : ${failure}`
+          : failure,
+      );
+      return;
+    }
+    setQuickOpen(false);
+    setQuickRows([{ ...emptyQuickRow }]);
+    setQuickDone([...quickPending, ...results]);
+    setQuickPending([]);
+    setQuickTicketIdx(0);
   }, [
     quickRows,
-    isQuickRowValid,
+    quickPending,
     supabase,
     user?.id,
     profile?.organization_id,
+    profile?.display_name,
     garages,
     clients,
+    savSettings,
   ]);
 
   /* ---- Payment & delivery ---- */
@@ -960,17 +1127,28 @@ export default function NouvelleCommandePage() {
     }
   }
 
-  /** Print the ticket; the tab title becomes the suggested PDF name (REQ-….pdf). */
-  function printTicket() {
-    if (!ticket) return;
+  /** Print the ticket on screen; the tab title becomes the suggested PDF name (REQ-….pdf). */
+  function printTicketDoc(ref: string) {
     const previousTitle = document.title;
-    document.title = ticket.ref;
+    document.title = ref;
     const restore = () => {
       document.title = previousTitle;
       window.removeEventListener("afterprint", restore);
     };
     window.addEventListener("afterprint", restore);
     window.print();
+  }
+
+  function printTicket() {
+    if (ticket) printTicketDoc(ticket.ref);
+  }
+
+  /** Rajout rapide: show that order's ticket (only one is on screen), then print it. */
+  function printQuickTicket(idx: number) {
+    const t = quickDone?.[idx]?.ticket;
+    if (!t) return;
+    flushSync(() => setQuickTicketIdx(idx));
+    printTicketDoc(t.ref);
   }
 
   function resetForm() {
@@ -1055,6 +1233,81 @@ export default function NouvelleCommandePage() {
         {ticket && (
           <div className="tk-preview">
             <OrderTicket org={orgSettings} data={ticket} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (quickDone) {
+    const shown = quickDone[quickTicketIdx]?.ticket ?? null;
+    return (
+      <div className="od-page">
+        <div className="od-card nc-success">
+          <span className="nc-success-icon">
+            <Check className="h-8 w-8" />
+          </span>
+          <h2 className="nc-success-title">Rajout rapide enregistré</h2>
+          <p className="nc-success-sub">
+            {quickDone.length === 1 ? (
+              <>
+                La commande <strong>{quickDone[0].ref}</strong> a été créée.
+              </>
+            ) : (
+              `${quickDone.length} commandes créées.`
+            )}
+          </p>
+          <ul className="nc-quick-done">
+            {quickDone.map((q, i) => (
+              <li key={q.ref} className={q.ticket && i === quickTicketIdx ? "is-shown" : undefined}>
+                <button
+                  type="button"
+                  className="nc-quick-done-main"
+                  onClick={() => q.ticket && setQuickTicketIdx(i)}
+                  disabled={!q.ticket}
+                  title={q.ticket ? "Afficher le ticket" : undefined}
+                >
+                  <strong>{q.ref}</strong>
+                  <span>
+                    {q.who}
+                    {q.ticket ? ` · ${eur(q.total)} · ${q.reglementLabel}` : ""}
+                  </span>
+                </button>
+                {q.ticket ? (
+                  <button type="button" className="od-btn od-btn--primary" onClick={() => printQuickTicket(i)}>
+                    <Printer className="h-4 w-4" />
+                    Imprimer le ticket
+                  </button>
+                ) : (
+                  <span className="nc-quick-done-none">Pas de ticket</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="nc-success-actions">
+            <button
+              type="button"
+              className="od-btn od-btn--ghost"
+              onClick={() => {
+                setQuickDone(null);
+                openQuick();
+              }}
+            >
+              <Zap className="h-4 w-4" />
+              Nouveau rajout rapide
+            </button>
+            <button type="button" className="od-btn od-btn--ghost" onClick={() => setQuickDone(null)}>
+              <Plus className="h-4 w-4" />
+              Nouvelle commande
+            </button>
+            <Link href="/dashboard" className="od-btn od-btn--ghost">
+              Retour au tableau de bord
+            </Link>
+          </div>
+        </div>
+        {shown && (
+          <div className="tk-preview">
+            <OrderTicket org={orgSettings} data={shown} />
           </div>
         )}
       </div>
@@ -1728,7 +1981,7 @@ export default function NouvelleCommandePage() {
     {quickOpen && (
       <div
         className="ga-modal-overlay"
-        onClick={() => setQuickOpen(false)}
+        onClick={closeQuick}
       >
         <div
           className="ga-modal ga-modal--wide"
@@ -1744,7 +1997,7 @@ export default function NouvelleCommandePage() {
             <button
               type="button"
               className="ga-modal-close"
-              onClick={() => setQuickOpen(false)}
+              onClick={closeQuick}
               aria-label="Fermer"
             >
               <X className="h-4 w-4" />
@@ -1821,9 +2074,14 @@ export default function NouvelleCommandePage() {
                       <select
                         value={row.pourQui}
                         onChange={(e) => {
-                          setQuickRow(idx, "pourQui", e.target.value as QuickPourQui);
-                          // A garage picked before does not follow to another destination.
-                          setQuickRow(idx, "garageId", "");
+                          const pourQui = e.target.value as QuickPourQui;
+                          // The account and the règlement picked before do not follow to another destination.
+                          patchQuickRow(idx, {
+                            pourQui,
+                            garageId: "",
+                            reglement: pourQui === "GARAGE" ? "EN_COMPTE" : "",
+                            mode: "",
+                          });
                         }}
                       >
                         <option value="COMPTOIR">Client comptoir</option>
@@ -1898,6 +2156,70 @@ export default function NouvelleCommandePage() {
                   </div>
                 )}
 
+                {row.pourQui !== "STOCK" && (
+                  <>
+                    <div className="ga-modal-row">
+                      <div className="od-field">
+                        <span className="od-label">Prix de vente unitaire TTC <span className="od-req">*</span></span>
+                        <div className="nc-pay-input">
+                          <input
+                            className="od-input nc-pay-amount"
+                            inputMode="decimal"
+                            placeholder="0,00"
+                            value={row.price}
+                            aria-invalid={row.price.trim() !== "" && !(parseMoney(row.price) > 0)}
+                            onChange={(e) => setQuickRow(idx, "price", e.target.value)}
+                          />
+                          <span className="nc-pay-unit">€</span>
+                        </div>
+                        {parseMoney(row.price) > 0 && (
+                          <span className="st-cmd-hint">
+                            Total {eur(quickRowTotal(row))}
+                            {(row.qty || 1) > 1 ? ` (${row.qty} × ${eur(parseMoney(row.price))})` : ""}
+                            {row.consigne && row.consignePrice > 0 ? " consigne comprise" : ""}
+                          </span>
+                        )}
+                      </div>
+                      <div className="od-field">
+                        <span className="od-label">Règlement <span className="od-req">*</span></span>
+                        <div className="nc-pay-quick" role="radiogroup" aria-label={`Règlement de la pièce ${idx + 1}`}>
+                          {quickReglements(row.pourQui).map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              role="radio"
+                              aria-checked={row.reglement === r}
+                              className={`nc-chip${row.reglement === r ? " nc-chip--on" : ""}${r === "EN_COMPTE" ? " nc-chip--account" : ""}`}
+                              onClick={() => patchQuickRow(idx, { reglement: r, mode: r === "PAYEE" ? row.mode : "" })}
+                            >
+                              {REGLEMENT_LABEL[r]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {row.reglement === "PAYEE" && (
+                      <div className="od-field">
+                        <span className="od-label">Mode de paiement <span className="od-req">*</span></span>
+                        <div className="nc-pay-quick" role="radiogroup" aria-label={`Mode de paiement de la pièce ${idx + 1}`}>
+                          {PAYMENT_MODES.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              role="radio"
+                              aria-checked={row.mode === m}
+                              className={`nc-chip${row.mode === m ? " nc-chip--on" : ""}`}
+                              onClick={() => setQuickRow(idx, "mode", m)}
+                            >
+                              {PAYMENT_MODE_LABEL[m]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <div className="od-field">
                   <span className="od-label">Actions</span>
                   <label className="nc-check">
@@ -1954,11 +2276,13 @@ export default function NouvelleCommandePage() {
               Ajouter une pièce
             </button>
 
+            {quickError && <div className="nc-error">{quickError}</div>}
+
             <div className="ga-modal-actions">
               <button
                 type="button"
                 className="od-btn od-btn--ghost"
-                onClick={() => setQuickOpen(false)}
+                onClick={closeQuick}
                 disabled={quickSaving}
               >
                 Annuler
@@ -1967,7 +2291,7 @@ export default function NouvelleCommandePage() {
                 type="button"
                 className="od-btn od-btn--primary"
                 onClick={() => void handleQuickAdd()}
-                disabled={quickSaving || !quickRows.some(isQuickRowValid)}
+                disabled={quickSaving || !quickRows.some(isQuickRowFilled)}
               >
                 {quickSaving ? (
                   <Loader2 className="h-4 w-4 nc-spin" />
@@ -1977,7 +2301,7 @@ export default function NouvelleCommandePage() {
                 {quickSaving
                   ? "Création…"
                   : (() => {
-                      const n = quickRows.filter(isQuickRowValid).length;
+                      const n = quickRows.filter(isQuickRowFilled).length;
                       return `Créer ${n > 1 ? `${n} commandes` : "la commande"}`;
                     })()}
               </button>
