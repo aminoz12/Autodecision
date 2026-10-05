@@ -35,6 +35,14 @@ const LINE_STATUS: Record<string, string> = {
   BACKORDER: "Reliquat",
   NOT_RECEIVED: "Non reçue",
 };
+/** What became of the money once the magasin has the article back (migration 20261005010000). */
+function compensationLabel(r: GarageReturn): string | null {
+  if (r.status !== "ACCEPTE" && r.status !== "AVOIR") return null;
+  if (r.compensation === "DEDUCTION") return "déduit de votre compte";
+  if (r.compensation === "REMPLACEMENT") return "remplacé";
+  if (r.compensation === "AVOIR" || r.status === "AVOIR") return "avoir";
+  return null;
+}
 
 export default function GarageOrdersPage() {
   const { supabase, profile } = useAuth();
@@ -218,12 +226,14 @@ export default function GarageOrdersPage() {
                         (() => {
                           const rs = lineReturnState(returns, l.id);
                           const left = returnableQuantity(returns, l.id, l.quantity);
+                          const money = rs.state === "RETURNED" && rs.current ? compensationLabel(rs.current) : null;
                           return (
                             <span className="gp-ol-return">
                               {rs.state !== "NONE" && (
                                 <span className={`rt-badge rt-badge--${LINE_RETURN_LABEL[rs.state].cls}`}>
                                   {LINE_RETURN_LABEL[rs.state].label}
                                   {rs.current && rs.current.quantity > 1 ? ` ×${rs.current.quantity}` : ""}
+                                  {money ? ` · ${money}` : ""}
                                 </span>
                               )}
                               {!l.retourImpossible && left > 0 && (
@@ -339,7 +349,10 @@ export default function GarageOrdersPage() {
                 <span className="od-label">Commentaire (facultatif)</span>
                 <textarea className="gp-textarea" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pièce non montée, emballage d’origine…" />
               </label>
-              <p className="sav-hint">Le magasin valide la demande, puis le livreur passe récupérer la pièce. Chaque étape est visible dans « Retours ».</p>
+              <p className="sav-hint">
+                Le magasin valide la demande, puis le livreur passe récupérer la pièce. À sa réception, sa valeur est en général déduite de votre compte (sinon, avoir
+                ou remplacement). Chaque étape est visible dans « Retours ».
+              </p>
               <div className="ga-modal-actions">
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => setRequest(null)} disabled={saving}>Annuler</button>
                 <button type="submit" className="od-btn od-btn--primary" disabled={saving || !motif}>

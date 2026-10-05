@@ -13,9 +13,23 @@ function frDate(v: string | null) {
 }
 
 /**
+ * What became of the money once the magasin has the part back (migration
+ * 20261005010000). No amount: the counter may keep return fees. A refund
+ * already reads « Remboursée » in the status.
+ */
+function compensationLabel(r: GarageReturn): string | null {
+  if (r.status !== "ACCEPTE" && r.status !== "AVOIR") return null;
+  if (r.compensation === "DEDUCTION") return "Déduit de votre compte";
+  if (r.compensation === "REMPLACEMENT") return "Remplacée";
+  if (r.compensation === "AVOIR" || r.status === "AVOIR") return "Avoir";
+  return null;
+}
+
+/**
  * The garage follows its return requests here. A request is made from
  * « Mes commandes », article by article; the magasin validates, the livreur
- * collects, the magasin receives.
+ * collects, the magasin receives and deducts the value from the garage's
+ * account (or makes an avoir, or replaces the part).
  */
 export default function GarageReturnsPage() {
   const { supabase, profile } = useAuth();
@@ -54,6 +68,7 @@ export default function GarageReturnsPage() {
         <div>
           <strong>Pour demander un retour</strong>
           <span>Ouvrez la commande dans « Mes commandes » et cliquez « Demander un retour » sur l&apos;article : quantité, motif, commentaire.</span>
+          <span>À réception de la pièce, sa valeur est en général déduite de votre compte (moins d&apos;éventuels frais de retour) ; sinon le magasin fait un avoir ou remplace la pièce.</span>
         </div>
         <Link href="/garagiste/dashboard/commandes" className="od-btn od-btn--primary">
           Mes commandes <ArrowRight className="h-4 w-4" />
@@ -76,7 +91,9 @@ export default function GarageReturnsPage() {
             </thead>
             <tbody>
               {returns.map((r) => {
-                const st = RETURN_LABEL[r.status] ?? { label: r.status, cls: "amber" };
+                const money = compensationLabel(r);
+                // Settled by deduction, the row is also AVOIR in the database: « Avoir émis » would contradict the label.
+                const st = money ? RETURN_LABEL.ACCEPTE : RETURN_LABEL[r.status] ?? { label: r.status, cls: "amber" };
                 return (
                   <tr key={r.id}>
                     <td className="stk-ref">{r.ref}</td>
@@ -89,6 +106,12 @@ export default function GarageReturnsPage() {
                     <td className="rl-muted-strong">{frDate(r.createdAt)}</td>
                     <td>
                       <span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span>
+                      {money && (
+                        <>
+                          {" "}
+                          <span className="rt-badge rt-badge--violet">{money}</span>
+                        </>
+                      )}
                       {r.status === "A_RECUPERER" && r.legDone && <span className="rl-muted"> · récupérée par le livreur</span>}
                     </td>
                   </tr>

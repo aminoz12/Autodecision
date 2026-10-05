@@ -137,6 +137,12 @@ export default function NouvelleCommandePage() {
   const [clientCredits, setClientCredits] = useState<ClientCredit[]>([]);
   const [avoirId, setAvoirId] = useState<string>("");
   const [avoirAmount, setAvoirAmount] = useState(0);
+  /**
+   * A picked avoir covers as much of the order as it can, following the total as
+   * lines are added, until the cashier types an amount. (Picked before any priced
+   * line, it used to stay at 0 € and was silently not used.)
+   */
+  const [avoirAuto, setAvoirAuto] = useState(false);
 
   /* ---- Status ---- */
   const [saving, setSaving] = useState(false);
@@ -208,6 +214,7 @@ export default function NouvelleCommandePage() {
     setClientCredits([]);
     setAvoirId("");
     setAvoirAmount(0);
+    setAvoirAuto(false);
     if (!profile?.organization_id || clientId === NEW_CLIENT) return;
     let cancelled = false;
     loadClientCredits(supabase, profile.organization_id, clientId)
@@ -219,7 +226,7 @@ export default function NouvelleCommandePage() {
         const credit = wanted ? credits.find((c) => c.id === wanted) : null;
         if (credit) {
           setAvoirId(credit.id);
-          setAvoirAmount(credit.remaining);
+          setAvoirAuto(true);
         }
       })
       .catch(() => {});
@@ -429,8 +436,12 @@ export default function NouvelleCommandePage() {
    *   statut = Payé (rien à payer) / Acompte (une partie réglée) / Non payé
    * The avoir is applied first and the cash is capped to what is left, so
    * the amounts can never contradict each other. ---- */
+  /** Most the avoir can cover on this order. */
+  const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
   const avoirApplied = selectedCredit
-    ? Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, total)
+    ? avoirAuto
+      ? avoirCap
+      : Math.min(Math.max(0, avoirAmount), selectedCredit.remaining, total)
     : 0;
   const dueAfterAvoir = Math.max(0, total - avoirApplied);
   /* "En compte": nothing is cashed now, the garage settles within its terms. */
@@ -472,9 +483,6 @@ export default function NouvelleCommandePage() {
   /** Choices offered for the current destination. */
   const availableReglements: Reglement[] =
     destineA === "GARAGE" ? ["EN_COMPTE"] : destineA === "PRO" ? ["PAYEE", "NON_PAYEE", "EN_COMPTE"] : ["PAYEE", "NON_PAYEE"];
-  /** Most the avoir can cover on this order. */
-  const avoirCap = selectedCredit ? Math.min(selectedCredit.remaining, total) : 0;
-
   // Typing is clamped in the inputs, but caps can also shrink afterwards
   // (a line removed, a smaller avoir picked): keep the stored values legal.
   useEffect(() => {
@@ -487,11 +495,11 @@ export default function NouvelleCommandePage() {
   const pickAvoir = useCallback(
     (id: string) => {
       setAvoirId(id);
-      const credit = clientCredits.find((c) => c.id === id);
-      // Default: use as much of the avoir as the order allows.
-      setAvoirAmount(credit ? Math.min(credit.remaining, total) : 0);
+      // Default: use as much of the avoir as the order allows (it follows the total).
+      setAvoirAmount(0);
+      setAvoirAuto(clientCredits.some((c) => c.id === id));
     },
-    [clientCredits, total],
+    [clientCredits],
   );
 
   /* ---- PDF auto-fill: parse an uploaded bon de commande ---- */
@@ -754,6 +762,7 @@ export default function NouvelleCommandePage() {
     setAcompte(0);
     setAvoirId("");
     setAvoirAmount(0);
+    setAvoirAuto(false);
     setError(null);
     setCreatedRef(null);
     setCreatedTour(null);
@@ -1409,8 +1418,11 @@ export default function NouvelleCommandePage() {
                 min={0}
                 max={avoirCap}
                 step="0.01"
-                value={avoirAmount || ""}
-                onChange={(e) => setAvoirAmount(clampMoney(e.target.value, avoirCap))}
+                value={(avoirAuto ? avoirCap : avoirAmount) || ""}
+                onChange={(e) => {
+                  setAvoirAuto(false);
+                  setAvoirAmount(clampMoney(e.target.value, avoirCap));
+                }}
               />
               <span className="st-cmd-hint">
                 {eur(avoirApplied)} déduits · reste sur l&apos;avoir{" "}

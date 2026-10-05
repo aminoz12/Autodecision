@@ -941,7 +941,8 @@ export async function settleClientReturn(
   supabase: SupabaseClient,
   returnId: string,
   input: {
-    mode: "REMBOURSEMENT" | "AVOIR";
+    /** DEDUCTION = the credit note pays what the client owes right away (migration 20261005010000). */
+    mode: "REMBOURSEMENT" | "AVOIR" | "DEDUCTION";
     amount: number;
     reason?: string;
     /** How the client is refunded (cash journal). Default ESPECES. */
@@ -955,7 +956,9 @@ export async function settleClientReturn(
     p_reason: input.reason?.trim() || null,
     p_refund_mode: input.refundMode ?? "ESPECES",
   });
-  if (error) throw new Error(offeredPartMessage(error.message));
+  if (error) {
+    throw new Error(input.mode === "DEDUCTION" && /Invalid settlement mode/i.test(error.message) ? DEDUCTION_MIGRATION : offeredPartMessage(error.message));
+  }
   return typeof data === "string" ? data : null;
 }
 
@@ -988,13 +991,29 @@ export async function validateGarageReturn(
 }
 
 /** The part is back at the magasin: « retourné », put back in stock. */
-export async function receiveGarageReturn(supabase: SupabaseClient, returnId: string): Promise<void> {
-  const { error } = await supabase.rpc("receive_garage_return", { p_return_id: returnId });
+export async function receiveGarageReturn(
+  supabase: SupabaseClient,
+  returnId: string,
+  /**
+   * What happens to the money at reception (migration 20261005010000): DEDUCTION
+   * takes the value off what the garage owes, AVOIR keeps it as a credit note,
+   * REMPLACEMENT records an exchange. None = nothing, as before.
+   */
+  opts?: { compensation?: "DEDUCTION" | "AVOIR" | "REMPLACEMENT"; amount?: number | null },
+): Promise<void> {
+  const args: Record<string, unknown> = { p_return_id: returnId };
+  if (opts?.compensation) {
+    args.p_compensation = opts.compensation;
+    args.p_amount = opts.amount == null ? null : Math.round(Math.max(0, opts.amount) * 100) / 100;
+  }
+  const { error } = await supabase.rpc("receive_garage_return", args);
   if (error) {
     throw new Error(
-      /receive_garage_return/i.test(error.message)
-        ? "La réception des retours garage demande la migration 20260930030000 (npx supabase db push)."
-        : error.message,
+      opts?.compensation && /receive_garage_return|p_compensation/i.test(error.message)
+        ? "Déduire ou créer un avoir à la réception demande la migration 20261005010000 (npx supabase db push)."
+        : /receive_garage_return/i.test(error.message)
+          ? "La réception des retours garage demande la migration 20260930030000 (npx supabase db push)."
+          : offeredPartMessage(error.message),
     );
   }
 }
@@ -1121,12 +1140,13 @@ export async function createWalkInReturn(
     clientId: string | null;
     reason: string;
     lines: RefundableLine[];
-    compensation?: "REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT" | "FOURNISSEUR";
+    /** DEDUCTION = « Déduire de l'encours » : the credit note pays what the client owes (migration 20261005010000). */
+    compensation?: "REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT" | "FOURNISSEUR" | "DEDUCTION";
     supplierId?: string | null;
     /** Return fee per line id, in percent (conditions de retour). */
     feePcts?: Record<string, number>;
   },
-): Promise<{ avoirNum: string | null; feesApplied: boolean }> {
+): Promise<{ avoirNum: string | null; feesApplied: boolean; deduction: Deduction | null }> {
   const refundable = input.lines.filter(
     (line) => !line.retourImpossible && !line.alreadyReturned,
   );
@@ -1153,10 +1173,46 @@ export async function createWalkInReturn(
     throw new Error(
       input.compensation === "REMPLACEMENT" && /Invalid return compensation/i.test(error.message)
         ? "Le remplacement demande la migration 20261001020000 (npx supabase db push)."
-        : offeredPartMessage(error.message),
+        : input.compensation === "DEDUCTION" && /Invalid return compensation/i.test(error.message)
+          ? DEDUCTION_MIGRATION
+          : offeredPartMessage(error.message),
     );
   }
-  return { avoirNum: typeof data === "string" ? data : null, feesApplied };
+  const avoirNum = typeof data === "string" ? data : null;
+  return {
+    avoirNum,
+    feesApplied,
+    deduction: input.compensation === "DEDUCTION" ? await loadDeduction(supabase, avoirNum) : null,
+  };
+}
+
+const DEDUCTION_MIGRATION = "Déduire un retour de l’encours demande la migration 20261005010000 (npx supabase db push).";
+
+/** What a « Déduire de l'encours » credit note paid off, and what is left on it. */
+export type Deduction = { num: string; amount: number; imputed: number; remaining: number };
+
+export async function loadDeduction(supabase: SupabaseClient, num: string | null): Promise<Deduction | null> {
+  if (!num) return null;
+  const { data } = await supabase
+    .from("credit_notes")
+    .select("num,amount,used_amount")
+    .eq("num", num)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const row = data?.[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const amount = toNumber(row.amount);
+  const imputed = toNumber(row.used_amount);
+  return { num, amount, imputed, remaining: Math.max(0, Math.round((amount - imputed) * 100) / 100) };
+}
+
+/** « 80,00 € déduits de l'encours » / « … , 20,00 € restent en avoir AV-… » for the counter. */
+export function deductionMessage(d: Deduction | null): string {
+  if (!d) return "Retour déduit de l’encours.";
+  if (d.imputed <= 0) return `Le client ne devait plus rien : ${fmtMoney(d.amount)} restent en avoir ${d.num}.`;
+  return d.remaining > 0
+    ? `${fmtMoney(d.imputed)} déduits de l’encours ; ${fmtMoney(d.remaining)} restent en avoir ${d.num}.`
+    : `${fmtMoney(d.imputed)} déduits de l’encours (avoir ${d.num}).`;
 }
 
 /* ------------------------------------------------------------------ */

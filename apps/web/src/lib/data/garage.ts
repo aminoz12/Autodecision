@@ -355,6 +355,11 @@ export type GarageReturn = {
   /** The livreur collected it. */
   legDone: boolean;
   receivedAt: string | null;
+  orderId: string | null;
+  /** Value of the returned units (quantity × unit price), before any fee. */
+  amount: number;
+  /** DEDUCTION / AVOIR / REMPLACEMENT… once settled (null before). */
+  compensation: string | null;
 };
 
 export async function loadGarageReturns(
@@ -364,9 +369,10 @@ export async function loadGarageReturns(
 ): Promise<GarageReturn[]> {
   const query = (select: string) =>
     supabase.from("sales_returns").select(select).eq("organization_id", orgId).eq("client_id", clientId).order("created_at", { ascending: false }).limit(200);
-  const BASE = "id,ref,created_at,designation,reason,motif,statut_traitement,order_line_id,leg_status,orders(ref_demande)";
-  // Garage flow columns (migration 20260930030000).
-  let { data, error } = await query(BASE + ",quantity,received_at");
+  const BASE = "id,ref,created_at,designation,reason,motif,statut_traitement,order_id,montant,order_line_id,leg_status,orders(ref_demande)";
+  // Garage flow columns (migration 20260930030000), compensation (20261001020000).
+  let { data, error } = await query(BASE + ",quantity,received_at,compensation");
+  if (error && /compensation/i.test(error.message)) ({ data, error } = await query(BASE + ",quantity,received_at"));
   if (error && /quantity|received_at/i.test(error.message)) ({ data, error } = await query(BASE));
   if (error && /order_line_id|leg_status/i.test(error.message)) {
     ({ data, error } = await query("id,ref,created_at,designation,reason,motif,statut_traitement,orders(ref_demande)"));
@@ -388,6 +394,9 @@ export async function loadGarageReturns(
       quantity: Math.max(1, toNumber(row.quantity) || 1),
       legDone: row.leg_status === "FAIT",
       receivedAt: (row.received_at as string | null) ?? null,
+      orderId: (row.order_id as string | null) ?? null,
+      amount: toNumber(row.montant),
+      compensation: (row.compensation as string | null) ?? null,
     };
   });
 }

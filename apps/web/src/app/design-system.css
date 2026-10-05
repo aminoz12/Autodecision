@@ -1088,3 +1088,8 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .gp-terms--edit:focus-visible { outline: 2px solid var(--clr-violet-text); outline-offset: 2px; }
 .gp-terms--edit:disabled { cursor: default; opacity: 0.7; }
 .gp-terms--edit svg:last-child { opacity: 0.7; }
+
+/* Account file « Commandes à régler » (half width, + « Régler » column): order numbers and amounts stay on one line. */
+.gp-statement .stk-table .stk-ref, .gp-statement .stk-table .stk-td-center { white-space: nowrap; }
+/* Avoirs page: « Déduire de l'encours » joins the action buttons — let them wrap. */
+.av-actions { flex-wrap: wrap; }

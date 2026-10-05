@@ -25,6 +25,7 @@ import {
   markConsigneReturned,
   reopenConsigne,
 } from "@/lib/data/consignes";
+import { imputeCreditNote } from "@/lib/data/payments";
 import {
   fmtDate,
   fmtMoney,
@@ -89,6 +90,8 @@ export default function AvoirsPage() {
   const [kindFilter, setKindFilter] = useState("TOUS");
   const [statusFilter, setStatusFilter] = useState("TOUS");
   const [actingId, setActingId] = useState<string | null>(null);
+  /** Avoir being deducted from its client's encours (spinner on that button only). */
+  const [deductingId, setDeductingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dormantMonths, setDormantMonths] = useState(6);
   const [savAvailable, setSavAvailable] = useState(false);
@@ -142,6 +145,43 @@ export default function AvoirsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** « Déduire de l'encours » : what is left of the avoir pays the client's
+   *  unpaid orders (its own order first, then by due date). Nothing enters the till. */
+  const deductFromEncours = useCallback(
+    async (row: CreditConsignRow) => {
+      if (
+        !window.confirm(
+          `Déduire ${fmtMoney(row.remaining)} de l'avoir ${row.num} de l'encours de ${row.client} ?\n\n` +
+            "Le montant est imputé sur ses commandes à régler (celle de l'avoir d'abord, puis par échéance). " +
+            "Rien n'entre en caisse ; ce qui dépasse ce que le client doit reste sur l'avoir.",
+        )
+      ) {
+        return;
+      }
+      setActingId(row.id);
+      setDeductingId(row.id);
+      setError(null);
+      try {
+        const res = await imputeCreditNote(createClient(), row.id);
+        const refs = res.allocations.map((a) => a.ref).filter(Boolean);
+        setNotice(
+          `${fmtMoney(res.imputed)} de l'avoir ${res.num || row.num} déduits de l'encours de ${row.client}` +
+            (refs.length > 0 ? ` (${refs.join(", ")})` : "") +
+            (res.remaining > 0
+              ? ` ; ${fmtMoney(res.remaining)} restent sur l'avoir.`
+              : " ; l'avoir est entièrement utilisé."),
+        );
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setActingId(null);
+        setDeductingId(null);
+      }
+    },
+    [load],
+  );
 
   const setConsigneStatus = useCallback(
     async (row: CreditConsignRow, to: "ACTIF" | "RENDUE") => {
@@ -326,6 +366,7 @@ export default function AvoirsPage() {
               {visibleRows.map((row) => {
                 const tone = dueTone(row);
                 const busy = actingId === row.id;
+                const deducting = deductingId === row.id;
                 return (
                   <tr key={`${row.kind}-${row.id}`}>
                     <td className="rl-muted-strong">{fmtDate(row.createdAt)}</td>
@@ -368,6 +409,17 @@ export default function AvoirsPage() {
                           ) : (
                             <span className="rt-dash">—</span>
                           )}
+                          {row.remaining > 0 && (row.status === "EN_COURS" || row.status === "PARTIEL") && row.clientId && (
+                            <button
+                              type="button"
+                              className="rc-act rc-act--recu"
+                              disabled={actingId !== null}
+                              title="Imputer le reste de cet avoir sur les commandes que le client doit encore régler"
+                              onClick={() => void deductFromEncours(row)}
+                            >
+                              {deducting ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Wallet className="h-3.5 w-3.5" />} Déduire de l&apos;encours
+                            </button>
+                          )}
                           {savAvailable && row.remaining > 0 && row.status !== "EXPIRE" && row.clientId && (
                             <button
                               type="button"
@@ -376,7 +428,7 @@ export default function AvoirsPage() {
                               title="SMS : « vous avez X € d'avoir chez nous » — un rappel de visite gratuit"
                               onClick={() => void notifyBalance(row)}
                             >
-                              {busy ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <MessageSquareText className="h-3.5 w-3.5" />} Prévenir
+                              {busy && !deducting ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <MessageSquareText className="h-3.5 w-3.5" />} Prévenir
                             </button>
                           )}
                           {row.orderId && (

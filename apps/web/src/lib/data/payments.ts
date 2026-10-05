@@ -201,11 +201,62 @@ export async function settleClientAccount(
     p_note: input.note?.trim() || null,
     p_order_ids: input.orderIds && input.orderIds.length > 0 ? input.orderIds : null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(settlementMessage(error.message));
   const row = (data ?? {}) as Record<string, unknown>;
   return {
     paymentId: String(row.payment_id ?? ""),
     amount: toNumber(row.amount),
+    allocations: ((row.allocations as Record<string, unknown>[] | undefined) ?? []).map((a) => ({
+      orderId: String(a.order_id),
+      ref: String(a.ref ?? ""),
+      amount: toNumber(a.amount),
+    })),
+  };
+}
+
+/** The database speaks English; the counter reads French. */
+function settlementMessage(message: string): string {
+  if (/nothing left to pay/i.test(message)) return "Il n’y a plus rien à régler sur ce compte.";
+  const max = /exceeds the open balance \(max ([\d.,]+) EUR\)/i.exec(message);
+  if (max) return `Le montant dépasse ce qui reste dû (${Number(max[1].replace(",", ".")).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € au plus).`;
+  return message;
+}
+
+export type CreditImputation = {
+  num: string;
+  /** Taken off the client's open orders. */
+  imputed: number;
+  /** Still on the credit note afterwards. */
+  remaining: number;
+  allocations: { orderId: string; ref: string; amount: number }[];
+};
+
+/**
+ * « Déduire de l'encours » : what is left of a credit note pays the client's open
+ * orders (the given ones, else its own order first, then by due date). Nothing
+ * enters the till. Migration 20261005010000.
+ */
+export async function imputeCreditNote(
+  supabase: SupabaseClient,
+  creditId: string,
+  orderIds?: string[],
+): Promise<CreditImputation> {
+  const { data, error } = await supabase.rpc("impute_credit_note", {
+    p_credit_id: creditId,
+    p_order_ids: orderIds && orderIds.length > 0 ? orderIds : null,
+  });
+  if (error) {
+    throw new Error(
+      /impute_credit_note/i.test(error.message)
+        ? "Déduire un avoir de l’encours demande la migration 20261005010000 (npx supabase db push)."
+        : error.message,
+    );
+  }
+  const row = (data ?? {}) as Record<string, unknown>;
+  return {
+    num: String(row.num ?? ""),
+    imputed: toNumber(row.imputed),
+    remaining: toNumber(row.remaining),
     allocations: ((row.allocations as Record<string, unknown>[] | undefined) ?? []).map((a) => ({
       orderId: String(a.order_id),
       ref: String(a.ref ?? ""),

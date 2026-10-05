@@ -16,6 +16,7 @@ import {
   X,
   ShieldCheck,
 } from "lucide-react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -26,10 +27,11 @@ import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import {
   createWalkInReturn,
+  deductionMessage,
   fmtDate,
   fmtMoney,
+  loadDeduction,
   loadRefundableOrders,
-  receiveGarageReturn,
   validateGarageReturn,
   loadReturns,
   settleClientReturn,
@@ -40,6 +42,7 @@ import {
 } from "@/lib/data/saas";
 import { addDays, assignReturnLeg, daySlots, DEFAULT_TOUR_SCHEDULE, ensureSupplierTour, loadTourSchedule, nextDayWord, nextOpenDay, parisDate, type ReturnLeg, type TourSchedule, nextTourFromNow } from "@/lib/data/tournees";
 import { OpenCaseDialog, type OpenCasePreset } from "@/components/sav/OpenCaseDialog";
+import { ReceiveReturnDialog } from "@/components/returns/ReceiveReturnDialog";
 import { loadReturnQualifications, loadSavSettingsSafe, qualifyReturns } from "@/lib/data/sav";
 import { PART_CONDITIONS, RETURN_MOTIFS, RETURN_MOTIF_BY_CODE, daysBetween, motifLabel, parisToday, parseDay } from "@/lib/sav";
 import { RETURN_CONDITIONS_LINES, feeAmount, netRefund, returnConditions, type ReturnConditions } from "@/lib/return-conditions";
@@ -88,6 +91,8 @@ function isGarageFlow(row: ReturnRow): boolean {
 /** The label the counter reads: the garage flow words for garage returns, the pipeline words otherwise. */
 function treatmentLabelFor(row: ReturnRow): string {
   if (row.compensation === "REMPLACEMENT") return "Remplacé";
+  // An avoir that paid what the client owed right away (migration 20261005010000).
+  if (row.compensation === "DEDUCTION" && row.treatment === "AVOIR") return "Déduit de l'encours";
   if (isGarageFlow(row)) {
     if (row.treatment === "A_TRAITER") return "Retour demandé";
     if (row.treatment === "A_RECUPERER") return row.legDone ? "Récupéré — à réceptionner" : "À récupérer";
@@ -137,6 +142,40 @@ function canHandToLivreur(row: ReturnRow): boolean {
   return Boolean((row.isGarage && row.clientId) || row.hasSupplier);
 }
 
+/** What the counter gives back for a return: DEDUCTION takes it off what the client owes (migration 20261005010000). */
+type Compensation = "REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT" | "DEDUCTION";
+type SettleMode = "REMBOURSEMENT" | "AVOIR" | "DEDUCTION";
+
+const SETTLE_MODES: { id: SettleMode; label: string }[] = [
+  { id: "REMBOURSEMENT", label: "Rembourser" },
+  { id: "AVOIR", label: "Faire un avoir" },
+  { id: "DEDUCTION", label: "Déduire de l'encours" },
+];
+
+/** The magasin's clients PRO (clients.account_type): they buy on account like garages. None on a database without the column. */
+async function loadProClientIds(sb: SupabaseClient, orgId: string): Promise<Set<string>> {
+  try {
+    const { data, error } = await sb.from("clients").select("id").eq("organization_id", orgId).eq("account_type", "PRO");
+    if (error) return new Set();
+    return new Set(((data ?? []) as unknown as { id: string }[]).map((c) => String(c.id)));
+  } catch {
+    return new Set();
+  }
+}
+
+/** The picked order's client is a garage, and what is still to pay on the order: « Déduire de l'encours » is then the default. */
+async function loadOrderAccount(sb: SupabaseClient, orderId: string): Promise<{ garage: boolean; due: number } | null> {
+  try {
+    const { data, error } = await sb.from("orders").select("solde_restant,clients(is_garage)").eq("id", orderId).maybeSingle();
+    if (error || !data) return null;
+    const row = data as unknown as Record<string, unknown>;
+    const client = (Array.isArray(row.clients) ? row.clients[0] : row.clients) as { is_garage?: boolean } | null | undefined;
+    return { garage: client?.is_garage === true, due: Math.max(0, Number(row.solde_restant) || 0) };
+  } catch {
+    return null;
+  }
+}
+
 export default function RetoursPage() {
   const { profile } = useAuth();
   const [rows, setRows] = useState<ReturnRow[]>([]);
@@ -156,7 +195,11 @@ export default function RetoursPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState("");
-  const [compensation, setCompensation] = useState<"REMBOURSEMENT" | "AVOIR" | "REMPLACEMENT">("REMBOURSEMENT");
+  // null = not chosen yet: the default follows the picked order (see defaultCompensation).
+  const [compensationChoice, setCompensation] = useState<Compensation | null>(null);
+  /** Garage client and amount still to pay, per picked order. */
+  const [orderAccounts, setOrderAccounts] = useState<Map<string, { garage: boolean; due: number }>>(new Map());
+  const [proClientIds, setProClientIds] = useState<Set<string>>(new Set());
 
   // Après-vente : motif codé, état de la pièce, fenêtre fournisseur, bascule en dossier.
   const router = useRouter();
@@ -172,8 +215,8 @@ export default function RetoursPage() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  /* ---- Settle a client return: refund or avoir ---- */
-  const [settle, setSettle] = useState<{ row: ReturnRow; mode: "REMBOURSEMENT" | "AVOIR" } | null>(null);
+  /* ---- Settle a client return: refund, avoir, or deduction from what the client owes ---- */
+  const [settle, setSettle] = useState<{ row: ReturnRow; mode: SettleMode } | null>(null);
   const [settleAmount, setSettleAmount] = useState("");
   const [settleReason, setSettleReason] = useState("");
   const [settleRefundMode, setSettleRefundMode] = useState<PaymentMode>("ESPECES");
@@ -189,6 +232,7 @@ export default function RetoursPage() {
       const sb = createClient();
       setRows(await loadReturns(sb, profile.organization_id));
       void loadTourSchedule(sb).then(setSchedule).catch(() => {});
+      void loadProClientIds(sb, profile.organization_id).then(setProClientIds);
       void Promise.all([loadReturnQualifications(sb, profile.organization_id), loadSavSettingsSafe(sb)])
         .then(([q, s]) => {
           setQuals(q);
@@ -251,23 +295,9 @@ export default function RetoursPage() {
     },
     [load],
   );
-  const receiveRequest = useCallback(
-    async (row: ReturnRow) => {
-      if (!row.legDone && !window.confirm("Le livreur n\u2019a pas encore marqué cette pièce récupérée. Réceptionner quand même ?")) return;
-      setFlowBusy(row.id);
-      setError(null);
-      try {
-        await receiveGarageReturn(createClient(), row.id);
-        setNotice(`${row.ref} réceptionné : ${row.quantity} × ${row.reference} de retour en stock.`);
-        await load();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setFlowBusy(null);
-      }
-    },
-    [load],
-  );
+  // « Réceptionner » opens a dialog: the part goes back in stock and the counter says
+  // what happens to the money (déduire de l'encours, avoir, remplacement).
+  const [receiveRow, setReceiveRow] = useState<ReturnRow | null>(null);
 
   /* ---- Confier un retour au livreur : un trajet sur une tournée ---- */
   const [legModal, setLegModal] = useState<ReturnRow | null>(null);
@@ -329,7 +359,7 @@ export default function RetoursPage() {
     [quals],
   );
   const openSettle = useCallback(
-    (row: ReturnRow, mode: "REMBOURSEMENT" | "AVOIR") => {
+    (row: ReturnRow, mode: SettleMode) => {
       const cond = conditionsOf(row);
       // A counter return already carries its net amount; a garage request (montant = quantity × price) and a bare line value are gross.
       const gross = grossOf(row);
@@ -348,7 +378,7 @@ export default function RetoursPage() {
     if (!settle) return;
     const amount = Number(String(settleAmount).replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
-      setSettleError("Indiquez le montant remboursé au client.");
+      setSettleError(settle.mode === "DEDUCTION" ? "Indiquez le montant à déduire." : "Indiquez le montant remboursé au client.");
       return;
     }
     if (settleCond && !settleCond.allowed && !settleReason.trim()) {
@@ -366,9 +396,11 @@ export default function RetoursPage() {
         reason: settleReason,
       });
       setNotice(
-        settle.mode === "AVOIR"
-          ? `Avoir ${avoirNum ?? ""} de ${fmtMoney(amount)} émis pour ${settle.row.client} (valable 1 an).`
-          : `${fmtMoney(amount)} remboursés à ${settle.row.client}.`,
+        settle.mode === "DEDUCTION"
+          ? deductionMessage(await loadDeduction(sb, avoirNum))
+          : settle.mode === "AVOIR"
+            ? `Avoir ${avoirNum ?? ""} de ${fmtMoney(amount)} émis pour ${settle.row.client} (valable 1 an).`
+            : `${fmtMoney(amount)} remboursés à ${settle.row.client}.`,
       );
       setSettle(null);
       await load();
@@ -377,7 +409,7 @@ export default function RetoursPage() {
     } finally {
       setSettleBusy(false);
     }
-  }, [settle, settleAmount, settleReason, load, settleCond]);
+  }, [settle, settleAmount, settleReason, settleRefundMode, load, settleCond]);
 
   const visibleRows = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
@@ -406,7 +438,9 @@ export default function RetoursPage() {
     setSelectedOrderId(null);
     setSelectedLineIds(new Set());
     setReason("");
-    setCompensation("REMBOURSEMENT");
+    setCompensation(null);
+    // Balances change with every return: read them again for this form.
+    setOrderAccounts(new Map());
     setModalError(null);
     setNotice(null);
     if (!profile?.organization_id) return;
@@ -425,6 +459,15 @@ export default function RetoursPage() {
     () => refundOrders.find((o) => o.id === selectedOrderId) ?? null,
     [refundOrders, selectedOrderId],
   );
+  const selectedAccount = selectedOrder ? (orderAccounts.get(selectedOrder.id) ?? null) : null;
+
+  /** « Déduire de l'encours » by default for a garage / client PRO, or an order the client has not fully paid. */
+  const defaultCompensation = useMemo<Compensation>(() => {
+    if (!selectedOrder?.clientId) return "REMBOURSEMENT";
+    const onAccount = proClientIds.has(selectedOrder.clientId) || selectedAccount?.garage === true;
+    return onAccount || (selectedAccount?.due ?? 0) > 0.005 ? "DEDUCTION" : "REMBOURSEMENT";
+  }, [selectedOrder, selectedAccount, proClientIds]);
+  const compensation: Compensation = compensationChoice ?? defaultCompensation;
 
   const filteredOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -464,6 +507,13 @@ export default function RetoursPage() {
 
   const pickOrder = useCallback((order: RefundableOrder) => {
     setSelectedOrderId(order.id);
+    // A new order, a new default compensation (its client may not buy on account).
+    setCompensation(null);
+    if (order.clientId) {
+      void loadOrderAccount(createClient(), order.id).then((account) => {
+        if (account) setOrderAccounts((prev) => new Map(prev).set(order.id, account));
+      });
+    }
     // Pre-select every line the conditions allow today (the counter can still tick the others).
     setSelectedLineIds(
       new Set(
@@ -503,7 +553,7 @@ export default function RetoursPage() {
     setModalError(null);
     try {
       const sb = createClient();
-      const { avoirNum, feesApplied } = await createWalkInReturn(sb, profile.organization_id, {
+      const { avoirNum, feesApplied, deduction } = await createWalkInReturn(sb, profile.organization_id, {
         orderId: selectedOrder.id,
         clientId: selectedOrder.clientId,
         reason: [motifCode ? motifLabel(motifCode) : "", reason.trim()].filter(Boolean).join(" — "),
@@ -516,7 +566,11 @@ export default function RetoursPage() {
       }
       setNotice(
         [
-          avoirNum ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.` : null,
+          compensation === "DEDUCTION"
+            ? deductionMessage(deduction)
+            : avoirNum
+              ? `Avoir ${avoirNum} créé — valable 1 an, utilisable sur une prochaine commande.`
+              : null,
           compensation === "REMPLACEMENT" ? `Remplacement enregistré pour ${lines.length} pièce${lines.length > 1 ? "s" : ""}.` : null,
           compensation !== "REMPLACEMENT" && refundFees > 0 && !feesApplied ? `Frais de retour non retenus (${fmtMoney(refundFees)}) : la base attend la migration 20260930020000.` : null,
         ]
@@ -762,7 +816,7 @@ export default function RetoursPage() {
                                   type="button"
                                   className={`rc-act ${row.legDone ? "rc-act--recu" : "rc-act--quiet"}`}
                                   disabled={flowBusy === row.id}
-                                  onClick={() => void receiveRequest(row)}
+                                  onClick={() => setReceiveRow(row)}
                                   title={row.legDone ? "La pièce est revenue avec le livreur : la remettre en stock" : "Le livreur n\u2019a pas encore marqué la pièce récupérée"}
                                 >
                                   {flowBusy === row.id ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Réceptionner
@@ -770,9 +824,16 @@ export default function RetoursPage() {
                               )}
                               {money && (
                                 <>
-                                  <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
-                                    <Banknote className="h-3.5 w-3.5" /> Rembourser
-                                  </button>
+                                  {/* A garage / client PRO buys on account: the value comes off what it owes (Rembourser stays in the dialog). */}
+                                  {row.clientId && (row.isGarage || proClientIds.has(row.clientId)) ? (
+                                    <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "DEDUCTION")} title="Déduire de l'encours : le montant est retiré de ce que le client doit">
+                                      <Wallet className="h-3.5 w-3.5" /> Déduire
+                                    </button>
+                                  ) : (
+                                    <button type="button" className="rc-act rc-act--recu" onClick={() => openSettle(row, "REMBOURSEMENT")}>
+                                      <Banknote className="h-3.5 w-3.5" /> Rembourser
+                                    </button>
+                                  )}
                                   <button type="button" className="rc-act rc-act--retour" onClick={() => openSettle(row, "AVOIR")}>
                                     <FileText className="h-3.5 w-3.5" /> Avoir
                                   </button>
@@ -934,8 +995,8 @@ export default function RetoursPage() {
         <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
           <div className="ga-modal-head">
             <span className="ga-modal-title">
-              {settle.mode === "AVOIR" ? <FileText className="h-4 w-4" /> : <Banknote className="h-4 w-4" />}
-              {settle.mode === "AVOIR" ? "Émettre un avoir" : "Rembourser le client"}
+              {settle.mode === "AVOIR" ? <FileText className="h-4 w-4" /> : settle.mode === "DEDUCTION" ? <Wallet className="h-4 w-4" /> : <Banknote className="h-4 w-4" />}
+              {settle.mode === "AVOIR" ? "Émettre un avoir" : settle.mode === "DEDUCTION" ? "Déduire de l'encours" : "Rembourser le client"}
             </span>
             <button type="button" className="ga-modal-close" onClick={() => setSettle(null)} aria-label="Fermer" disabled={settleBusy}>
               <X className="h-4 w-4" />
@@ -965,9 +1026,27 @@ export default function RetoursPage() {
                 </span>
               </div>
             )}
+            <div className="od-field">
+              <span className="od-label">Compensation</span>
+              <div className="nc-pay-quick" role="radiogroup" aria-label="Compensation du retour">
+                {SETTLE_MODES.filter((m) => m.id !== "DEDUCTION" || settle.row.clientId).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={settle.mode === m.id}
+                    className={`nc-chip${settle.mode === m.id ? " nc-chip--on" : ""}${m.id === "DEDUCTION" ? " nc-chip--account" : ""}`}
+                    onClick={() => setSettle((s) => (s ? { ...s, mode: m.id } : s))}
+                    disabled={settleBusy}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="ga-modal-row">
               <div className="od-field">
-                <span className="od-label">{settle.mode === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"} <span className="od-req">*</span></span>
+                <span className="od-label">{settle.mode === "AVOIR" ? "Montant de l'avoir" : settle.mode === "DEDUCTION" ? "Montant déduit" : "Montant remboursé"} <span className="od-req">*</span></span>
                 <div className="nc-pay-input">
                   <input className="od-input nc-pay-amount" type="number" min={0} step="0.01" value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} autoFocus />
                   <span className="nc-pay-unit">€</span>
@@ -1005,14 +1084,16 @@ export default function RetoursPage() {
               <p>
                 {settle.mode === "AVOIR"
                   ? "Un avoir valable 1 an est créé pour ce client ; il pourra le déduire sur une prochaine commande."
-                  : "Le client est remboursé : le retour passe en « Remboursé » et la sortie d'argent est inscrite au journal de caisse."}
+                  : settle.mode === "DEDUCTION"
+                    ? "Le montant est retiré de ce que le client doit : cette commande d'abord, puis ses autres commandes à régler. S'il ne doit plus rien, le reste devient un avoir. Rien ne sort de la caisse."
+                    : "Le client est remboursé : le retour passe en « Remboursé » et la sortie d'argent est inscrite au journal de caisse."}
               </p>
             </div>
             <div className="ga-modal-actions">
               <button type="button" className="od-btn od-btn--ghost" onClick={() => setSettle(null)} disabled={settleBusy}>Annuler</button>
               <button type="button" className="od-btn od-btn--primary" onClick={() => void submitSettle()} disabled={settleBusy}>
                 {settleBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
-                {settle.mode === "AVOIR" ? "Émettre l'avoir" : "Valider le remboursement"}
+                {settle.mode === "AVOIR" ? "Émettre l'avoir" : settle.mode === "DEDUCTION" ? "Déduire de l'encours" : "Valider le remboursement"}
               </button>
             </div>
           </div>
@@ -1237,6 +1318,19 @@ export default function RetoursPage() {
                         <em>Bon d&apos;achat valable 1 an</em>
                       </span>
                     </button>
+                    {selectedOrder.clientId && (
+                      <button
+                        type="button"
+                        className={`od-toggle${compensation === "DEDUCTION" ? " od-toggle--on" : ""}`}
+                        onClick={() => setCompensation("DEDUCTION")}
+                      >
+                        <Wallet className="h-5 w-5" />
+                        <span>
+                          <strong>Déduire de l&apos;encours</strong>
+                          <em>Retiré de ce que le client doit</em>
+                        </span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={`od-toggle${compensation === "REMPLACEMENT" ? " od-toggle--on" : ""}`}
@@ -1249,6 +1343,12 @@ export default function RetoursPage() {
                       </span>
                     </button>
                   </div>
+                  {compensation === "DEDUCTION" && (
+                    <span className="st-cmd-hint">
+                      {selectedAccount && selectedAccount.due > 0 ? `Reste à régler sur cette commande : ${fmtMoney(selectedAccount.due)}. ` : ""}
+                      Le montant est retiré de ce que le client doit : cette commande d&apos;abord, puis ses autres commandes à régler. S&apos;il ne doit plus rien, le reste devient un avoir.
+                    </span>
+                  )}
                 </div>
 
                 {compensation === "REMPLACEMENT" ? (
@@ -1260,7 +1360,7 @@ export default function RetoursPage() {
                   </div>
                 ) : (
                   <div className="rt-refund-total">
-                    {compensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
+                    {compensation === "AVOIR" ? "Montant de l'avoir" : compensation === "DEDUCTION" ? "Montant déduit" : "Montant remboursé"}{" "}
                     <strong>{fmtMoney(refundTotal)}</strong>
                     {refundFees > 0 && <span className="rt-refund-fees">dont frais de retour retenus : {fmtMoney(refundFees)}</span>}
                   </div>
@@ -1290,6 +1390,8 @@ export default function RetoursPage() {
                     ? "Enregistrer le remplacement"
                     : compensation === "AVOIR"
                     ? "Émettre l'avoir"
+                    : compensation === "DEDUCTION"
+                    ? "Déduire de l'encours"
                     : "Valider le remboursement"}
               </button>
             </div>
@@ -1297,6 +1399,28 @@ export default function RetoursPage() {
         </div>
       </div>
     )}
+      {receiveRow && (
+        <ReceiveReturnDialog
+          ret={{
+            id: receiveRow.id,
+            ref: receiveRow.ref,
+            designation: receiveRow.reference,
+            quantity: receiveRow.quantity,
+            // montant = returned units × unit price (set by the garage request); lineValue covers the whole order line.
+            amount: receiveRow.amount > 0 ? receiveRow.amount : receiveRow.lineValue,
+            orderId: receiveRow.orderId,
+            orderRef: null,
+            legDone: receiveRow.legDone,
+          }}
+          supabase={createClient()}
+          onClose={() => setReceiveRow(null)}
+          onDone={(message) => {
+            setReceiveRow(null);
+            setNotice(message);
+            void load();
+          }}
+        />
+      )}
       {qualifyRow && (
         <div className="ga-modal-overlay" onClick={() => !qualifyBusy && setQualifyRow(null)}>
           <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

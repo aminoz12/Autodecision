@@ -26,10 +26,11 @@ import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ReceiveReturnDialog } from "@/components/returns/ReceiveReturnDialog";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
 import { PAYMENT_TERMS, PAYMENT_TERMS_LABEL, paymentTermsLabel, type PaymentTermsDays } from "@/lib/constants/enums";
-import { fmtMoney, receiveGarageReturn, validateGarageReturn } from "@/lib/data/saas";
+import { fmtMoney, validateGarageReturn } from "@/lib/data/saas";
 import { ensureSupplierTour, nextTourFromServer } from "@/lib/data/tournees";
 import { LINE_RETURN_LABEL, REGLEMENT_LABEL, lineReglement, lineReturnState, type LineReglement } from "@/lib/garage-line-state";
 import {
@@ -49,6 +50,7 @@ import {
   type GarageOrder,
 } from "@/lib/data/garage";
 import {
+  imputeCreditNote,
   loadClientPayments,
   PAYMENT_KIND_LABEL,
   PAYMENT_MODE_LABEL,
@@ -155,6 +157,8 @@ export default function GarageDetailPage() {
 
   /* ---- Règlement ---- */
   const [settleOpen, setSettleOpen] = useState(false);
+  /** « Régler » on one order of « Commandes à régler »: the money goes to that order only. */
+  const [settleOrderId, setSettleOrderId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("VIREMENT");
   const [reference, setReference] = useState("");
@@ -162,8 +166,15 @@ export default function GarageDetailPage() {
   const [busy, setBusy] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
 
+  /** The order the règlement is restricted to (a line's « Payé », or « Régler »), else the whole account. */
+  const scopeId = payLine?.orderId ?? settleOrderId;
+  const scopeOrders = useMemo(() => (scopeId ? openOrders.filter((o) => o.id === scopeId) : openOrders), [openOrders, scopeId]);
+  const scopeOwed = scopeOrders.reduce((s, o) => s + o.balance, 0);
+  const scopeRef = scopeId ? orders.find((o) => o.id === scopeId)?.ref ?? null : null;
+
   const openSettle = () => {
     setPayLine(null);
+    setSettleOrderId(null);
     setAmount(owed > 0 ? String(owed.toFixed(2)) : "");
     setMode("VIREMENT");
     setReference("");
@@ -172,18 +183,30 @@ export default function GarageDetailPage() {
     setSettleOpen(true);
   };
 
+  /** The garage pays one given order: the whole of what is left on it, by default. */
+  const openSettleOrder = (o: GarageOrder) => {
+    setPayLine(null);
+    setSettleOrderId(o.id);
+    setAmount(o.balance.toFixed(2));
+    setMode("VIREMENT");
+    setReference("");
+    setNote(`Règlement ${o.ref}`);
+    setSettleError(null);
+    setSettleOpen(true);
+  };
+
   /** Preview of the FIFO allocation the server will apply (by échéance, then date). */
   const preview = useMemo(() => {
     let remaining = money(amount);
     const rows: { order: GarageOrder; amount: number }[] = [];
-    for (const o of openOrders) {
+    for (const o of scopeOrders) {
       if (remaining <= 0) break;
       const a = Math.min(remaining, o.balance);
       rows.push({ order: o, amount: a });
       remaining = Math.round((remaining - a) * 100) / 100;
     }
     return rows;
-  }, [amount, openOrders]);
+  }, [amount, scopeOrders]);
 
   const submitSettle = async () => {
     const a = money(amount);
@@ -191,8 +214,10 @@ export default function GarageDetailPage() {
       setSettleError("Indiquez le montant reçu.");
       return;
     }
-    if (a > owed + 0.005) {
-      setSettleError(`Le montant dépasse le solde dû (${fmtMoney(owed)}).`);
+    if (a > scopeOwed + 0.005) {
+      setSettleError(
+        scopeRef ? `Le montant dépasse ce qui reste dû sur ${scopeRef} (${fmtMoney(scopeOwed)}).` : `Le montant dépasse le solde dû (${fmtMoney(scopeOwed)}).`,
+      );
       return;
     }
     setBusy(true);
@@ -204,12 +229,13 @@ export default function GarageDetailPage() {
         mode,
         reference,
         note,
-        orderIds: payLine ? [payLine.orderId] : undefined,
+        orderIds: scopeId ? [scopeId] : undefined,
       });
       if (payLine) {
         await setLineReglement(supabase, payLine.lineId, "PAYE").catch(() => {});
         setPayLine(null);
       }
+      setSettleOrderId(null);
       setSettleOpen(false);
       setNotice(
         `${fmtMoney(res.amount)} reçus (${PAYMENT_MODE_LABEL[mode].toLowerCase()}) — ${res.allocations.length} commande(s) réglée(s) : ${res.allocations
@@ -223,6 +249,31 @@ export default function GarageDetailPage() {
       setBusy(false);
     }
   };
+
+  /* ---- Avoirs : déduire de l'encours ---- */
+  const [creditBusy, setCreditBusy] = useState<string | null>(null);
+  async function deductCredit(credit: GarageCredit) {
+    const who = isPro ? "le client" : "le garage";
+    if (!window.confirm(`Déduire l'avoir ${credit.num} (${fmtMoney(credit.remaining)}) de ce que ${who} doit ? Les commandes les plus anciennes sont réglées d'abord.`)) return;
+    setCreditBusy(credit.id);
+    setError(null);
+    try {
+      const r = await imputeCreditNote(supabase, credit.id);
+      const refs = r.allocations.map((a) => `${a.ref} ${fmtMoney(a.amount)}`).join(", ");
+      setNotice(
+        `${fmtMoney(r.imputed)} de l'avoir ${r.num} déduits de l'encours (${refs})` +
+          (r.remaining > 0 ? ` ; ${fmtMoney(r.remaining)} restent sur l'avoir.` : " ; l'avoir est entièrement utilisé."),
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreditBusy(null);
+    }
+  }
+
+  /* ---- Réception d'un retour demandé par le garage ---- */
+  const [receiving, setReceiving] = useState<GarageReturn | null>(null);
 
   /* ---- Délai de paiement ---- */
   const [termsOpen, setTermsOpen] = useState(false);
@@ -290,6 +341,7 @@ export default function GarageDetailPage() {
         const due = order.balance + gifted;
         if (due > 0.005) {
           // Money first: the standard règlement, restricted to this order, prefilled with the line.
+          setSettleOrderId(null);
           setPayLine({ orderId: order.id, lineId: line.id });
           setAmount(Math.min(due, line.lineTotal).toFixed(2));
           setMode("VIREMENT");
@@ -332,19 +384,10 @@ export default function GarageDetailPage() {
       setLineBusy(null);
     }
   }
-  async function receiveRequest(ret: GarageReturn) {
-    if (!ret.legDone && !window.confirm("Le livreur n\u2019a pas encore marqué cette pièce récupérée. Réceptionner quand même ?")) return;
-    setLineBusy(ret.lineId ?? ret.id);
+  /** « Réceptionner » opens the dialog: the part comes back, and the counter says what happens to the money. */
+  function receiveRequest(ret: GarageReturn) {
     setError(null);
-    try {
-      await receiveGarageReturn(supabase, ret.id);
-      setNotice(`${ret.ref} réceptionné : ${ret.quantity} × ${ret.designation} de retour en stock.`);
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLineBusy(null);
-    }
+    setReceiving(ret);
   }
 
   if (!loading && !garage) {
@@ -429,6 +472,27 @@ export default function GarageDetailPage() {
           ) : (
             <p className="gp-ledger-hint">{owed > 0 ? "Les règlements sont affectés aux commandes les plus anciennes d'abord (par échéance)." : "Compte à jour."}</p>
           )}
+          {credits.length > 0 && (
+            <div className="cx-alloc">
+              {credits.map((c) => (
+                <div key={c.id} className="cx-alloc-row">
+                  <span>
+                    Avoir {c.num} · reste {fmtMoney(c.remaining)}
+                    {c.dueAt ? ` · valable jusqu'au ${frDate(c.dueAt)}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="rc-act rc-act--recu"
+                    disabled={owed <= 0 || creditBusy !== null}
+                    onClick={() => void deductCredit(c)}
+                    title={owed > 0 ? "Payer les commandes à régler avec cet avoir" : "Rien à régler sur ce compte"}
+                  >
+                    {creditBusy === c.id ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />} Déduire de l&apos;encours
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="od-card">
@@ -436,7 +500,7 @@ export default function GarageDetailPage() {
           <div className="rl-table-wrap">
             <table className="stk-table">
               <thead>
-                <tr><th>Commande</th><th>Date</th><th>Échéance</th><th className="stk-th-center">Total</th><th className="stk-th-center">Reste</th></tr>
+                <tr><th>Commande</th><th>Date</th><th>Échéance</th><th className="stk-th-center">Total</th><th className="stk-th-center">Reste</th><th /></tr>
               </thead>
               <tbody>
                 {openOrders.map((o) => {
@@ -448,11 +512,16 @@ export default function GarageDetailPage() {
                       <td className={late ? "gp-overdue" : "rl-muted-strong"}>{frDate(o.echeance)}{late ? " · échue" : ""}</td>
                       <td className="stk-td-center">{fmtMoney(o.total)}</td>
                       <td className="stk-td-center" style={{ color: "#DC2626", fontWeight: 700 }}>{fmtMoney(o.balance)}</td>
+                      <td className="stk-td-center">
+                        <button type="button" className="rc-act rc-act--recu" onClick={() => openSettleOrder(o)} title={`Enregistrer le règlement de ${o.ref}`}>
+                          <HandCoins className="h-3.5 w-3.5" /> Régler
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {!loading && openOrders.length === 0 && (
-                  <tr><td colSpan={5} className="stk-empty">Aucune commande en attente de règlement.</td></tr>
+                  <tr><td colSpan={6} className="stk-empty">Aucune commande en attente de règlement.</td></tr>
                 )}
               </tbody>
             </table>
@@ -648,11 +717,33 @@ export default function GarageDetailPage() {
         </div>
       )}
 
+      {receiving && (
+        <ReceiveReturnDialog
+          ret={{
+            id: receiving.id,
+            ref: receiving.ref,
+            designation: receiving.designation,
+            quantity: receiving.quantity,
+            amount: receiving.amount,
+            orderId: receiving.orderId,
+            orderRef: receiving.orderRef,
+            legDone: receiving.legDone,
+          }}
+          supabase={supabase}
+          onClose={() => setReceiving(null)}
+          onDone={(message) => {
+            setReceiving(null);
+            setNotice(message);
+            void load();
+          }}
+        />
+      )}
+
       {settleOpen && (
         <div className="ga-modal-overlay" onClick={() => !busy && setSettleOpen(false)}>
           <div className="ga-modal ga-modal--wide" role="dialog" aria-modal="true" aria-labelledby="settle-title" onClick={(e) => e.stopPropagation()}>
             <div className="ga-modal-head">
-              <span className="ga-modal-title" id="settle-title"><HandCoins className="h-4 w-4" /> Règlement de {garage?.name}</span>
+              <span className="ga-modal-title" id="settle-title"><HandCoins className="h-4 w-4" /> Règlement {scopeRef ? `de ${scopeRef} · ` : "de "}{garage?.name}</span>
               <button type="button" className="ga-modal-close" onClick={() => setSettleOpen(false)} aria-label="Fermer" disabled={busy}><X className="h-4 w-4" /></button>
             </div>
             <div className="ga-modal-form">
@@ -664,7 +755,7 @@ export default function GarageDetailPage() {
                     <input className="od-input nc-pay-amount" type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
                     <span className="nc-pay-unit">€</span>
                   </div>
-                  <span className="st-cmd-hint">Solde dû : {fmtMoney(owed)}.</span>
+                  <span className="st-cmd-hint">{scopeRef ? `Reste dû sur ${scopeRef} : ${fmtMoney(scopeOwed)}.` : `Solde dû : ${fmtMoney(owed)}.`}</span>
                 </div>
                 <div className="od-field">
                   <span className="od-label">Référence (n° chèque, virement…)</span>

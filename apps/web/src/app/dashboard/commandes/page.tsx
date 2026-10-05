@@ -21,6 +21,7 @@ import {
   Send,
   Truck,
   User,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -34,7 +35,7 @@ import { ShelfCell, type Shelf } from "@/components/sav/ShelfCell";
 import { flushClientMessages, loadOrderShelves } from "@/lib/data/sav";
 import { parisDate } from "@/lib/data/tournees";
 import { createClient } from "@/lib/supabase/client";
-import { createWalkInReturn, loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
+import { createWalkInReturn, deductionMessage, loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
 import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
 import { updateClientAddress } from "@/lib/data/delivery";
 import {
@@ -75,6 +76,9 @@ function lineKind(l: BoardLine): LineKind {
   if (l.fromStock) return "STOCK";
   return l.isGarage ? "GARAGE" : "CLIENT";
 }
+
+/** What the client gets for a returned part (DEDUCTION = « Déduire de l'encours », migration 20261005010000). */
+type ReturnCompensation = "REMBOURSEMENT" | "AVOIR" | "DEDUCTION";
 
 const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
   { id: "CLIENT", label: "Client", icon: User },
@@ -237,9 +241,10 @@ export default function ReceptionCommandesPage() {
 
   const [returnLine, setReturnLine] = useState<BoardLine | null>(null);
   const [returnReason, setReturnReason] = useState("");
-  const [returnCompensation, setReturnCompensation] = useState<"REMBOURSEMENT" | "AVOIR">(
-    "REMBOURSEMENT",
-  );
+  /** The compensation the cashier clicked; null = not touched yet, the default below applies. */
+  const [returnChoice, setReturnChoice] = useState<ReturnCompensation | null>(null);
+  /** What is still due on the order of the returned line (null until loaded). */
+  const [returnOrderDue, setReturnOrderDue] = useState<number | null>(null);
   const [returnSubmitting, setReturnSubmitting] = useState(false);
   const [returnError, setReturnError] = useState<string | null>(null);
   const [returnNotice, setReturnNotice] = useState<string | null>(null);
@@ -251,20 +256,52 @@ export default function ReceptionCommandesPage() {
    */
   const supplierReturn = !!returnLine?.fromStock && !!returnLine?.supplierId;
 
+  /**
+   * A garage, or a client whose order is not fully paid, gets the return taken off
+   * what he owes: refunding cash would hand back money that never came in. The
+   * order balance arrives after the modal opens and only moves the default — a
+   * choice the cashier already made is kept.
+   */
+  const returnCompensation: ReturnCompensation =
+    returnChoice ??
+    (returnLine?.clientId && (returnLine.isGarage || (returnOrderDue ?? 0) > 0)
+      ? "DEDUCTION"
+      : "REMBOURSEMENT");
+
   const openReturn = useCallback((line: BoardLine) => {
     setReturnLine(line);
     setReturnReason("");
-    setReturnCompensation("REMBOURSEMENT");
+    setReturnChoice(null);
+    setReturnOrderDue(null);
     setReturnError(null);
     setReturnNotice(null);
   }, []);
+
+  // Balance of the order being returned (errors ignored: the hints just stay hidden).
+  const returnOrderId = returnLine?.orderId ?? null;
+  useEffect(() => {
+    if (!returnOrderId) return;
+    let alive = true;
+    void supabase
+      .from("orders")
+      .select("solde_restant")
+      .eq("id", returnOrderId)
+      .maybeSingle()
+      .then(({ data }) => {
+        const row = data as { solde_restant?: number | string | null } | null;
+        if (alive && row) setReturnOrderDue(Math.max(0, Number(row.solde_restant) || 0));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [supabase, returnOrderId]);
 
   const submitReturn = useCallback(async () => {
     if (!orgId || !returnLine) return;
     setReturnSubmitting(true);
     setReturnError(null);
     try {
-      const { avoirNum } = await createWalkInReturn(supabase, orgId, {
+      const { avoirNum, deduction } = await createWalkInReturn(supabase, orgId, {
         orderId: returnLine.orderId,
         clientId: returnLine.clientId,
         reason: returnReason,
@@ -289,9 +326,13 @@ export default function ReceptionCommandesPage() {
       setReturnNotice(
         supplierReturn
           ? `Retour fournisseur enregistré — ${returnLine.reference} à traiter dans Retours.`
-          : avoirNum
-            ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
-            : `Retour enregistré — ${returnLine.reference} remboursé.`,
+          : returnCompensation === "DEDUCTION"
+            ? deduction
+              ? `Retour enregistré — ${deductionMessage(deduction)}`
+              : `Retour enregistré — ${returnLine.reference} déduit de l'encours.`
+            : avoirNum
+              ? `Retour enregistré — avoir ${avoirNum} créé (valable 1 an).`
+              : `Retour enregistré — ${returnLine.reference} remboursé.`,
       );
       setReturnLine(null);
       await load();
@@ -1698,7 +1739,7 @@ export default function ReceptionCommandesPage() {
                   <button
                     type="button"
                     className={`od-toggle${returnCompensation === "REMBOURSEMENT" ? " od-toggle--on" : ""}`}
-                    onClick={() => setReturnCompensation("REMBOURSEMENT")}
+                    onClick={() => setReturnChoice("REMBOURSEMENT")}
                   >
                     <Banknote className="h-5 w-5" />
                     <span>
@@ -1709,7 +1750,7 @@ export default function ReceptionCommandesPage() {
                   <button
                     type="button"
                     className={`od-toggle${returnCompensation === "AVOIR" ? " od-toggle--on" : ""}`}
-                    onClick={() => setReturnCompensation("AVOIR")}
+                    onClick={() => setReturnChoice("AVOIR")}
                   >
                     <FileText className="h-5 w-5" />
                     <span>
@@ -1717,14 +1758,51 @@ export default function ReceptionCommandesPage() {
                       <em>Bon d&apos;achat valable 1 an</em>
                     </span>
                   </button>
+                  {returnLine.clientId && (
+                    <button
+                      type="button"
+                      className={`od-toggle${returnCompensation === "DEDUCTION" ? " od-toggle--on" : ""}`}
+                      onClick={() => setReturnChoice("DEDUCTION")}
+                    >
+                      <Wallet className="h-5 w-5" />
+                      <span>
+                        <strong>Déduire de l&apos;encours</strong>
+                        <em>Retiré de ce que le client doit</em>
+                      </span>
+                    </button>
+                  )}
                 </div>
+                {returnCompensation === "DEDUCTION" && (
+                  <span className="st-cmd-hint">
+                    Le montant est retiré de ce que le client doit : cette commande d&apos;abord, puis ses
+                    autres commandes à régler. Ce qui dépasse devient un avoir.
+                    {returnOrderDue != null &&
+                      (returnOrderDue > 0
+                        ? ` ${fmtMoney(returnOrderDue)} restent dus sur cette commande.`
+                        : " Cette commande est déjà réglée.")}
+                  </span>
+                )}
+                {returnCompensation === "REMBOURSEMENT" && returnOrderDue != null && returnOrderDue > 0 && (
+                  <p className="nc-hint" style={{ marginTop: 4 }}>
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    <span>
+                      {fmtMoney(returnOrderDue)} restent dus sur cette commande : rembourser rendrait de
+                      l&apos;argent qui n&apos;a pas été payé.
+                      {returnLine.clientId ? " Préférez « Déduire de l'encours »." : ""}
+                    </span>
+                  </p>
+                )}
               </div>
 
               )}
 
               {!supplierReturn && (
                 <div className="rt-refund-total">
-                  {returnCompensation === "AVOIR" ? "Montant de l'avoir" : "Montant remboursé"}{" "}
+                  {returnCompensation === "AVOIR"
+                    ? "Montant de l'avoir"
+                    : returnCompensation === "DEDUCTION"
+                      ? "Montant déduit"
+                      : "Montant remboursé"}{" "}
                   <strong>{fmtMoney(returnLine.quantity * returnLine.unitPrice)}</strong>
                 </div>
               )}
@@ -1753,7 +1831,9 @@ export default function ReceptionCommandesPage() {
                     ? "Enregistrement…"
                     : !supplierReturn && returnCompensation === "AVOIR"
                       ? "Émettre l'avoir"
-                      : "Valider le retour"}
+                      : !supplierReturn && returnCompensation === "DEDUCTION"
+                        ? "Déduire de l'encours"
+                        : "Valider le retour"}
                 </button>
               </div>
             </div>
