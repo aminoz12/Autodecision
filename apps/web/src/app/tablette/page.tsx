@@ -2,7 +2,10 @@
 
 import {
   AlertTriangle,
+  Box,
+  Building2,
   Check,
+  ChevronLeft,
   Clock,
   Delete,
   Hourglass,
@@ -14,8 +17,10 @@ import {
   Search,
   Send,
   Truck,
+  User,
   UserRound,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -29,6 +34,7 @@ import {
   prepareOrdersOf,
   toursOf,
   type DeliveryOrder,
+  type LineKind,
   type PrepareOrder,
 } from "@/lib/commandes-board";
 import {
@@ -69,6 +75,19 @@ const STATUS: Record<ReceptionStatus, { label: string; cls: string }> = {
   RECEIVED: { label: "Reçu", cls: "ok" },
 };
 const KIND_LABEL = { CLIENT: "Client", GARAGE: "Garage", STOCK: "Stock" } as const;
+/** The counter's filters (Suivi des commandes → Pièces à recevoir), same order and words. */
+const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
+  { id: "CLIENT", label: "Client", icon: User },
+  { id: "GARAGE", label: "Garages", icon: Building2 },
+  { id: "STOCK", label: "Retour en stock", icon: Box },
+];
+const TOUR_COLORS = ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#7C3AED"];
+
+/** « Bob Caisse » → BC, « Alice » → AL. */
+function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase();
+}
 
 function hhmm(iso: string | null): string {
   if (!iso) return "";
@@ -205,6 +224,8 @@ export default function TablettePage() {
   const [tab, setTab] = useState<Tab>("recevoir");
   const [search, setSearch] = useState("");
   const [tourFilter, setTourFilter] = useState<string | null>(null);
+  /** Client / Garages / Retour en stock, under the tournées (like the counter). */
+  const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
   const pending = useMemo(() => pendingLines(board), [board]);
   const backorders = useMemo(() => backorderLines(board), [board]);
   const prepare = useMemo(() => prepareOrdersOf(board, sms), [board, sms]);
@@ -216,12 +237,18 @@ export default function TablettePage() {
     return m;
   }, [board]);
 
+  const tourRows = useMemo(
+    () => (tourFilter === null ? pending : pending.filter((l) => (l.tourName ?? "Hors tournée") === tourFilter)),
+    [pending, tourFilter],
+  );
+  const kindCounts = useMemo(() => {
+    const c: Record<LineKind, number> = { CLIENT: 0, GARAGE: 0, STOCK: 0 };
+    for (const l of tourRows) c[lineKind(l)] += 1;
+    return c;
+  }, [tourRows]);
   const recevoirRows = useMemo(
-    () =>
-      pending.filter(
-        (l) => (tourFilter === null || (l.tourName ?? "Hors tournée") === tourFilter) && lineMatches(l, search),
-      ),
-    [pending, tourFilter, search],
+    () => tourRows.filter((l) => (kindFilter === null || lineKind(l) === kindFilter) && lineMatches(l, search)),
+    [tourRows, kindFilter, search],
   );
   const reliquatRows = useMemo(() => backorders.filter((l) => lineMatches(l, search)), [backorders, search]);
   const prepareRows = useMemo(() => prepare.filter((o) => orderMatches(o, search)), [prepare, search]);
@@ -538,17 +565,59 @@ export default function TablettePage() {
       <main className="tb-list">
         {tab === "recevoir" && (
           <>
-            {tours.length > 1 && (
-              <div className="tb-chips">
-                <button type="button" className={`tb-chip${tourFilter === null ? " tb-chip--on" : ""}`} onClick={() => setTourFilter(null)}>
-                  Toutes ({pending.length})
-                </button>
-                {tours.map((t) => (
-                  <button key={t.name} type="button" className={`tb-chip${tourFilter === t.name ? " tb-chip--on" : ""}`} onClick={() => setTourFilter(t.name)}>
-                    {t.name} ({t.count})
-                  </button>
-                ))}
+            {tours.length > 0 && (
+              <div className="tb-tours">
+                {tours.map((t, i) => {
+                  const color = TOUR_COLORS[i % TOUR_COLORS.length];
+                  const on = tourFilter === t.name;
+                  return (
+                    <button
+                      key={t.name}
+                      type="button"
+                      className={`tb-tour${on ? " tb-tour--on" : ""}`}
+                      onClick={() => setTourFilter(on ? null : t.name)}
+                      aria-pressed={on}
+                    >
+                      <span className="tb-tour-icon" style={{ background: `${color}1A`, color }}>
+                        <Truck className="h-6 w-6" />
+                      </span>
+                      <span className="tb-tour-name">{t.name}</span>
+                      <span className="tb-tour-count">{t.count}</span>
+                    </button>
+                  );
+                })}
               </div>
+            )}
+            <div className="tb-kinds">
+              {KINDS.map((k) => {
+                const Icon = k.icon;
+                const on = kindFilter === k.id;
+                return (
+                  <button
+                    key={k.id}
+                    type="button"
+                    className={`tb-kindchip tb-kindchip--${k.id.toLowerCase()}${on ? " tb-kindchip--on" : ""}`}
+                    onClick={() => setKindFilter(on ? null : k.id)}
+                    aria-pressed={on}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span>{k.label}</span>
+                    <strong>{kindCounts[k.id]}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            {(tourFilter || kindFilter) && (
+              <button
+                type="button"
+                className="tb-clear-filters"
+                onClick={() => {
+                  setTourFilter(null);
+                  setKindFilter(null);
+                }}
+              >
+                <X className="h-4 w-4" /> Tout afficher ({pending.length})
+              </button>
             )}
             {recevoirRows.length === 0 ? empty(search ? "Aucune pièce pour cette recherche." : "Toutes les pièces sont pointées.") : recevoirRows.map(lineCard)}
           </>
@@ -763,6 +832,8 @@ function LockScreen({
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  /** Wrong codes so far: a new key replays the shake of the dots. */
+  const [errors, setErrors] = useState(0);
   /** Logout sits behind a long press: nobody leaves the tablet by accident. */
   const pressTimer = useRef<number | null>(null);
 
@@ -777,6 +848,7 @@ function LockScreen({
       setChecking(false);
       if (err) {
         setError(err);
+        setErrors((n) => n + 1);
         setPin("");
       }
     }
@@ -784,69 +856,83 @@ function LockScreen({
 
   return (
     <div className="tb-lock">
-      <div className="tb-lock-head">
-        <p className="tb-shop">{magasin || "Magasin"}</p>
-        <h1>{person ? person.name : "Qui pointe ?"}</h1>
-        <p className="tb-lock-sub">{person ? "Tapez votre code à 4 chiffres" : "Touchez votre nom"}</p>
-      </div>
+      <p className="tb-shop tb-lock-shop">{magasin || "Magasin"}</p>
 
-      {!person ? (
-        loading ? (
-          <div className="tb-center">
-            <Loader2 className="h-8 w-8 nc-spin" />
-          </div>
-        ) : people.length === 0 ? (
-          <div className="tb-empty">
-            <Clock className="h-10 w-10" />
-            <p>Aucun code tablette. Un administrateur les définit dans Admin → Équipe → « Code tablette ».</p>
-          </div>
+      <main className="tb-lock-body">
+        {!person ? (
+          <section className="tb-lock-panel">
+            <h1 className="tb-lock-title">Qui pointe ?</h1>
+            <p className="tb-lock-sub">Touchez votre nom</p>
+            {loading ? (
+              <div className="tb-lock-wait">
+                <Loader2 className="h-8 w-8 nc-spin" />
+              </div>
+            ) : people.length === 0 ? (
+              <div className="tb-empty">
+                <Clock className="h-10 w-10" />
+                <p>Aucun code tablette. Un administrateur les définit dans Admin → Équipe → « Code tablette ».</p>
+              </div>
+            ) : (
+              <div className="tb-people">
+                {people.map((p) => (
+                  <button
+                    key={p.userId}
+                    type="button"
+                    className="tb-person"
+                    onClick={() => {
+                      setPerson(p);
+                      setPin("");
+                      setError(null);
+                    }}
+                  >
+                    <span className="tb-person-avatar">{initials(p.name)}</span>
+                    <span className="tb-person-name">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         ) : (
-          <div className="tb-people">
-            {people.map((p) => (
+          <section className="tb-pin-card" aria-label={`Code de ${person.name}`}>
+            <button type="button" className="tb-pin-back" onClick={() => setPerson(null)} disabled={checking}>
+              <ChevronLeft className="h-5 w-5" /> Changer de nom
+            </button>
+            <span className="tb-pin-avatar">{initials(person.name)}</span>
+            <p className="tb-pin-name">{person.name}</p>
+            <p className="tb-lock-sub">Tapez votre code à 4 chiffres</p>
+            <div key={errors} className={`tb-dots${error ? " tb-dots--error" : ""}`} aria-label={`${pin.length} chiffre(s) saisi(s)`}>
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className={i < pin.length ? "on" : ""} />
+              ))}
+            </div>
+            <p className="tb-pin-error" role="alert">
+              {checking ? "Vérification…" : error ?? "\u00a0"}
+            </p>
+            <div className="tb-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                <button key={d} type="button" className="tb-key" onClick={() => void press(d)} disabled={checking}>
+                  {d}
+                </button>
+              ))}
+              <button type="button" className="tb-key tb-key--soft" onClick={() => setPin("")} disabled={checking || pin.length === 0}>
+                C
+              </button>
+              <button type="button" className="tb-key" onClick={() => void press("0")} disabled={checking}>
+                0
+              </button>
               <button
-                key={p.userId}
                 type="button"
-                className="tb-person"
-                onClick={() => {
-                  setPerson(p);
-                  setPin("");
-                  setError(null);
-                }}
+                className="tb-key tb-key--soft"
+                onClick={() => setPin((p) => p.slice(0, -1))}
+                disabled={checking || pin.length === 0}
+                aria-label="Effacer le dernier chiffre"
               >
-                <span className="tb-person-avatar">{p.name.slice(0, 2).toUpperCase()}</span>
-                <span>{p.name}</span>
+                <Delete className="h-8 w-8" />
               </button>
-            ))}
-          </div>
-        )
-      ) : (
-        <div className="tb-pin">
-          <div className={`tb-dots${error ? " tb-dots--error" : ""}`} aria-label={`${pin.length} chiffre(s) saisi(s)`}>
-            {[0, 1, 2, 3].map((i) => (
-              <span key={i} className={i < pin.length ? "on" : ""} />
-            ))}
-          </div>
-          <p className="tb-pin-error" role="alert">
-            {checking ? "Vérification…" : error ?? " "}
-          </p>
-          <div className="tb-keys">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-              <button key={d} type="button" className="tb-key" onClick={() => void press(d)} disabled={checking}>
-                {d}
-              </button>
-            ))}
-            <button type="button" className="tb-key tb-key--text" onClick={() => setPerson(null)} disabled={checking}>
-              Retour
-            </button>
-            <button type="button" className="tb-key" onClick={() => void press("0")} disabled={checking}>
-              0
-            </button>
-            <button type="button" className="tb-key tb-key--text" onClick={() => setPin((p) => p.slice(0, -1))} disabled={checking} aria-label="Effacer">
-              <Delete className="h-7 w-7" />
-            </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </section>
+        )}
+      </main>
 
       <button
         type="button"
