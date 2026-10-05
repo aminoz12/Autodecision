@@ -14,6 +14,7 @@ import {
   Loader2,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   RefreshCw,
   RotateCcw,
@@ -27,7 +28,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
-import { paymentTermsLabel } from "@/lib/constants/enums";
+import { PAYMENT_TERMS, PAYMENT_TERMS_LABEL, paymentTermsLabel, type PaymentTermsDays } from "@/lib/constants/enums";
 import { fmtMoney, receiveGarageReturn, validateGarageReturn } from "@/lib/data/saas";
 import { ensureSupplierTour, nextTourFromServer } from "@/lib/data/tournees";
 import { LINE_RETURN_LABEL, REGLEMENT_LABEL, lineReglement, lineReturnState, type LineReglement } from "@/lib/garage-line-state";
@@ -41,6 +42,7 @@ import {
   loadGarageOrdersForStaff,
   loadGarageReturns,
   setLineReglement,
+  updatePaymentTerms,
   type GarageCredit,
   type GarageReturn,
   type GarageInfo,
@@ -222,6 +224,39 @@ export default function GarageDetailPage() {
     }
   };
 
+  /* ---- Délai de paiement ---- */
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [terms, setTerms] = useState<PaymentTermsDays>(30);
+  const [termsBusy, setTermsBusy] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
+  /** Unpaid on-account orders: their due date stays as it is. */
+  const datedOrders = openOrders.filter((o) => o.echeance).length;
+
+  const openTerms = () => {
+    const current = garage?.paymentTermsDays ?? 30;
+    setTerms((PAYMENT_TERMS as readonly number[]).includes(current) ? (current as PaymentTermsDays) : 30);
+    setTermsError(null);
+    setTermsOpen(true);
+  };
+
+  const submitTerms = async () => {
+    setTermsBusy(true);
+    setTermsError(null);
+    try {
+      await updatePaymentTerms(supabase, garageId, terms);
+      setGarage((g) => (g ? { ...g, paymentTermsDays: terms } : g));
+      setTermsOpen(false);
+      setNotice(
+        `Délai de paiement : ${paymentTermsLabel(terms).toLowerCase()}. Il s'applique aux prochaines commandes en compte` +
+          (datedOrders > 0 ? ` ; les ${datedOrders > 1 ? `${datedOrders} commandes` : "commande"} à régler gardent leur échéance.` : "."),
+      );
+    } catch (e) {
+      setTermsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTermsBusy(false);
+    }
+  };
+
   /* ---- Lignes : règlement + retours ---- */
   function toggleOrder(id: string) {
     setExpanded((prev) => {
@@ -345,10 +380,11 @@ export default function GarageDetailPage() {
           </p>
         </div>
         <div className="cx-actions">
-          <span className="gp-terms">
+          <button type="button" className="gp-terms gp-terms--edit" onClick={openTerms} disabled={!garage} title="Changer le délai de paiement">
             <CalendarClock className="h-3.5 w-3.5" />
             En compte · {paymentTermsLabel(garage?.paymentTermsDays ?? 30).toLowerCase()}
-          </span>
+            <Pencil className="h-3 w-3" />
+          </button>
           <button type="button" className="od-btn od-btn--ghost" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 nc-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualiser
@@ -570,6 +606,47 @@ export default function GarageDetailPage() {
           </table>
         </div>
       </section>
+
+      {termsOpen && (
+        <div className="ga-modal-overlay" onClick={() => !termsBusy && setTermsOpen(false)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title" id="terms-title"><CalendarClock className="h-4 w-4" /> Délai de paiement de {garage?.name}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setTermsOpen(false)} aria-label="Fermer" disabled={termsBusy}><X className="h-4 w-4" /></button>
+            </div>
+            <div className="ga-modal-form">
+              {termsError && <div className="nc-error">{termsError}</div>}
+              <div className="od-field">
+                <span className="od-label">Délai de paiement (en compte)</span>
+                <div className="nc-pay-quick" role="radiogroup" aria-label="Délai de paiement">
+                  {PAYMENT_TERMS.map((d) => (
+                    <button key={d} type="button" role="radio" aria-checked={terms === d} className={`nc-chip${terms === d ? " nc-chip--on" : ""}`} onClick={() => setTerms(d)}>
+                      {PAYMENT_TERMS_LABEL[d]}
+                    </button>
+                  ))}
+                </div>
+                <span className="st-cmd-hint">
+                  Les prochaines commandes en compte seront à régler sous {terms} jours.
+                  {datedOrders > 0 &&
+                    ` ${datedOrders > 1 ? `Les ${datedOrders} commandes encore à régler gardent` : "La commande encore à régler garde"} l'échéance déjà fixée.`}
+                </span>
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setTermsOpen(false)} disabled={termsBusy}>Annuler</button>
+                <button
+                  type="button"
+                  className="od-btn od-btn--primary"
+                  onClick={() => void submitTerms()}
+                  disabled={termsBusy || terms === (garage?.paymentTermsDays ?? 30)}
+                >
+                  {termsBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
+                  Enregistrer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {settleOpen && (
         <div className="ga-modal-overlay" onClick={() => !busy && setSettleOpen(false)}>

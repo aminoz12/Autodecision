@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PaymentTermsDays } from "@/lib/constants/enums";
 import { toNumber } from "@/lib/data/saas";
 import { createOrderWithLines } from "@/lib/data/orders";
 import type { CreateOrderPayload } from "@/lib/types/api";
@@ -51,6 +52,26 @@ export async function loadGarageInfo(
     paymentTermsDays:
       row.payment_terms_days == null ? 30 : toNumber(row.payment_terms_days),
   };
+}
+
+/**
+ * New payment terms for a garage or a client PRO. Only orders put on the account
+ * from now on follow them: a due date already set (orders.echeance) never moves.
+ */
+export async function updatePaymentTerms(
+  supabase: SupabaseClient,
+  clientId: string,
+  days: PaymentTermsDays,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("clients")
+    .update({ payment_terms_days: days })
+    .eq("id", clientId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  // RLS filters the row out instead of raising: nothing updated means not allowed.
+  if (!data) throw new Error("Modification refusée : votre accès ne permet pas de changer ce compte.");
 }
 
 /* ------------------------------------------------------------------ */
