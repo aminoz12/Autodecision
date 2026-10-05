@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGarageStatement, type GarageCredit, type GarageOrder } from "./garage";
+import { buildGarageStatement, matchesGarageOrderSearch, type GarageCredit, type GarageOrder } from "./garage";
 
 function order(p: Partial<GarageOrder> & { id: string }): GarageOrder {
   return {
@@ -15,6 +15,8 @@ function order(p: Partial<GarageOrder> & { id: string }): GarageOrder {
     offert: 0,
     modePaiement: "EN_COMPTE",
     echeance: null,
+    plate: null,
+    vehicle: null,
     lines: [],
     ...p,
   };
@@ -65,5 +67,30 @@ describe("buildGarageStatement", () => {
     expect(s.balance).toBe(0);
     expect(s.overdue).toBe(0);
     expect(s.orderCount).toBe(0);
+  });
+});
+
+describe("matchesGarageOrderSearch", () => {
+  const o = order({
+    id: "REQ-2026-00412",
+    plate: "AB-123-CD",
+    lines: [
+      { id: "l1", reference: "GDB 1322", designation: "Plaquettes", quantity: 1, status: "PENDING", disponible: null, retourImpossible: false, unitPrice: 0, lineTotal: 0, reglement: null, offertAmount: null },
+    ],
+  });
+
+  it("finds a plate typed with or without dashes, spaces or capitals", () => {
+    for (const q of ["AB-123-CD", "ab123cd", "ab 123", "123-cd"]) expect(matchesGarageOrderSearch(o, q)).toBe(true);
+    expect(matchesGarageOrderSearch(o, "AB-124")).toBe(false);
+  });
+
+  it("also finds the order number and a part reference", () => {
+    expect(matchesGarageOrderSearch(o, "00412")).toBe(true);
+    expect(matchesGarageOrderSearch(o, "gdb1322")).toBe(true);
+  });
+
+  it("keeps every order for an empty search, and none without a plate for a plate search", () => {
+    expect(matchesGarageOrderSearch(o, "  ")).toBe(true);
+    expect(matchesGarageOrderSearch(order({ id: "X" }), "AB123CD")).toBe(false);
   });
 });

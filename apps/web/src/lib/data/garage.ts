@@ -92,8 +92,30 @@ export type GarageOrder = {
   modePaiement: string | null;
   /** Due date of an on-account order (yyyy-mm-dd). */
   echeance: string | null;
+  /** Vehicle the parts are for, as typed on the order (both optional). */
+  plate: string | null;
+  vehicle: string | null;
   lines: GarageOrderLine[];
 };
+
+/** A plate typed any way (« aa 123 bb », « AA-123-BB ») compares as « AA123BB ». */
+export function normPlate(v: string | null | undefined): string {
+  return (v ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+}
+
+/**
+ * Search box of « Mes commandes »: the plate first, also the order number and
+ * the part references. Spaces, dashes and case never matter.
+ */
+export function matchesGarageOrderSearch(order: GarageOrder, query: string): boolean {
+  const q = normPlate(query);
+  if (!q) return true;
+  return (
+    normPlate(order.plate).includes(q) ||
+    normPlate(order.ref).includes(q) ||
+    order.lines.some((l) => normPlate(l.reference).includes(q))
+  );
+}
 
 export async function loadGarageOrders(
   supabase: SupabaseClient,
@@ -103,7 +125,7 @@ export async function loadGarageOrders(
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance",
+      "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model",
     )
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
@@ -170,6 +192,8 @@ export async function loadGarageOrders(
       offert: 0,
       modePaiement: (row.mode_paiement as string | null) ?? null,
       echeance: (row.echeance as string | null) ?? null,
+      plate: (row.immatriculation as string | null) || null,
+      vehicle: (row.vehicle_model as string | null) || null,
       lines,
     };
   });
@@ -184,18 +208,21 @@ export async function createGarageOrder(
   clientId: string,
   input: {
     phone: string | null;
-    immatriculation?: string;
+    /** Mandatory: it is how the garage finds the order again (search by plate). */
+    immatriculation: string;
     vehicle?: string;
     note?: string;
     lines: NewOrderLine[];
   },
 ) {
+  const plate = input.immatriculation.trim().toUpperCase();
+  if (!plate) throw new Error("Indiquez l'immatriculation du véhicule.");
   const payload: CreateOrderPayload = {
     date_commande: localToday(),
     canal_vente: "B2B",
     client_id: clientId,
     client_phone: input.phone?.trim() || "-",
-    immatriculation: input.immatriculation?.trim() || undefined,
+    immatriculation: plate,
     vehicle_model: input.vehicle?.trim() || undefined,
     consigne: input.note?.trim() || undefined,
     // The garagiste requests parts; the magasin sets prices and sourcing.
@@ -680,7 +707,7 @@ export async function loadGarageOrdersForStaff(
 ): Promise<GarageOrder[]> {
   /** 2 = règlement + montant offert, 1 = règlement only, 0 = neither (older databases). */
   const select = (level: 0 | 1 | 2) =>
-    "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance," +
+    "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model," +
     `order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire${level >= 1 ? ",reglement" : ""}${level === 2 ? ",offert_montant" : ""})`;
   const query = (sel: string) =>
     supabase.from("orders").select(sel).eq("organization_id", orgId).eq("client_id", clientId).eq("is_restock", false).order("createdAt", { ascending: false }).limit(500);
@@ -731,6 +758,8 @@ export async function loadGarageOrdersForStaff(
       offert: Math.round(lines.reduce((s, l) => s + (l.offertAmount ?? 0), 0) * 100) / 100,
       modePaiement: (row.mode_paiement as string | null) ?? null,
       echeance: (row.echeance as string | null) ?? null,
+      plate: (row.immatriculation as string | null) || null,
+      vehicle: (row.vehicle_model as string | null) || null,
       lines,
     };
   });

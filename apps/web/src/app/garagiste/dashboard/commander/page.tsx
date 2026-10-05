@@ -16,6 +16,8 @@ export default function CommanderPage() {
   const [lines, setLines] = useState<NewOrderLine[]>([{ ...emptyLine }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The plate is mandatory: the garage searches its orders by plate. */
+  const [plateMissing, setPlateMissing] = useState(false);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
 
   function setLine(i: number, field: keyof NewOrderLine, value: string | number) {
@@ -27,6 +29,11 @@ export default function CommanderPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!profile?.client_id || !profile.organization_id || !profile.user_id) return;
+    if (!immatriculation.trim()) {
+      setPlateMissing(true);
+      setError("Indiquez l'immatriculation du véhicule : elle permet de retrouver la commande dans « Mes commandes ».");
+      return;
+    }
     const valid = lines.filter((l) => l.nom_produit.trim() && l.reference.trim());
     if (valid.length === 0) {
       setError("Ajoutez au moins une pièce (désignation + référence).");
@@ -52,6 +59,7 @@ export default function CommanderPage() {
 
   function reset() {
     setImmatriculation("");
+    setPlateMissing(false);
     setVehicle("");
     setNote("");
     setLines([{ ...emptyLine }]);
@@ -95,14 +103,23 @@ export default function CommanderPage() {
 
       <form onSubmit={submit} className="gp-form">
         <section className="gp-card">
-          <div className="gp-card-title">Véhicule (optionnel)</div>
+          <div className="gp-card-title">Véhicule</div>
           <div className="gp-grid-2">
             <div className="od-field">
-              <span className="od-label">Immatriculation</span>
-              <input className="od-input" placeholder="AA-123-BB" value={immatriculation} onChange={(e) => setImmatriculation(e.target.value)} />
+              <span className="od-label">Immatriculation <span className="od-req">*</span></span>
+              <input
+                className="od-input"
+                placeholder="AA-123-BB"
+                value={immatriculation}
+                aria-invalid={plateMissing && !immatriculation.trim()}
+                onChange={(e) => {
+                  setImmatriculation(e.target.value);
+                  setPlateMissing(false);
+                }}
+              />
             </div>
             <div className="od-field">
-              <span className="od-label">Véhicule</span>
+              <span className="od-label">Modèle (facultatif)</span>
               <input className="od-input" placeholder="Renault Clio IV" value={vehicle} onChange={(e) => setVehicle(e.target.value)} />
             </div>
           </div>

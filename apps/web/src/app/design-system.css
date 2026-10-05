@@ -1073,3 +1073,11 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .nc-quick-done-main span { font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .nc-quick-done-none { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 @media (max-width: 560px) { .nc-quick-done li { flex-wrap: wrap; } }
+
+/* Garage portal « Mes commandes »: the vehicle of each order, and the search by plate. */
+.gp-order-vehicle { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--text-secondary); }
+.gp-order-vehicle svg { width: 15px; height: 15px; color: var(--text-muted); flex-shrink: 0; }
+.gp-order-vehicle--none { color: var(--text-muted); font-style: italic; }
+.gp-plate { display: inline-block; padding: 1px 7px; border: 1.5px solid var(--text-primary); border-radius: 4px; background: #fff; color: var(--text-primary); font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.gp-order-search { margin-bottom: 10px; }
+.gp-order-search-count { margin: 0 0 12px; font-size: 13px; color: var(--text-muted); }

@@ -322,7 +322,12 @@ export default function GarageAccountPage() {
                 const late = o.balance > 0 && !!o.echeance && o.echeance < today;
                 return (
                   <tr key={o.id}>
-                    <td className="stk-ref">{o.ref}</td>
+                    <td>
+                      <span className="stk-ref">{o.ref}</span>
+                      {(o.plate || o.vehicle) && (
+                        <p className="rl-muted">{[o.plate, o.vehicle].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </td>
                     <td className="rl-muted-strong">{frDate(o.date)}</td>
                     <td><span className={`rt-badge rt-badge--${st.cls}`}>{st.label}</span></td>
                     <td>

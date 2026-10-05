@@ -1,8 +1,8 @@
 "use client";
 
-import { Check, ChevronDown, Loader2, Package, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Car, Check, ChevronDown, Loader2, Package, RefreshCw, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import {
   acceptDevisOrder,
@@ -10,6 +10,7 @@ import {
   GARAGE_STAGE_LABEL,
   garageStage,
   loadGarageOrders,
+  matchesGarageOrderSearch,
   refuseDevisOrder,
   type GarageOrder,
   loadGarageReturns,
@@ -41,6 +42,9 @@ export default function GarageOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Plate (or order number / part reference) typed in the search box. */
+  const [search, setSearch] = useState("");
+  const visible = useMemo(() => orders.filter((o) => matchesGarageOrderSearch(o, search)), [orders, search]);
   /* ---- Demander un retour, article par article ---- */
   const [returns, setReturns] = useState<GarageReturn[]>([]);
   const [request, setRequest] = useState<{ order: GarageOrder; line: GarageOrderLine; left: number } | null>(null);
@@ -126,6 +130,32 @@ export default function GarageOrdersPage() {
 
       {notice && <div className="nc-ok">{notice}</div>}
 
+      {orders.length > 0 && (
+        <div className="stk-search gp-order-search">
+          <Search className="stk-search-icon" />
+          <input
+            className="stk-search-input"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rechercher par plaque (AB-123-CD), n° de commande ou référence…"
+            aria-label="Rechercher une commande par plaque, numéro ou référence"
+          />
+          {search && (
+            <button type="button" className="stk-search-clear" onClick={() => setSearch("")} aria-label="Effacer la recherche">
+              <X />
+            </button>
+          )}
+        </div>
+      )}
+      {search.trim() && orders.length > 0 && (
+        <p className="gp-order-search-count">
+          {visible.length === 0
+            ? `Aucune commande pour « ${search.trim()} ».`
+            : `${visible.length} commande${visible.length > 1 ? "s" : ""} pour « ${search.trim()} »`}
+        </p>
+      )}
+
       {loading && orders.length === 0 ? (
         <div className="gp-card gp-empty">Chargement…</div>
       ) : orders.length === 0 ? (
@@ -136,7 +166,7 @@ export default function GarageOrdersPage() {
         </div>
       ) : (
         <div className="gp-order-list">
-          {orders.map((o) => {
+          {visible.map((o) => {
             const isDevis = o.devis;
             const quoted = isDevis && o.devisStatus === "QUOTED";
             const stage = isDevis ? null : garageStage(o);
@@ -154,6 +184,13 @@ export default function GarageOrdersPage() {
                   <div>
                     <span className="gp-order-ref">{o.ref}</span>
                     <span className="gp-order-date">{frDate(o.date)}</span>
+                    {/* The vehicle the parts are for, as given when ordering. */}
+                    <span className={`gp-order-vehicle${o.plate || o.vehicle ? "" : " gp-order-vehicle--none"}`}>
+                      <Car className="h-4 w-4" />
+                      {o.plate && <span className="gp-plate">{o.plate}</span>}
+                      {o.vehicle && <span>{o.vehicle}</span>}
+                      {!o.plate && !o.vehicle && "Véhicule non indiqué"}
+                    </span>
                   </div>
                   <span className={`rt-badge rt-badge--${badge.cls}`}>{badge.label}</span>
                 </div>
