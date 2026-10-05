@@ -28,6 +28,17 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { loadStaffNames } from "@/lib/data/tablet";
+import {
+  backorderLines,
+  deliveryOrdersOf,
+  lineKind,
+  lineMatches,
+  pendingLines,
+  prepareOrdersOf,
+  toursOf,
+  type LineKind,
+} from "@/lib/commandes-board";
 import { fmtDay, fmtDayTime, LinesTable, STATUT, type LinesTableContext } from "@/components/orders/LinesTable";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
@@ -69,14 +80,6 @@ function fmtMoney(v: number): string {
 /*  Page                                                              */
 /* ------------------------------------------------------------------ */
 
-/** Who a line is for: walk-in client, garage, or the magasin stock. */
-type LineKind = "CLIENT" | "GARAGE" | "STOCK";
-
-function lineKind(l: BoardLine): LineKind {
-  if (l.fromStock) return "STOCK";
-  return l.isGarage ? "GARAGE" : "CLIENT";
-}
-
 /** What the client gets for a returned part (DEDUCTION = « Déduire de l'encours », migration 20261005010000). */
 type ReturnCompensation = "REMBOURSEMENT" | "AVOIR" | "DEDUCTION";
 
@@ -108,6 +111,8 @@ export default function ReceptionCommandesPage() {
 
   const [board, setBoard] = useState<BoardLine[]>([]);
   const [sms, setSms] = useState<Map<string, SmsState>>(new Map());
+  /** Who pointed what (« par Sofia · … »), migration 20261005020000. */
+  const [staffNames, setStaffNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -159,14 +164,16 @@ export default function ReceptionCommandesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [b, s, l, org] = await Promise.all([
+      const [b, s, l, org, names] = await Promise.all([
         loadReceptionBoard(supabase, orgId),
         loadSmsStates(supabase, orgId),
         loadLivreurs(supabase, orgId, { activeOnly: true }),
         // Wording of the client SMS; the defaults apply if the profile can't be read.
         loadOrganizationSettings(supabase, orgId).catch(() => null),
+        loadStaffNames(supabase),
       ]);
       setBoard(b);
+      setStaffNames(names);
       setSms(s);
       setLivreurs(l);
       if (org) {
@@ -193,18 +200,8 @@ export default function ReceptionCommandesPage() {
   // "À pointer" = awaited lines: client lines + stock lines already re-ordered
   // from a supplier. Stock lines NOT yet re-ordered live on the Stock page
   // ("À recommander"), so they're excluded here.
-  const pending = useMemo(
-    () =>
-      board.filter(
-        (l) =>
-          l.status !== "RECEIVED" && !(l.fromStock && !l.supplierName),
-      ),
-    [board],
-  );
-  const backorders = useMemo(
-    () => board.filter((l) => l.status === "BACKORDER"),
-    [board],
-  );
+  const pending = useMemo(() => pendingLines(board), [board]);
+  const backorders = useMemo(() => backorderLines(board), [board]);
   const history = useMemo(
     () =>
       board
@@ -217,27 +214,7 @@ export default function ReceptionCommandesPage() {
 
   /* ---- Historique: search + walk-in return from a received line ---- */
   const [historySearch, setHistorySearch] = useState("");
-  const historyFiltered = useMemo(() => {
-    const q = historySearch.trim().toLowerCase();
-    if (!q) return history;
-    const terms = q.split(/\s+/);
-    return history.filter((l) => {
-      const hay = [
-        l.reference,
-        l.referenceCommande ?? "",
-        l.designation,
-        l.orderRef,
-        l.clientName,
-        l.clientPhone ?? "",
-        l.plate ?? "",
-        l.vehicle ?? "",
-        l.supplierName ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return terms.every((t) => hay.includes(t));
-    });
-  }, [history, historySearch]);
+  const historyFiltered = useMemo(() => history.filter((l) => lineMatches(l, historySearch)), [history, historySearch]);
 
   const [returnLine, setReturnLine] = useState<BoardLine | null>(null);
   const [returnReason, setReturnReason] = useState("");
@@ -344,20 +321,7 @@ export default function ReceptionCommandesPage() {
   }, [orgId, returnLine, returnReason, returnCompensation, supplierReturn, supabase, load]);
 
   // Group by tournée name (derived tournées have no tour_id but a real name).
-  const tours = useMemo(() => {
-    const map = new Map<string, { name: string; count: number }>();
-    for (const l of pending) {
-      const key = l.tourName ?? "Hors tournée";
-      const cur = map.get(key);
-      if (cur) cur.count += 1;
-      else map.set(key, { name: key, count: 1 });
-    }
-    return [...map.values()].sort((a, b) => {
-      const ra = a.name.startsWith("Tournée") ? 0 : 1;
-      const rb = b.name.startsWith("Tournée") ? 0 : 1;
-      return ra - rb || a.name.localeCompare(b.name);
-    });
-  }, [pending]);
+  const tours = useMemo(() => toursOf(pending), [pending]);
 
   const tourRows = useMemo(
     () =>
@@ -410,63 +374,7 @@ export default function ReceptionCommandesPage() {
    * livreur": one row per order with its reception progress, then the
    * dispatch to a livreur (→ en cours de livraison) and the delivery.
    */
-  const deliveryOrders = useMemo(() => {
-    const byOrder = new Map<string, BoardLine[]>();
-    for (const l of board) {
-      if (l.isRestock) continue;
-      // Garages are delivered; clients are prepared in « Commande à préparer » —
-      // unless the order is already out with a livreur: it must stay closable.
-      if (!l.isGarage && l.workflow !== "IN_TRANSIT") continue;
-      if (l.workflow === "DELIVERED") continue;
-      const arr = byOrder.get(l.orderId);
-      if (arr) arr.push(l);
-      else byOrder.set(l.orderId, [l]);
-    }
-    return [...byOrder.entries()]
-      .map(([orderId, lines]) => {
-        const first = lines[0];
-        const awaited = lines.filter((l) => l.status === "PENDING" || l.status === "BACKORDER" || l.status === "PARTIAL");
-        const received = lines.filter((l) => l.status === "RECEIVED").length;
-        const expected = lines.filter((l) => l.status !== "NOT_RECEIVED").length;
-        const inTransit = first.workflow === "IN_TRANSIT";
-        const stage: "AWAITING" | "READY" | "TRANSIT" = inTransit
-          ? "TRANSIT"
-          : awaited.length > 0
-            ? "AWAITING"
-            : "READY";
-        return {
-          orderId,
-          ref: first.orderRef,
-          date: first.orderDate,
-          clientName: first.clientName,
-          clientPhone: first.clientPhone,
-          isGarage: first.isGarage,
-          vehicle: first.vehicle,
-          plate: first.plate,
-          tourName: first.tourName,
-          dateEnvoi: first.dateEnvoi,
-          livreurId: first.livreurId,
-          livreurName: first.livreurName,
-          // The livreur who collected the parts at the suppliers delivers them too.
-          tourLivreurId: lines.find((l) => l.tourLivreurId)?.tourLivreurId ?? null,
-          clientId: first.clientId,
-          address: first.clientAddress,
-          city: first.clientCity,
-          failedReason: first.deliveryFailedReason,
-          attempts: first.deliveryAttempts,
-          pieces: lines.reduce((s, l) => s + l.quantity, 0),
-          total: lines.length,
-          received,
-          expected,
-          missing: awaited.length,
-          stage,
-        };
-      })
-      .sort((a, b) => {
-        const rank = { READY: 0, AWAITING: 1, TRANSIT: 2 };
-        return rank[a.stage] - rank[b.stage] || String(b.date ?? "").localeCompare(String(a.date ?? ""));
-      });
-  }, [board]);
+  const deliveryOrders = useMemo(() => deliveryOrdersOf(board), [board]);
   const deliveryRows = useMemo(
     () =>
       livraisonFilter === "all"
@@ -483,44 +391,7 @@ export default function ReceptionCommandesPage() {
    * Stock-replenishment lines never notify a client, and garage / delivery
    * orders live in "Commande à livrer" instead.
    */
-  const smsOrders = useMemo(() => {
-    const byOrder = new Map<string, BoardLine[]>();
-    for (const l of board) {
-      // Out with a livreur: nothing left to prepare at the counter.
-      if (l.fromStock || l.isRestock || l.isGarage || l.workflow === "IN_TRANSIT") continue;
-      const arr = byOrder.get(l.orderId);
-      if (arr) arr.push(l);
-      else byOrder.set(l.orderId, [l]);
-    }
-    const rows = [...byOrder.entries()]
-      .map(([orderId, lines]) => {
-        const receivedLines = lines.filter((l) => l.status === "RECEIVED");
-        const last = receivedLines
-          .slice()
-          .sort((a, b) =>
-            String(b.receivedAt ?? "").localeCompare(String(a.receivedAt ?? "")),
-          )[0];
-        return {
-          orderId,
-          ref: lines[0].orderRef,
-          date: lines[0].orderDate,
-          clientId: lines[0].clientId,
-          clientName: lines[0].clientName,
-          clientPhone: lines[0].clientPhone,
-          vehicle: lines[0].vehicle,
-          plate: lines[0].plate,
-          total: lines.length,
-          received: receivedLines.length,
-          complet: receivedLines.length === lines.length,
-          lastAt: last?.receivedAt ?? null,
-          lastSupplier: last?.supplierName ?? null,
-          state: sms.get(orderId) ?? { sent: false, treated: false },
-        };
-      })
-      .filter((o) => o.received > 0 && !o.state.treated)
-      .sort((a, b) => String(b.lastAt ?? "").localeCompare(String(a.lastAt ?? "")));
-    return rows;
-  }, [board, sms]);
+  const smsOrders = useMemo(() => prepareOrdersOf(board, sms), [board, sms]);
 
 
   const smsRows = useMemo(
@@ -850,6 +721,7 @@ export default function ReceptionCommandesPage() {
     actHandOver,
     actStatus,
     promiseNote,
+    staffNames,
   };
 
   /* ---------------------------------------------------------------- */

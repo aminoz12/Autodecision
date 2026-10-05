@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Copy,
   KeyRound,
+  Tablet,
   Loader2,
   Pencil,
   Phone,
@@ -49,6 +50,7 @@ import {
   setStaffPassword,
 } from "@/lib/data/admin";
 import { fmtDateTime, loadGarages, type GarageSummary } from "@/lib/data/saas";
+import { clearStaffPin, loadStaff, setStaffPin } from "@/lib/data/tablet";
 import {
   createLivreur,
   loadLivreurs,
@@ -107,6 +109,16 @@ function AdminContent() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Members with a tablet code (Suivi des commandes on the stock tablet). */
+  const [pins, setPins] = useState<Set<string>>(new Set());
+
+  const loadPins = useCallback(async () => {
+    try {
+      setPins(new Set((await loadStaff(supabase)).filter((m) => m.hasPin).map((m) => m.userId)));
+    } catch {
+      setPins(new Set());
+    }
+  }, [supabase]);
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -126,16 +138,50 @@ function AdminContent() {
       setLivreurAccounts(team.livreurAccounts ?? []);
       setGarages(gars);
       setLivreurs(livs);
+      void loadPins();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [supabase, orgId]);
+  }, [supabase, orgId, loadPins]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /* ---- Code tablette (4 chiffres) ---- */
+  const [pinTarget, setPinTarget] = useState<{ userId: string; name: string } | null>(null);
+  const [pinValue, setPinValue] = useState("");
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  function openPin(m: { userId: string; name: string }) {
+    setPinTarget(m);
+    setPinValue("");
+    setPinError(null);
+  }
+
+  async function submitPin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pinTarget) return;
+    if (!/^[0-9]{4}$/.test(pinValue)) {
+      setPinError("Le code doit faire exactement 4 chiffres.");
+      return;
+    }
+    setPinSaving(true);
+    setPinError(null);
+    try {
+      await setStaffPin(supabase, pinTarget.userId, pinValue);
+      setNotice(`Code tablette enregistré pour ${pinTarget.name}. Il le tape sur la tablette après avoir touché son nom.`);
+      setPinTarget(null);
+      await loadPins();
+    } catch (err) {
+      setPinError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPinSaving(false);
+    }
+  }
 
   async function run(key: string, fn: () => Promise<void>, ok?: string) {
     setBusy(key);
@@ -470,6 +516,7 @@ function AdminContent() {
                       <th>Membre</th>
                       <th>Email</th>
                       <th>Rôle</th>
+                      <th>Code tablette</th>
                       <th>Dernière connexion</th>
                       <th>Créé le</th>
                       <th className="rl-th-center">Actions</th>
@@ -488,10 +535,38 @@ function AdminContent() {
                           </td>
                           <td className="rl-muted-strong">{m.email ?? "—"}</td>
                           <td><span className={`rt-badge rt-badge--${role.cls}`}>{role.label}</span></td>
+                          <td>
+                            {pins.has(m.userId) ? <span className="rt-badge rt-badge--green">Défini</span> : <span className="rl-muted">—</span>}
+                          </td>
                           <td className="rl-muted-strong">{m.lastSignIn ? fmtDateTime(m.lastSignIn) : "Jamais"}</td>
                           <td className="rl-muted-strong">{frDate(m.createdAt)}</td>
                           <td className="rl-th-center">
                             <div className="rc-actions" style={{ justifyContent: "center" }}>
+                              <button
+                                type="button"
+                                className="rc-act rc-act--quiet"
+                                disabled={busy !== null}
+                                onClick={() => openPin(m)}
+                                title="Code à 4 chiffres pour pointer sur la tablette du stock"
+                              >
+                                <Tablet className="h-3.5 w-3.5" />
+                                {pins.has(m.userId) ? "Changer le code" : "Code tablette"}
+                              </button>
+                              {pins.has(m.userId) && (
+                                <button
+                                  type="button"
+                                  className="rc-act rc-act--quiet"
+                                  disabled={busy !== null}
+                                  onClick={() => {
+                                    if (window.confirm(`Retirer le code tablette de ${m.name} ? Il ne pourra plus pointer sur la tablette.`)) {
+                                      void run(`pin-${m.userId}`, () => clearStaffPin(supabase, m.userId).then(loadPins), "Code tablette retiré.");
+                                    }
+                                  }}
+                                >
+                                  {busy === `pin-${m.userId}` ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <X className="h-3.5 w-3.5" />}
+                                  Retirer le code
+                                </button>
+                              )}
                               {!m.isSelf && (
                                 <>
                                   <button
@@ -533,14 +608,13 @@ function AdminContent() {
                                   </button>
                                 </>
                               )}
-                              {m.isSelf && <span className="rt-dash">—</span>}
                             </div>
                           </td>
                         </tr>
                       );
                     })}
                     {staff.length === 0 && (
-                      <tr><td colSpan={6} className="rc-empty-cell">Aucun membre.</td></tr>
+                      <tr><td colSpan={7} className="rc-empty-cell">Aucun membre.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1017,6 +1091,48 @@ function AdminContent() {
       )}
 
       {/* ================= Staff password modal ================= */}
+      {pinTarget && (
+        <div className="ga-modal-overlay" onClick={() => !pinSaving && setPinTarget(null)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title"><Tablet className="h-4 w-4" />Code tablette — {pinTarget.name}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setPinTarget(null)} aria-label="Fermer" disabled={pinSaving}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form className="ga-modal-form" onSubmit={submitPin}>
+              {pinError && <div className="nc-error">{pinError}</div>}
+              <div className="od-field">
+                <span className="od-label">Code à 4 chiffres <span className="od-req">*</span></span>
+                <input
+                  className="od-input admin-pin-input"
+                  value={pinValue}
+                  onChange={(e) => setPinValue(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="0000"
+                  autoFocus
+                />
+              </div>
+              <div className="od-note">
+                <Tablet className="h-4 w-4" />
+                <p>
+                  Sur la tablette du stock, {pinTarget.name} touche son nom puis tape ce code : ce qu&apos;il pointe est enregistré à son nom.
+                  Transmettez-le-lui de vive voix. 5 erreurs bloquent son nom 5 minutes.
+                </p>
+              </div>
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setPinTarget(null)} disabled={pinSaving}>Annuler</button>
+                <button type="submit" className="od-btn od-btn--primary" disabled={pinSaving || pinValue.length !== 4}>
+                  {pinSaving ? <Loader2 className="h-4 w-4 nc-spin" /> : <Tablet className="h-4 w-4" />}
+                  Enregistrer le code
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {pwdTarget && (
         <div className="ga-modal-overlay" onClick={() => !pwdSaving && setPwdTarget(null)}>
           <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

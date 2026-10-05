@@ -55,6 +55,8 @@ export type LinesTableContext = {
   actStatus: (line: BoardLine, status: "BACKORDER" | "NOT_RECEIVED") => Promise<void>;
   /** « Promis le … » under an order ref. */
   promiseNote: (orderId: string) => ReactNode;
+  /** Names of the magasin's people, for « par Sofia · … » under the status. */
+  staffNames: Map<string, string>;
 };
 
 export function LinesTable({
@@ -88,6 +90,7 @@ export function LinesTable({
     actHandOver,
     actStatus,
     promiseNote,
+    staffNames,
   } = ctx;
   const showReceivedAt = !showActions;
   const colCount =
@@ -243,6 +246,11 @@ export function LinesTable({
                       <StIcon className="h-3.5 w-3.5" />
                       {St.label}
                     </span>
+                    {r.pointedBy && staffNames.get(r.pointedBy) && (
+                      <p className="rc-pointed">
+                        par {staffNames.get(r.pointedBy)} · {fmtDayTime(r.pointedAt)}
+                      </p>
+                    )}
                   </td>
                   {showReceivedAt && (
                     <td className="rl-muted-strong">{fmtDayTime(r.receivedAt)}</td>

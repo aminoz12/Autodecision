@@ -17,6 +17,8 @@ const SPACES: Array<{ prefix: string; login: string; cookie?: string }> = [
   { prefix: "/admin", login: "/admin/login" },
   { prefix: "/superadmin", login: "/superadmin/login" },
   { prefix: "/livreur", login: "/livreur/login" },
+  // The stock tablet (Suivi des commandes only), signed in with a magasin account.
+  { prefix: "/tablette", login: "/tablette/login" },
   { prefix: "/garagiste/dashboard", login: "/garagiste/login", cookie: "sb-garagiste-auth" },
 ];
 

@@ -9,6 +9,26 @@ import { getSupabaseAnonKey, getSupabaseUrl } from "./env";
 const clientsByKey = new Map<string, SupabaseClient>();
 
 /**
+ * Tablette « Suivi des commandes »: the cashier who typed their code. Sent as
+ * x-actor-token on database requests so the actions are recorded in their name
+ * (current_actor_id(), migration 20261005020000). null = the signed-in account.
+ */
+let actorToken: string | null = null;
+
+export function setActorToken(token: string | null) {
+  actorToken = token;
+}
+
+/** Only the REST API reads the token; auth and storage never see the header. */
+const actorFetch: typeof fetch = (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!actorToken || !url.includes("/rest/v1/")) return fetch(input, init);
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  headers.set("x-actor-token", actorToken);
+  return fetch(input, { ...init, headers });
+};
+
+/**
  * Browser Supabase client. An optional `storageKey` gives an independent
  * session store (separate cookies) so a magasin and a garagiste can be logged
  * in at the same time in one browser without overwriting each other.
@@ -16,7 +36,7 @@ const clientsByKey = new Map<string, SupabaseClient>();
 export function createClient(storageKey?: string): SupabaseClient {
   // No custom key → use @supabase/ssr's default singleton client.
   if (!storageKey) {
-    return createBrowserClient(getSupabaseUrl(), getSupabaseAnonKey());
+    return createBrowserClient(getSupabaseUrl(), getSupabaseAnonKey(), { global: { fetch: actorFetch } });
   }
 
   const cached = clientsByKey.get(storageKey);

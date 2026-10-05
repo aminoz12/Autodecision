@@ -78,23 +78,31 @@ export type BoardLine = {
   deliveryFailedReason: string | null;
   deliveryFailedAt: string | null;
   deliveryAttempts: number;
+  /** Who last pointed the line (reçu / partiel / reliquat / non reçu), and when (migration 20261005020000). */
+  pointedBy: string | null;
+  pointedAt: string | null;
+  /** Who handed the order to the livreur. */
+  dispatchedBy: string | null;
 };
 
 export async function loadReceptionBoard(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<BoardLine[]> {
-  const [{ data, error }, returnsRes] = await Promise.all([
+  // « Pointé par » / « envoyée par » come with migration 20261005020000: without it the board still loads.
+  const linesQuery = (who: boolean) =>
     supabase
       .from("order_lines")
       .select(
         "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
-          "prix_vente_unitaire,retour_impossible,supplier_id," +
-          "orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,clients(id,name,phone,is_garage,address,city),livreurs(name))," +
+          `prix_vente_unitaire,retour_impossible,supplier_id,${who ? "pointed_by,pointed_at," : ""}` +
+          `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,address,city),livreurs(name)),` +
           "suppliers(name,own_delivery,lead_days),delivery_tours(name,livreur_id)",
       )
       .eq("organization_id", orgId)
-      .limit(500),
+      .limit(500);
+  const [linesRes, returnsRes] = await Promise.all([
+    linesQuery(true),
     supabase
       .from("sales_returns")
       .select("order_line_id")
@@ -102,6 +110,8 @@ export async function loadReceptionBoard(
       .not("order_line_id", "is", null),
   ]);
 
+  let { data, error } = linesRes;
+  if (error && /pointed_|dispatched_/i.test(error.message)) ({ data, error } = await linesQuery(false));
   if (error) throw new Error(error.message);
   if (returnsRes.error) throw new Error(returnsRes.error.message);
   const returnedLineIds = new Set(
@@ -195,6 +205,9 @@ export async function loadReceptionBoard(
       deliveryFailedReason: (order?.delivery_failed_reason as string | null) ?? null,
       deliveryFailedAt: (order?.delivery_failed_at as string | null) ?? null,
       deliveryAttempts: toNumber(order?.delivery_attempts),
+      pointedBy: (row.pointed_by as string | null) ?? null,
+      pointedAt: (row.pointed_at as string | null) ?? null,
+      dispatchedBy: (order?.dispatched_by as string | null) ?? null,
     };
   });
 

@@ -131,7 +131,17 @@ const SPACES: Record<
   },
 };
 
-export function SpaceLogin({ space }: { space: SpaceKey }) {
+export function SpaceLogin({
+  space,
+  home,
+  alsoAccept = [],
+}: {
+  space: SpaceKey;
+  /** Where to land once signed in (default: the space's home). */
+  home?: string;
+  /** Other spaces whose accounts may use this door (the stock tablet takes admins too). */
+  alsoAccept?: SpaceKey[];
+}) {
   const cfg = SPACES[space];
   const { login, logout, ready, user, profile, profileLoadError } = useAuth();
   const router = useRouter();
@@ -145,8 +155,8 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
     if (!ready || !user) return;
     const account = accountSpace(profile, user.email);
 
-    if (account === space) {
-      router.replace(SPACE_HOME[space]);
+    if (account === space || (account !== null && account !== "garagiste" && alsoAccept.includes(account))) {
+      router.replace(home ?? SPACE_HOME[space]);
       return;
     }
 
@@ -164,7 +174,7 @@ export function SpaceLogin({ space }: { space: SpaceKey }) {
     setError(
       `Ce compte n'appartient pas à cet espace (${cfg.name}). C'est un compte ${SPACE_LABEL[account]} : connectez-vous sur ${SPACE_LOGIN[account]}.`,
     );
-  }, [ready, user, profile, profileLoadError, space, cfg.name, router, logout]);
+  }, [ready, user, profile, profileLoadError, space, cfg.name, router, logout, home, alsoAccept]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
