@@ -35,7 +35,7 @@ import { workflowLabel } from "@/lib/data/dashboard";
 import {
   adjustLoyaltyPoints,
   convertClientToPro,
-  deleteParticulierClient,
+  deleteClient,
   loadClientProfile,
   LOYALTY,
   pointsValue,
@@ -219,7 +219,7 @@ export default function ClientProfilePage() {
         await convertClientToPro(supabase, orgId, client.id);
         router.push(`/dashboard/pros/${client.id}`);
       } else {
-        await deleteParticulierClient(supabase, orgId, client.id);
+        await deleteClient(supabase, client.id);
         router.push("/dashboard/clients");
       }
     } catch (err) {

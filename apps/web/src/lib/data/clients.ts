@@ -234,38 +234,22 @@ export async function convertClientToPro(supabase: SupabaseClient, orgId: string
  * erase the avoirs and consignes with the client. Orders, payments, returns and
  * SAV cases stay in the history, without a client file.
  */
-export async function deleteParticulierClient(supabase: SupabaseClient, orgId: string, id: string): Promise<void> {
-  const linked = (table: string) =>
-    supabase.from(table).select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("client_id", id);
-  const checks = await Promise.all([
-    linked("orders").eq("devis", false).is("cancelled_at", null).gt("solde_restant", 0),
-    linked("credit_notes"),
-    linked("invoices"),
-    // Still to be brought back by the client, or still owed to the supplier.
-    linked("consignment_entries").or("status.eq.ACTIF,supplier_status.in.(A_RENVOYER,RENVOYE)"),
-  ]);
-  // A HEAD answer carries no error text.
-  if (checks.some((c) => c.error)) throw new Error("Vérification du dossier client impossible : réessayez.");
-  const [unpaid, credits, invoices, consignes] = checks.map((c) => c.count ?? 0);
-  const blockers = [
-    unpaid > 0 && `${unpaid} commande(s) pas encore réglée(s)`,
-    credits > 0 && `${credits} avoir(s)`,
-    invoices > 0 && `${invoices} facture(s) émise(s)`,
-    consignes > 0 && `${consignes} consigne(s) en cours`,
-  ].filter(Boolean);
-  if (blockers.length > 0) {
+/**
+ * Deletes a client, a garage or a client PRO — server-side (delete_client,
+ * migration 20261005030000): the database checks what must be kept (unpaid
+ * orders, avoirs, factures, consignes en cours, a garage portal access) and
+ * only an administrator may delete a garage or a client PRO. Orders, payments,
+ * returns and SAV files stay, without the client file.
+ */
+export async function deleteClient(supabase: SupabaseClient, id: string): Promise<void> {
+  const { error } = await supabase.rpc("delete_client", { p_client_id: id });
+  if (error) {
     throw new Error(
-      `Suppression impossible : ce client a ${blockers.join(", ")}. Ces pièces comptables doivent être conservées — désactivez le client à la place.`,
+      /delete_client|schema cache/i.test(error.message)
+        ? "La suppression demande la migration 20261005030000 (npx supabase db push)."
+        : error.message,
     );
   }
-  const { data, error } = await supabase.from("clients").delete().eq("id", id).eq("organization_id", orgId).select("id");
-  if (error) {
-    if (error.code === "23503") {
-      throw new Error("Suppression impossible : des documents comptables sont rattachés à ce client. Désactivez-le à la place.");
-    }
-    throw new Error(error.message);
-  }
-  if (!data || data.length === 0) throw new Error("Client introuvable : rien n'a été supprimé.");
 }
 
 /* ---- Profile ---- */

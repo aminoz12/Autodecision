@@ -19,17 +19,19 @@ import {
   RefreshCw,
   RotateCcw,
   ShoppingCart,
+  Trash2,
   Wallet,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { ReceiveReturnDialog } from "@/components/returns/ReceiveReturnDialog";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
 import { PAYMENT_TERMS, PAYMENT_TERMS_LABEL, paymentTermsLabel, type PaymentTermsDays } from "@/lib/constants/enums";
+import { deleteClient } from "@/lib/data/clients";
 import { fmtMoney, validateGarageReturn } from "@/lib/data/saas";
 import { ensureSupplierTour, nextTourFromServer } from "@/lib/data/tournees";
 import { LINE_RETURN_LABEL, REGLEMENT_LABEL, lineReglement, lineReturnState, type LineReglement } from "@/lib/garage-line-state";
@@ -92,6 +94,9 @@ export default function GarageDetailPage() {
   const { profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const orgId = profile?.organization_id;
+  const router = useRouter();
+  /** Deleting a garage or a client PRO is reserved to administrators (delete_client checks it too). */
+  const isAdmin = profile?.role === "ADMIN";
 
   const [garage, setGarage] = useState<GarageInfo | null>(null);
   const [orders, setOrders] = useState<GarageOrder[]>([]);
@@ -272,6 +277,22 @@ export default function GarageDetailPage() {
     }
   }
 
+  /* ---- Supprimer le garage / client PRO (administrateur) ---- */
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  async function submitDelete() {
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteClient(supabase, garageId);
+      router.push(listHref);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+      setDeleteBusy(false);
+    }
+  }
+
   /* ---- Réception d'un retour demandé par le garage ---- */
   const [receiving, setReceiving] = useState<GarageReturn | null>(null);
 
@@ -438,6 +459,20 @@ export default function GarageDetailPage() {
           <button type="button" className="od-btn od-btn--primary" onClick={openSettle} disabled={owed <= 0}>
             <HandCoins className="h-4 w-4" /> Enregistrer un règlement
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="od-btn od-btn--danger"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+              disabled={!garage}
+              title={isPro ? "Supprimer ce client PRO" : "Supprimer ce garage"}
+            >
+              <Trash2 className="h-4 w-4" /> Supprimer
+            </button>
+          )}
         </div>
       </header>
 
@@ -710,6 +745,33 @@ export default function GarageDetailPage() {
                 >
                   {termsBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Check className="h-4 w-4" />}
                   Enregistrer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteOpen && garage && (
+        <div className="ga-modal-overlay" onClick={() => !deleteBusy && setDeleteOpen(false)}>
+          <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title" onClick={(e) => e.stopPropagation()}>
+            <div className="ga-modal-head">
+              <span className="ga-modal-title" id="delete-title"><Trash2 className="h-4 w-4" /> Supprimer {garage.name}</span>
+              <button type="button" className="ga-modal-close" onClick={() => setDeleteOpen(false)} aria-label="Fermer" disabled={deleteBusy}><X className="h-4 w-4" /></button>
+            </div>
+            <div className="ga-modal-form">
+              <p className="od-hint">
+                La fiche {isPro ? "du client PRO" : "du garage"} et ses coordonnées sont effacées définitivement.
+                {statement.orderCount > 0 ? ` Ses ${statement.orderCount} commande(s) restent dans l'historique, sans fiche.` : ""}{" "}
+                Impossible s&apos;il reste une commande non réglée, un avoir, une facture, une consigne en cours
+                {isPro ? "" : " ou un accès au portail garage (à supprimer d'abord dans Admin → Accès garagistes)"}.
+              </p>
+              {deleteError && <div className="nc-error">{deleteError}</div>}
+              <div className="ga-modal-actions">
+                <button type="button" className="od-btn od-btn--ghost" onClick={() => setDeleteOpen(false)} disabled={deleteBusy}>Annuler</button>
+                <button type="button" className="od-btn od-btn--danger" onClick={() => void submitDelete()} disabled={deleteBusy}>
+                  {deleteBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Supprimer définitivement
                 </button>
               </div>
             </div>
