@@ -6286,7 +6286,8 @@ svg.lucide { stroke-width: 2; }
    (4 mm margins), Lucida Console 8 pt like a till font, black only: no grey,
    no background fill (lost on a thermal head or without « graphiques
    d'arrière-plan »). Printed as one long page by lib/print-ticket.ts. */
-.tk-preview { display: flex; justify-content: center; margin-top: 24px; }
+/* On screen the « CLIENT » and « CAISSIER » copies sit side by side, as they will print. */
+.tk-preview { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: center; gap: 28px; margin-top: 24px; }
 .tk-doc {
   box-sizing: border-box;
   width: 80mm;
@@ -6311,6 +6312,8 @@ svg.lucide { stroke-width: 2; }
 .tk-shop-sub { font-weight: 700; text-transform: uppercase; margin-bottom: 1mm; }
 .tk-dash { border-top: 1px dashed #000; margin: 2mm 0; }
 .tk-doctitle { text-align: center; font-size: 11pt; font-weight: 700; text-transform: uppercase; margin-bottom: 1.5mm; }
+/* Who keeps this copy: CLIENT / CAISSIER. */
+.tk-copy { text-align: center; font-size: 13pt; font-weight: 700; letter-spacing: 0.12em; border: 2px solid #000; padding: 0.8mm 0; margin: 0 8mm 2mm; }
 .tk-refband {
   text-align: center;
   font-size: 10pt;
@@ -6364,6 +6367,8 @@ svg.lucide { stroke-width: 2; }
   html.tk-printing #tk-print-root { position: static; left: auto; }
   html.tk-printing #tk-print-root, html.tk-printing #tk-print-root * { visibility: visible !important; }
   html.tk-printing #tk-print-root .tk-doc { zoom: 1; box-shadow: none; margin: 0; }
+  /* One page per copy: the printer cuts between the client's and the cashier's ticket. */
+  html.tk-printing #tk-print-root .tk-doc + .tk-doc { break-before: page; }
 }
 
 /* ================= Space logins (per-space auth themes) ================= */

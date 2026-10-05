@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { OrderTicket } from "@/components/print/OrderTicket";
+import { OrderTicketCopies } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import { createOrderWithLines } from "@/lib/data/orders";
 import { PAYMENT_MODE_LABEL, PAYMENT_MODES } from "@/lib/data/payments";
@@ -428,7 +428,7 @@ export function QuickAddDone({ quick, orgSettings }: { quick: QuickAddState; org
       </div>
       {shown && (
         <div className="tk-preview">
-          <OrderTicket org={orgSettings} data={shown} />
+          <OrderTicketCopies org={orgSettings} data={shown} />
         </div>
       )}
     </div>

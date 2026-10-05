@@ -37,7 +37,7 @@ import {
   type OrganizationSettings,
   type SupplierOption,
 } from "@/lib/data/saas";
-import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
+import { OrderTicketCopies, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
 import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
@@ -827,7 +827,7 @@ export default function NouvelleCommandePage() {
         </div>
         {ticket && (
           <div className="tk-preview">
-            <OrderTicket org={orgSettings} data={ticket} />
+            <OrderTicketCopies org={orgSettings} data={ticket} />
           </div>
         )}
       </div>

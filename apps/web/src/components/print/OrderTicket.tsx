@@ -132,15 +132,32 @@ function Barcode({ value }: { value: string }) {
   );
 }
 
+type TicketOrg = Pick<OrganizationSettings, "name" | "phone" | "address" | "city" | "tvaRate"> | null;
+
+/** Who keeps this copy: printed big under the title. */
+export type TicketCopy = "CLIENT" | "CAISSIER";
+
+/** The bon de commande is printed twice: the client's copy, then the cashier's (one page each). */
+export function OrderTicketCopies({ org, data }: { org: TicketOrg; data: TicketData }) {
+  return (
+    <>
+      <OrderTicket org={org} data={data} copy="CLIENT" />
+      <OrderTicket org={org} data={data} copy="CAISSIER" />
+    </>
+  );
+}
+
 export function OrderTicket({
   org,
   data,
   kind = "commande",
+  copy,
 }: {
-  org: Pick<OrganizationSettings, "name" | "phone" | "address" | "city" | "tvaRate"> | null;
+  org: TicketOrg;
   data: TicketData;
   /** « commande »: the counter's ticket, with prices. « livraison »: quantities and signature. */
   kind?: "commande" | "livraison";
+  copy?: TicketCopy;
 }) {
   const created = new Date(data.createdAt);
   const dateStr = created.toLocaleDateString("fr-FR");
@@ -169,6 +186,7 @@ export function OrderTicket({
       <div className="tk-dash" />
 
       <p className="tk-doctitle">{delivery ? "Bon de livraison" : "Bon de commande"}</p>
+      {copy && <p className="tk-copy">{copy}</p>}
       <p className="tk-refband">N° {data.ref}</p>
 
       <dl className="tk-kv">

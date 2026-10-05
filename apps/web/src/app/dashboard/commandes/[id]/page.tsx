@@ -24,7 +24,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
+import { OrderTicket, OrderTicketCopies, type TicketData } from "@/components/print/OrderTicket";
 import { OrderSavPanel } from "@/components/sav/OrderSavPanel";
 import { loadSavSettingsSafe } from "@/lib/data/sav";
 import { printTicket } from "@/lib/print-ticket";
@@ -184,7 +184,7 @@ export default function OrderDetailPage() {
       flushSync(() => setPrintMode(mode));
       printTicket(
         mode === "ticket" ? order.ref : `${order.ref}-bon-livraison`,
-        printRef.current?.querySelector<HTMLElement>(".tk-doc"),
+        printRef.current,
       );
       setPrintMode(null);
     },
@@ -1060,11 +1060,11 @@ export default function OrderDetailPage() {
       {/* ---- Bon de commande / bon de livraison: 80 mm tickets, never shown, copied by printTicket ---- */}
       {printMode && (
         <div className="tk-print-only" ref={printRef}>
-          <OrderTicket
-            org={org}
-            kind={printMode === "bl" ? "livraison" : "commande"}
-            data={{ ...ticketOf(order, returnPolicy), livreur: order.livreurName }}
-          />
+          {printMode === "bl" ? (
+            <OrderTicket org={org} kind="livraison" data={{ ...ticketOf(order, returnPolicy), livreur: order.livreurName }} />
+          ) : (
+            <OrderTicketCopies org={org} data={ticketOf(order, returnPolicy)} />
+          )}
         </div>
       )}
     </div>
