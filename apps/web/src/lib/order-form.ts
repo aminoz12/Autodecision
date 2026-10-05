@@ -134,15 +134,3 @@ export function eur(value: number): string {
     maximumFractionDigits: 2,
   })} €`;
 }
-
-/** Print the ticket on screen; the tab title becomes the suggested PDF name (REQ-….pdf). */
-export function printTicketDoc(ref: string) {
-  const previousTitle = document.title;
-  document.title = ref;
-  const restore = () => {
-    document.title = previousTitle;
-    window.removeEventListener("afterprint", restore);
-  };
-  window.addEventListener("afterprint", restore);
-  window.print();
-}

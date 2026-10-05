@@ -960,15 +960,8 @@ table.nc-lines th.od-th-right:nth-last-child(2), table.nc-lines td.od-td-right.o
 table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 14px; padding-left: 2px; padding-right: 8px; }
 .nc-count { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--bg-subtle); }
 
-/* Bon de commande (ticket): a long reference wraps instead of pushing the amounts
-   off the paper; printed alone from the order page. */
-.tk-table td.tk-ref { white-space: normal; overflow-wrap: anywhere; word-break: break-word; min-width: 62px; max-width: 118px; }
-.tk-table td.tk-ref--wide { max-width: none; }
-.tk-table td.tk-des { min-width: 56px; }
+/* A ticket rendered only to be printed (order page): never shown, lib/print-ticket.ts copies it. */
 .tk-print-only { display: none; }
-@media print {
-  .tk-print-only { display: block; }
-}
 
 /* Nouvelle version déployée (NewVersionNotice) : bandeau fixe en bas, sous les
    modales (z-index 50) pour ne jamais couvrir une saisie en cours. */

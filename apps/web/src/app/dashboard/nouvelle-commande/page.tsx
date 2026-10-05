@@ -43,7 +43,8 @@ import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSetti
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
 import { QuickAddDone, QuickAddModal, useQuickAdd } from "@/components/orders/QuickAdd";
-import { clampMoney, eur, netUnit, printTicketDoc, REGLEMENT_LABEL, todayISO, type PourQui, type Reglement } from "@/lib/order-form";
+import { clampMoney, eur, netUnit, REGLEMENT_LABEL, todayISO, type PourQui, type Reglement } from "@/lib/order-form";
+import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 
 /* ------------------------------------------------------------------ */
@@ -741,7 +742,7 @@ export default function NouvelleCommandePage() {
   }
 
   function printTicket() {
-    if (ticket) printTicketDoc(ticket.ref);
+    if (ticket) printTicketPage(ticket.ref);
   }
 
   function resetForm() {

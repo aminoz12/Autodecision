@@ -24,7 +24,6 @@ import {
   eur,
   isQuickRowFilled,
   parseMoney,
-  printTicketDoc,
   quickReglements,
   quickRowProblem,
   quickRowTotal,
@@ -35,6 +34,7 @@ import {
   type QuickRow,
   type Reglement,
 } from "@/lib/order-form";
+import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
 
@@ -328,7 +328,7 @@ export function useQuickAdd({
       const t = done?.[idx]?.ticket;
       if (!t) return;
       flushSync(() => setTicketIdx(idx));
-      printTicketDoc(t.ref);
+      printTicketPage(t.ref);
     },
     [done],
   );

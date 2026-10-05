@@ -3,8 +3,12 @@
 import type { OrganizationSettings } from "@/lib/data/saas";
 
 /* ------------------------------------------------------------------ */
-/*  Ticket de commande — thermal-receipt style (see public/Facture.jpeg)
-    Printed right after an order is created, instead of a full facture. */
+/*  Ticket 80 mm — bon de commande / bon de livraison, thermal receipt.
+    Printed right after an order is created (instead of a full facture),
+    and again from the order page. 72 mm printable, Lucida Console 8 pt,
+    black only: no grey, no background fill (a thermal printer, or the
+    browser's « graphiques d'arrière-plan » left unticked, would lose it).
+    Printed as ONE long page by lib/print-ticket.ts. */
 /* ------------------------------------------------------------------ */
 
 export type TicketLine = {
@@ -45,6 +49,8 @@ export type TicketData = {
   returnPolicy?: string | null;
   /** Date limite pour rapporter l'ancienne pièce consignée (yyyy-mm-dd). */
   consigneDeadline?: string | null;
+  /** Bon de livraison: who delivers. */
+  livreur?: string | null;
 };
 
 function eur(v: number): string {
@@ -120,7 +126,7 @@ function Barcode({ value }: { value: string }) {
       aria-label={value}
     >
       {bars.map((b, i) => (
-        <rect key={i} x={b.x} y={0} width={b.w} height={HEIGHT} fill="#111" />
+        <rect key={i} x={b.x} y={0} width={b.w} height={HEIGHT} fill="#000" />
       ))}
     </svg>
   );
@@ -129,9 +135,12 @@ function Barcode({ value }: { value: string }) {
 export function OrderTicket({
   org,
   data,
+  kind = "commande",
 }: {
   org: Pick<OrganizationSettings, "name" | "phone" | "address" | "city" | "tvaRate"> | null;
   data: TicketData;
+  /** « commande »: the counter's ticket, with prices. « livraison »: quantities and signature. */
+  kind?: "commande" | "livraison";
 }) {
   const created = new Date(data.createdAt);
   const dateStr = created.toLocaleDateString("fr-FR");
@@ -140,25 +149,31 @@ export function OrderTicket({
   const tvaRate = org?.tvaRate ?? 20;
   const totalHT = data.total / (1 + tvaRate / 100);
   const tva = data.total - totalHT;
+  const delivery = kind === "livraison";
+  const sections = delivery
+    ? [{ title: "Pièces livrées", rows: data.lines }]
+    : [
+        { title: "Pièces remises au client", rows: data.lines.filter((l) => l.taken) },
+        { title: "Pièces à livrer", rows: data.lines.filter((l) => !l.taken) },
+      ];
 
   return (
     <div className="tk-doc">
       <header className="tk-header">
         <p className="tk-shop">{org?.name ?? "Magasin"}</p>
         <p className="tk-shop-sub">Pièces auto &amp; accessoires</p>
+        {org?.address && <p>{org.address}</p>}
+        {(org?.city || org?.phone) && <p>{[org?.city, org?.phone ? `Tél. ${org.phone}` : null].filter(Boolean).join(" · ")}</p>}
       </header>
 
       <div className="tk-dash" />
 
-      <p className="tk-doctitle">Bon de commande</p>
-      <p className="tk-refband">N° COMMANDE : {data.ref}</p>
-
-      <div className="tk-dash" />
+      <p className="tk-doctitle">{delivery ? "Bon de livraison" : "Bon de commande"}</p>
+      <p className="tk-refband">N° {data.ref}</p>
 
       <dl className="tk-kv">
-        <div><dt>Date / heure</dt><dd>{dateStr} – {timeStr}</dd></div>
+        <div><dt>Date</dt><dd>{dateStr} {timeStr}</dd></div>
         {data.vendeur && <div><dt>Vendeur</dt><dd>{data.vendeur}</dd></div>}
-        <div><dt>Magasin</dt><dd>{magasin}</dd></div>
         {data.tourName && (
           <div>
             <dt>Tournée</dt>
@@ -170,123 +185,113 @@ export function OrderTicket({
             </dd>
           </div>
         )}
+        {delivery && data.livreur && <div><dt>Livreur</dt><dd>{data.livreur}</dd></div>}
       </dl>
 
       <div className="tk-dash" />
 
       <dl className="tk-kv">
         <div><dt>Client</dt><dd>{data.clientName}</dd></div>
-        {data.clientPhone && data.clientPhone !== "-" && (
-          <div><dt>Téléphone</dt><dd>{data.clientPhone}</dd></div>
-        )}
+        {data.clientPhone && data.clientPhone !== "-" && <div><dt>Tél.</dt><dd>{data.clientPhone}</dd></div>}
+        {data.plate && <div><dt>Plaque</dt><dd>{data.plate}</dd></div>}
+        {data.vehicleModel && <div><dt>Véhicule</dt><dd>{data.vehicleModel}</dd></div>}
+        {data.kilometrage != null && <div><dt>Km</dt><dd>{data.kilometrage.toLocaleString("fr-FR")} km</dd></div>}
       </dl>
 
-      {(data.plate || data.vehicleModel || data.kilometrage != null) && (
-        <>
-          <div className="tk-dash" />
-          <dl className="tk-kv">
-            {data.plate && <div><dt>Plaque immat.</dt><dd>{data.plate}</dd></div>}
-            {data.vehicleModel && <div><dt>Marque / modèle</dt><dd>{data.vehicleModel}</dd></div>}
-            {data.kilometrage != null && (
-              <div><dt>Kilométrage</dt><dd>{data.kilometrage.toLocaleString("fr-FR")} km</dd></div>
-            )}
-          </dl>
-        </>
-      )}
-
       <div className="tk-dash" />
 
-      {[
-        { title: "Pièces remises au client", rows: data.lines.filter((l) => l.taken) },
-        { title: "Pièces à livrer", rows: data.lines.filter((l) => !l.taken) },
-      ]
+      {sections
         .filter((s) => s.rows.length > 0)
         .map((s) => (
-          <div key={s.title} className="tk-parts">
-            <p className="tk-refband tk-refband--sub">
-              {s.title} ({s.rows.reduce((n, l) => n + l.quantity, 0)})
+          <section key={s.title} className="tk-parts">
+            <p className="tk-parts-title">
+              <span>{s.title}</span>
+              <span>{s.rows.reduce((n, l) => n + l.quantity, 0)} pce</span>
             </p>
-            <table className="tk-table">
-              <thead>
-                <tr>
-                  <th>Référence</th>
-                  <th>Désignation</th>
-                  <th className="tk-num">Qté</th>
-                  <th className="tk-num">PU TTC</th>
-                  <th className="tk-num">Total</th>
-                  <th className="tk-num">Retour</th>
-                </tr>
-              </thead>
-              <tbody>
-                {s.rows.map((l, i) => (
-                  <tr key={i}>
-                    {/* « Rajout rapide » stores one text as reference and designation: print it once. */}
-                    {l.designation.trim() && l.designation.trim().toLowerCase() !== l.reference.trim().toLowerCase() ? (
-                      <>
-                        <td className="tk-ref">{l.reference}</td>
-                        <td className="tk-des">{l.designation}</td>
-                      </>
-                    ) : (
-                      <td className="tk-ref tk-ref--wide" colSpan={2}>{l.reference}</td>
-                    )}
-                    <td className="tk-num">{l.quantity}</td>
-                    <td className="tk-num">{eur(l.prixVente)}</td>
-                    <td className="tk-num">{eur(l.quantity * l.prixVente)}</td>
-                    <td className="tk-num">{l.retourPossible ? "OUI" : "NON"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+            {s.rows.map((l, i) => {
+              // « Rajout rapide » stores one text as reference and designation: print it once.
+              const des = l.designation.trim();
+              const same = !des || des.toLowerCase() === l.reference.trim().toLowerCase();
+              return (
+                <div key={i} className="tk-item">
+                  <p className="tk-item-name">
+                    <strong>{l.reference}</strong>
+                    {same ? "" : ` ${des}`}
+                  </p>
+                  {delivery ? (
+                    <p className="tk-item-row">
+                      <span>Quantité</span>
+                      <strong>{l.quantity}</strong>
+                    </p>
+                  ) : (
+                    <p className="tk-item-row">
+                      <span>{l.quantity} x {eur(l.prixVente)}</span>
+                      <strong>{eur(l.quantity * l.prixVente)}</strong>
+                    </p>
+                  )}
+                  {!l.retourPossible && <p className="tk-item-flag">Retour impossible</p>}
+                </div>
+              );
+            })}
+          </section>
         ))}
-
-      <div className="tk-totals">
-        <div><span>TOTAL HT :</span><span>{eur(totalHT)}</span></div>
-        <div><span>TVA ({tvaRate.toLocaleString("fr-FR")}%) :</span><span>{eur(tva)}</span></div>
-        <div className="tk-dash tk-dash--tight" />
-        <div className="tk-totals-ttc"><span>TOTAL TTC :</span><span>{eur(data.total)}</span></div>
-        {data.avoirApplique > 0 && <div><span>AVOIR DÉDUIT :</span><span>− {eur(data.avoirApplique)}</span></div>}
-        <div><span>PAYÉ :</span><span>{eur(data.paye)}</span></div>
-        {data.reste > 0 && <div className="tk-totals-ttc"><span>RESTE À PAYER :</span><span>{eur(data.reste)}</span></div>}
-      </div>
-
-      <p className="tk-reglement">MODE DE RÈGLEMENT : {reglementText(data)}</p>
 
       <div className="tk-dash" />
 
-      {(data.promisedDate || data.consigneDeadline) && (
-        <p className="tk-note tk-note--strong">
-          {data.promisedDate && <>PIÈCES À VENIR PROMISES POUR LE {new Date(data.promisedDate).toLocaleDateString("fr-FR")}</>}
-          {data.promisedDate && data.consigneDeadline && <br />}
-          {data.consigneDeadline && <>ANCIENNE PIÈCE (CONSIGNE) À RAPPORTER AVANT LE {new Date(data.consigneDeadline).toLocaleDateString("fr-FR")}</>}
-        </p>
-      )}
+      {delivery ? (
+        <>
+          <p className="tk-reglement">Total : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s)</p>
+          <div className="tk-sign">
+            <p>Livré par : {data.livreur ?? "____________________"}</p>
+            <p>Reçu par (nom) : ______________</p>
+            <p>Signature :</p>
+            <div className="tk-sign-box" />
+          </div>
+          <div className="tk-dash" />
+          <p className="tk-note">Marchandise vérifiée et reçue conforme.</p>
+        </>
+      ) : (
+        <>
+          <div className="tk-totals">
+            <div><span>Total HT</span><span>{eur(totalHT)}</span></div>
+            <div><span>TVA {tvaRate.toLocaleString("fr-FR")} %</span><span>{eur(tva)}</span></div>
+            <div className="tk-totals-ttc"><span>Total TTC</span><span>{eur(data.total)}</span></div>
+            {data.avoirApplique > 0 && <div><span>Avoir déduit</span><span>− {eur(data.avoirApplique)}</span></div>}
+            <div><span>Payé</span><span>{eur(data.paye)}</span></div>
+            {data.reste > 0 && <div className="tk-totals-due"><span>Reste à payer</span><span>{eur(data.reste)}</span></div>}
+          </div>
 
-      <p className="tk-note">
-        Merci de vérifier la marchandise à la réception.
-        <br />
-        En cas d&apos;anomalie, nous contacter sous 24h.
-        {data.returnPolicy && (
-          <>
-            <br />
-            {data.returnPolicy}
-          </>
-        )}
-      </p>
+          <p className="tk-reglement">Règlement : {reglementText(data)}</p>
+
+          <div className="tk-dash" />
+
+          {(data.promisedDate || data.consigneDeadline) && (
+            <p className="tk-note tk-note--strong">
+              {data.promisedDate && <>Pièces à venir promises pour le {new Date(data.promisedDate).toLocaleDateString("fr-FR")}</>}
+              {data.promisedDate && data.consigneDeadline && <br />}
+              {data.consigneDeadline && <>Ancienne pièce (consigne) à rapporter avant le {new Date(data.consigneDeadline).toLocaleDateString("fr-FR")}</>}
+            </p>
+          )}
+
+          <p className="tk-note">
+            Merci de vérifier la marchandise à la réception. En cas d&apos;anomalie, nous contacter sous 24h.
+            {data.returnPolicy && (
+              <>
+                <br />
+                {data.returnPolicy}
+              </>
+            )}
+          </p>
+        </>
+      )}
 
       <Barcode value={data.ref} />
       <p className="tk-barcode-label">{data.ref}</p>
 
       <p className="tk-footer">
-        MERCI POUR VOTRE CONFIANCE !
+        Merci pour votre confiance !
         <br />
         {magasin}
-        {org?.phone ? (
-          <>
-            <br />
-            {org.phone}
-          </>
-        ) : null}
       </p>
     </div>
   );

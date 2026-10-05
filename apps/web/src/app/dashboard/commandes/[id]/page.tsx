@@ -21,11 +21,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { OrderTicket, type TicketData } from "@/components/print/OrderTicket";
 import { OrderSavPanel } from "@/components/sav/OrderSavPanel";
 import { loadSavSettingsSafe } from "@/lib/data/sav";
+import { printTicket } from "@/lib/print-ticket";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import { createClient } from "@/lib/supabase/client";
 import { workflowLabel } from "@/lib/data/dashboard";
@@ -159,8 +161,9 @@ export default function OrderDetailPage() {
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [org, setOrg] = useState<OrganizationSettings | null>(null);
-  /** Which document the next window.print() renders. */
-  const [printMode, setPrintMode] = useState<"facture" | "bl" | "ticket" | null>(null);
+  /** The ticket being printed (bon de commande or bon de livraison, 80 mm). */
+  const [printMode, setPrintMode] = useState<"bl" | "ticket" | null>(null);
+  const printRef = useRef<HTMLDivElement>(null);
   /** Return policy printed at the foot of the bon de commande (Paramètres → Après-vente). */
   const [returnPolicy, setReturnPolicy] = useState<string | null>(null);
 
@@ -174,26 +177,19 @@ export default function OrderDetailPage() {
       .catch(() => {});
   }, [supabase, profile?.organization_id]);
 
+  /** Renders the ticket, hands it to the 80 mm one-page print (lib/print-ticket.ts), then drops it. */
   const printDoc = useCallback(
-    (mode: "facture" | "bl" | "ticket") => {
-      setPrintMode(mode);
-      // Tab title becomes the suggested PDF file name (REQ-…-facture.pdf).
-      if (order?.ref) document.title = mode === "ticket" ? order.ref : `${order.ref}-${mode === "facture" ? "facture" : "bon-livraison"}`;
-      // Let React paint the .print-doc block before opening the dialog.
-      window.setTimeout(() => window.print(), 60);
-    },
-    [order?.ref],
-  );
-
-  useEffect(() => {
-    const initialTitle = document.title;
-    const reset = () => {
+    (mode: "bl" | "ticket") => {
+      if (!order) return;
+      flushSync(() => setPrintMode(mode));
+      printTicket(
+        mode === "ticket" ? order.ref : `${order.ref}-bon-livraison`,
+        printRef.current?.querySelector<HTMLElement>(".tk-doc"),
+      );
       setPrintMode(null);
-      document.title = initialTitle;
-    };
-    window.addEventListener("afterprint", reset);
-    return () => window.removeEventListener("afterprint", reset);
-  }, []);
+    },
+    [order],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -1061,94 +1057,14 @@ export default function OrderDetailPage() {
         </div>
       </div>
 
-      {/* ---- Bon de commande (the ticket of the counter), printed alone ---- */}
-      {printMode === "ticket" && (
-        <div className="tk-print-only">
-          <OrderTicket org={org} data={ticketOf(order, returnPolicy)} />
-        </div>
-      )}
-
-      {/* ---- Printable document (Facture / Bon de livraison) ---- */}
-      {printMode && printMode !== "ticket" && (
-        <div className="print-doc">
-          <div className="print-head">
-            <div>
-              <p className="print-org">{org?.name ?? "Magasin"}</p>
-              {org?.address && <p className="print-org-line">{org.address}</p>}
-              {(org?.city || org?.phone) && (
-                <p className="print-org-line">
-                  {[org?.city, org?.phone ? `Tél. ${org.phone}` : null].filter(Boolean).join(" · ")}
-                </p>
-              )}
-            </div>
-            <div className="print-doctype">
-              <p className="print-doctype-name">{printMode === "facture" ? "FACTURE" : "BON DE LIVRAISON"}</p>
-              <p className="print-org-line">{order.ref}</p>
-              <p className="print-org-line">{fmtDate(order.date)}</p>
-            </div>
-          </div>
-
-          <div className="print-client">
-            <p className="print-section-title">{order.accountKind === "PRO" ? "Client PRO" : order.isGarage ? "Garage" : "Client"}</p>
-            <p className="print-client-name">{order.clientName}</p>
-            {order.clientPhone && <p className="print-org-line">{order.clientPhone}</p>}
-            {(order.vehicle || order.plate) && (
-              <p className="print-org-line">
-                {[order.vehicle, order.plate].filter(Boolean).join(" · ")}
-                {order.kilometrage != null ? ` · ${order.kilometrage.toLocaleString("fr-FR")} km` : ""}
-              </p>
-            )}
-          </div>
-
-          <table className="print-table">
-            <thead>
-              <tr>
-                <th>Référence</th>
-                <th>Désignation</th>
-                <th className="print-num">Qté</th>
-                {printMode === "facture" && <th className="print-num">PU HT/TTC</th>}
-                {printMode === "facture" && <th className="print-num">Total</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {order.lines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.reference}</td>
-                  <td>{l.designation}</td>
-                  <td className="print-num">{l.quantity}</td>
-                  {printMode === "facture" && <td className="print-num">{eur(l.prixVente)}</td>}
-                  {printMode === "facture" && <td className="print-num">{eur(l.total)}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {printMode === "facture" ? (
-            <div className="print-totals">
-              {order.remiseMontant > 0 && <div><span>Remise commerciale</span><strong>− {eur(order.remiseMontant)}</strong></div>}
-              <div><span>Total commande</span><strong>{eur(order.total)}</strong></div>
-              {order.avoirApplique > 0 && <div><span>Avoir déduit</span><strong>− {eur(order.avoirApplique)}</strong></div>}
-              <div><span>Payé</span><strong>{eur(order.paye + order.avance)}</strong></div>
-              <div className="print-totals-due"><span>Reste à payer</span><strong>{eur(order.solde)}</strong></div>
-            </div>
-          ) : (
-            <div className="print-sign">
-              <div>
-                <p className="print-section-title">Livré par</p>
-                <p className="print-org-line">{order.livreurName ?? "________________"}</p>
-              </div>
-              <div>
-                <p className="print-section-title">Signature du client</p>
-                <div className="print-sign-box" />
-              </div>
-            </div>
-          )}
-
-          <p className="print-footer">
-            {printMode === "facture"
-              ? "Merci de votre confiance — TVA 20 % incluse dans les prix affichés."
-              : "Marchandise vérifiée et reçue conforme."}
-          </p>
+      {/* ---- Bon de commande / bon de livraison: 80 mm tickets, never shown, copied by printTicket ---- */}
+      {printMode && (
+        <div className="tk-print-only" ref={printRef}>
+          <OrderTicket
+            org={org}
+            kind={printMode === "bl" ? "livraison" : "commande"}
+            data={{ ...ticketOf(order, returnPolicy), livreur: order.livreurName }}
+          />
         </div>
       )}
     </div>

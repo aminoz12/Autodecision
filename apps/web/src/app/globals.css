@@ -6281,62 +6281,89 @@ svg.lucide { stroke-width: 2; }
 .print-sign-box { height: 90px; border: 1.5px solid #bbb; border-radius: 6px; margin-top: 6px; }
 .print-footer { margin-top: 28px; text-align: center; font-size: 11.5px; color: #666; border-top: 1px solid #ddd; padding-top: 10px; }
 
-/* ================= Ticket de commande (tk-) — receipt style ================= */
+/* ================= Ticket 80 mm (tk-) — thermal receipt =================
+   Bon de commande / bon de livraison / reçu. Paper 80 mm, printable 72 mm
+   (4 mm margins), Lucida Console 8 pt like a till font, black only: no grey,
+   no background fill (lost on a thermal head or without « graphiques
+   d'arrière-plan »). Printed as one long page by lib/print-ticket.ts. */
 .tk-preview { display: flex; justify-content: center; margin-top: 24px; }
 .tk-doc {
-  width: 380px;
-  max-width: 100%;
+  box-sizing: border-box;
+  width: 80mm;
+  padding: 3mm 4mm 4mm;
   background: #fff;
-  color: #111;
-  font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 22px 18px;
-  border: 1px solid var(--border-light, #e3e8ee);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+  color: #000;
+  font-family: "Lucida Console", Consolas, "Courier New", monospace;
+  font-size: 8pt;
+  line-height: 1.35;
+  font-weight: 400;
+  text-align: left;
+  overflow-wrap: anywhere;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
+.tk-doc * { color: #000; box-sizing: border-box; }
+.tk-doc p { margin: 0; }
+/* On screen only: a sheet of paper, a little larger to read. */
+.tk-preview .tk-doc { zoom: 1.25; box-shadow: 0 0 0 1px #000, 0 8px 24px rgba(0, 0, 0, 0.12); }
 .tk-header { text-align: center; }
-.tk-shop { font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
-.tk-shop-sub { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.28em; margin-top: 2px; }
-.tk-dash { border-top: 2px dashed #111; margin: 12px 0; }
-.tk-dash--tight { margin: 6px 0; }
-.tk-doctitle { text-align: center; font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin: 2px 0 8px; }
-.tk-refband { text-align: center; background: #111; color: #fff; font-weight: 700; letter-spacing: 0.06em; padding: 5px 8px; font-size: 13px; }
-.tk-refband--sub { font-size: 11px; text-transform: uppercase; text-align: left; padding: 4px 6px; }
-.tk-parts + .tk-parts { margin-top: 12px; }
-.tk-kv { display: flex; flex-direction: column; gap: 3px; }
-.tk-kv > div { display: flex; gap: 6px; }
-.tk-kv dt { font-weight: 700; text-transform: uppercase; white-space: nowrap; }
-.tk-kv dt::after { content: " :"; }
-.tk-kv dd { margin: 0; text-transform: uppercase; overflow-wrap: anywhere; }
-.tk-table { width: 100%; border-collapse: collapse; font-size: 10px; }
-.tk-table th { background: #111; color: #fff; text-transform: uppercase; padding: 4px; text-align: left; font-size: 9.5px; letter-spacing: 0.02em; }
-.tk-table td { padding: 5px 4px; border-bottom: 1px solid #d9d9d9; text-transform: uppercase; vertical-align: top; overflow-wrap: anywhere; }
-.tk-table td:first-child { white-space: nowrap; }
-.tk-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.tk-totals { margin-top: 10px; margin-left: auto; width: 230px; max-width: 100%; display: flex; flex-direction: column; gap: 3px; }
-.tk-totals > div { display: flex; justify-content: space-between; font-weight: 700; }
-.tk-totals-ttc { font-size: 14px; }
-.tk-reglement { margin-top: 10px; font-weight: 700; }
-.tk-note { text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.tk-barcode { display: block; width: 82%; height: 48px; margin: 12px auto 4px; }
-.tk-barcode-label { text-align: center; font-size: 13px; letter-spacing: 0.12em; }
-.tk-footer { text-align: center; font-weight: 700; text-transform: uppercase; margin-top: 10px; font-size: 12px; }
+.tk-shop { font-size: 13pt; font-weight: 700; text-transform: uppercase; line-height: 1.2; }
+.tk-shop-sub { font-weight: 700; text-transform: uppercase; margin-bottom: 1mm; }
+.tk-dash { border-top: 1px dashed #000; margin: 2mm 0; }
+.tk-doctitle { text-align: center; font-size: 11pt; font-weight: 700; text-transform: uppercase; margin-bottom: 1.5mm; }
+.tk-refband {
+  text-align: center;
+  font-size: 10pt;
+  font-weight: 700;
+  border-top: 2px solid #000;
+  border-bottom: 2px solid #000;
+  padding: 1mm 0;
+  margin-bottom: 2mm;
+}
+.tk-kv { margin: 0; display: grid; grid-template-columns: max-content 1fr; column-gap: 2mm; row-gap: 0.4mm; }
+.tk-kv > div { display: contents; }
+.tk-kv dt { font-weight: 700; text-transform: uppercase; }
+.tk-kv dd { margin: 0; text-transform: uppercase; }
+.tk-parts + .tk-parts { margin-top: 3mm; }
+.tk-parts-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 2mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid #000;
+  padding-bottom: 0.5mm;
+  margin-bottom: 1mm;
+}
+.tk-item { padding: 0.8mm 0; border-bottom: 1px dotted #000; break-inside: avoid; }
+.tk-item:last-child { border-bottom: 0; }
+.tk-item-name { text-transform: uppercase; }
+.tk-item-row { display: flex; justify-content: space-between; gap: 2mm; padding-left: 3mm; white-space: nowrap; }
+.tk-item-flag { padding-left: 3mm; font-weight: 700; text-transform: uppercase; }
+.tk-totals { display: flex; flex-direction: column; gap: 0.4mm; }
+.tk-totals > div { display: flex; justify-content: space-between; gap: 2mm; text-transform: uppercase; }
+.tk-totals > div > span:last-child { white-space: nowrap; }
+.tk-totals-ttc { font-size: 10pt; font-weight: 700; border-top: 1px solid #000; padding-top: 0.8mm; margin-top: 0.4mm; }
+.tk-totals-due { font-size: 10pt; font-weight: 700; }
+.tk-reglement { margin-top: 2mm; font-weight: 700; text-transform: uppercase; }
+.tk-note { text-align: center; }
+.tk-note--strong { font-weight: 700; text-transform: uppercase; margin-bottom: 1.5mm; }
+.tk-sign { display: flex; flex-direction: column; gap: 2.5mm; margin-top: 3mm; }
+.tk-sign-box { height: 18mm; border: 1px solid #000; }
+.tk-barcode { display: block; width: 60mm; height: 12mm; margin: 3mm auto 1mm; }
+.tk-barcode-label { text-align: center; font-size: 9pt; font-weight: 700; letter-spacing: 0.08em; }
+.tk-footer { text-align: center; font-weight: 700; text-transform: uppercase; margin-top: 2mm; }
+
+/* Printing a ticket: only the copy in #tk-print-root, on its own 80 mm page.
+   Everything else is display:none — hidden content would still take room
+   and push blank pages after the ticket. */
+#tk-print-root { position: absolute; left: -10000px; top: 0; }
 @media print {
-  body * { visibility: hidden; }
-  /* visibility alone leaves the sidebar's active highlight painted */
-  .sidebar, .sidebar-mobile-header { display: none !important; }
-  .tk-doc, .tk-doc * { visibility: visible; }
-  .tk-doc {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    border: none;
-    box-shadow: none;
-    border-radius: 0;
-  }
+  html.tk-printing, html.tk-printing body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; min-height: 0 !important; overflow: visible !important; }
+  html.tk-printing body > *:not(#tk-print-root) { display: none !important; }
+  html.tk-printing #tk-print-root { position: static; left: auto; }
+  html.tk-printing #tk-print-root, html.tk-printing #tk-print-root * { visibility: visible !important; }
+  html.tk-printing #tk-print-root .tk-doc { zoom: 1; box-shadow: none; margin: 0; }
 }
 
 /* ================= Space logins (per-space auth themes) ================= */
