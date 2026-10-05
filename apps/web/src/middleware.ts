@@ -1,10 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { checkSession } from "@/lib/supabase/middleware";
 
-// Deliberately the deprecated `middleware` convention, NOT Next 16's `proxy`:
-// proxy.ts runs on the Node.js runtime, which Netlify's Next adapter cannot
-// bundle yet ("Could not load edge function ...node-middleware"). middleware.ts
-// keeps the edge runtime — the path Netlify fully supports.
+// Still the deprecated `middleware` convention (edge runtime), chosen when the app
+// ran on Netlify, whose adapter could not bundle Next 16's Node.js `proxy`. Vercel
+// runs either; moving to proxy.ts is possible but has not been tested.
 
 /**
  * Protected space prefix → its login door (which itself stays public).

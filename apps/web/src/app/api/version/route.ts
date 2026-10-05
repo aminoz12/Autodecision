@@ -9,7 +9,7 @@
 export const dynamic = "force-static";
 
 const BUILD =
-  (process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_REF || "").slice(0, 7) || "dev";
+  (process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7) || "dev";
 
 export function GET() {
   return Response.json({ build: BUILD });

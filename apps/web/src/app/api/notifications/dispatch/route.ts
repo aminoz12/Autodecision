@@ -22,6 +22,12 @@ export const maxDuration = 60;
  * supplier warranty reminders.
  */
 const BATCH = 25;
+/**
+ * The scheduled reminders scan every order: about once an hour is enough. The Vercel
+ * Cron fires every 10 minutes to empty the queues, and runs the scan only when the
+ * last one is older than this (55 min, so a fire close to the hour mark still counts).
+ */
+const SCHEDULED_EVERY_MS = 55 * 60_000;
 let lastRunAt = 0;
 let lastScheduledAt = 0;
 
@@ -54,13 +60,15 @@ export async function POST(request: Request) {
   lastRunAt = Date.now();
 
   const admin = createAdminClient();
-  const origin = new URL(request.url).origin;
+  // Links in the messages (avis, STOP, « Ouvrir ») must be the public address, not the
+  // deployment URL a cron call arrives on.
+  const origin = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/+$/, "") || new URL(request.url).origin;
   let scheduled: number | null = null;
   try {
     if (isCron || Date.now() - lastScheduledAt > 3_600_000) {
       const { data: job } = await admin.from("system_jobs").select("last_run_at").eq("name", "scheduled_notifications").maybeSingle();
       const last = job?.last_run_at ? new Date(job.last_run_at as string).getTime() : 0;
-      if (isCron || Date.now() - last > 3_600_000) {
+      if (Date.now() - last > SCHEDULED_EVERY_MS) {
         const { data } = await admin.rpc("generate_scheduled_notifications");
         scheduled = typeof data === "number" ? data : Number(data ?? 0);
       }
@@ -74,9 +82,7 @@ export async function POST(request: Request) {
   let sms: QueueResult | null = null;
   let supplierReminders: { sent: number; simulated: number } | null = null;
   try {
-    // Links in the messages (avis, STOP) must be the public address, not an internal one.
-    const publicOrigin = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/+$/, "") || origin;
-    sms = await processSmsQueue(admin, { origin: publicOrigin });
+    sms = await processSmsQueue(admin, { origin });
     supplierReminders = await processSupplierReminders(admin);
   } catch (e) {
     console.error("dispatch: sms queue failed", e);

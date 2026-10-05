@@ -49,13 +49,11 @@ Supabase → Authentication → URL configuration must list `<site>/auth/callbac
 
 ## Deployment
 
-Vercel is the target host: step-by-step in [docs/deploy-vercel.md](docs/deploy-vercel.md)
-(project root `apps/web`, functions in Frankfurt, daily cron in `apps/web/vercel.json`).
+Hosted on Vercel (Pro) at `https://app.autodecision.pro`, deployed on every push to
+`main`: setup in [docs/deploy-vercel.md](docs/deploy-vercel.md) (project root
+`apps/web`, functions in Frankfurt, a cron every 10 minutes in `apps/web/vercel.json`).
 
-Netlify still works during the switch: `netlify.toml` builds from the repo root
-(`npm --workspace web run build`, publish `apps/web/.next`, `@netlify/plugin-nextjs`).
-
-On either host, set every variable of `apps/web/.env.example` in the site environment
+Set every variable of `apps/web/.env.example` in the site environment
 (server-only ones without `NEXT_PUBLIC_`). Health check: `GET /api/health`.
 
 ## Project layout
