@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 
 export type Notification = {
   id: string;
@@ -48,13 +49,16 @@ export async function loadNotifications(
 
 /** Destinations (href) of every unread notification: feeds the per-page counters in the menu. */
 export async function loadUnreadHrefs(supabase: SupabaseClient, orgId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("notifications")
-    .select("href")
-    .eq("organization_id", orgId)
-    .is("read_at", null)
-    .not("href", "is", null)
-    .limit(500);
+  const { data, error } = await pageAll((from, to) =>
+    supabase
+      .from("notifications")
+      .select("href")
+      .eq("organization_id", orgId)
+      .is("read_at", null)
+      .not("href", "is", null)
+      .order("id")
+      .range(from, to),
+  );
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => String((r as { href: string | null }).href ?? "")).filter(Boolean);
 }

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 import { toNumber } from "@/lib/data/saas";
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +73,7 @@ export async function loadParticulierClients(
   orgId: string,
 ): Promise<ClientSummary[]> {
   const [clientsRes, ordersRes, loyaltyRes] = await Promise.all([
+    pageAll((from, to) =>
     supabase
       .from("clients")
       .select("id,name,phone,email,city,immatriculation,vehicle_model,is_active,createdAt")
@@ -80,21 +82,24 @@ export async function loadParticulierClients(
       // Clients PRO have their own list (/dashboard/pros).
       .neq("account_type", "PRO")
       .order("name")
-      .limit(2000),
-    supabase
-      .from("orders")
-      .select("client_id,montant_total,solde_restant,date_commande")
-      .eq("organization_id", orgId)
-      .eq("devis", false)
-      .eq("is_restock", false)
-      .is("cancelled_at", null)
-      .not("client_id", "is", null)
-      .limit(5000),
-    supabase
-      .from("loyalty_transactions")
-      .select("client_id,points,kind")
-      .eq("organization_id", orgId)
-      .limit(10000),
+      .order("id")
+      .range(from, to),
+    ),
+    pageAll((from, to) =>
+      supabase
+        .from("orders")
+        .select("client_id,montant_total,solde_restant,date_commande")
+        .eq("organization_id", orgId)
+        .eq("devis", false)
+        .eq("is_restock", false)
+        .is("cancelled_at", null)
+        .not("client_id", "is", null)
+        .order("id")
+        .range(from, to),
+    ),
+    pageAll((from, to) =>
+      supabase.from("loyalty_transactions").select("client_id,points,kind").eq("organization_id", orgId).order("id").range(from, to),
+    ),
   ]);
   if (clientsRes.error) throw new Error(clientsRes.error.message);
   if (ordersRes.error) throw new Error(ordersRes.error.message);

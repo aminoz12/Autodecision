@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 import { toNumber } from "@/lib/data/saas";
 import { computeTournee } from "@/lib/data/orders";
 
@@ -84,22 +85,6 @@ export type BoardLine = {
   /** Who handed the order to the livreur. */
   dispatchedBy: string | null;
 };
-
-/** Supabase answers at most 1000 rows per request: read page after page (by id, a stable order) until done. */
-async function pageAll(
-  query: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
-  maxPages = 10,
-): Promise<{ data: unknown[] | null; error: { message: string } | null }> {
-  const PAGE = 1000;
-  const rows: unknown[] = [];
-  for (let page = 0; page < maxPages; page++) {
-    const { data, error } = await query(page * PAGE, page * PAGE + PAGE - 1);
-    if (error) return { data: null, error };
-    rows.push(...(data ?? []));
-    if ((data ?? []).length < PAGE) break;
-  }
-  return { data: rows, error: null };
-}
 
 export async function loadReceptionBoard(
   supabase: SupabaseClient,

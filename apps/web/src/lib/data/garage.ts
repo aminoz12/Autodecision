@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 import type { PaymentTermsDays } from "@/lib/constants/enums";
 import { toNumber } from "@/lib/data/saas";
 import { createOrderWithLines } from "@/lib/data/orders";
@@ -160,11 +161,14 @@ export async function loadGarageOrders(
   const orderIds = (data ?? []).map((o) => String((o as Record<string, unknown>).id));
   const linesByOrder = new Map<string, Record<string, unknown>[]>();
   if (orderIds.length > 0) {
-    const { data: lineRows, error: lErr } = await supabase
-      .from("garage_order_lines")
-      .select("id,order_id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire")
-      .in("order_id", orderIds)
-      .limit(5000);
+    const { data: lineRows, error: lErr } = await pageAll((from, to) =>
+      supabase
+        .from("garage_order_lines")
+        .select("id,order_id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire")
+        .in("order_id", orderIds)
+        .order("id")
+        .range(from, to),
+    );
     if (lErr) throw new Error(lErr.message);
     for (const raw of lineRows ?? []) {
       const l = raw as Record<string, unknown>;

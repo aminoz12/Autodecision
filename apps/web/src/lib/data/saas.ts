@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 
 type Embedded<T> = T | T[] | null | undefined;
 
@@ -386,7 +387,7 @@ export async function loadRestockAlerts(
     "id,reference,nom_produit,quantity,prix_achat_unitaire,order_id," +
     "orders!inner(ref_demande,date_commande,client_phone,devis,is_restock,clients(name))";
   const query = (withSkipFilter: boolean) =>
-    restockAlertsQuery(supabase, orgId, columns, withSkipFilter).limit(500);
+    pageAll((from, to) => restockAlertsQuery(supabase, orgId, columns, withSkipFilter).order("id").range(from, to));
   let { data, error } = await query(true);
   if (error && /restock_skipped_at/.test(error.message)) ({ data, error } = await query(false));
   if (error) throw new Error(error.message);
@@ -458,7 +459,7 @@ export async function loadRestockHistory(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<RestockHistoryRow[]> {
-  const { data, error } = await supabase
+  const { data, error } = await pageAll((from, to) => supabase
     .from("order_lines")
     .select(
       "id,reference,reference_commande,nom_produit,quantity,reception_status,retour_stock_fait," +
@@ -467,7 +468,10 @@ export async function loadRestockHistory(
     .eq("organization_id", orgId)
     .eq("depuis_magasin", true)
     .not("supplier_id", "is", null)
-    .limit(500);
+    // Most recent first; three pages (3 000 lines) are plenty for a history screen.
+    .order("received_at", { ascending: false, nullsFirst: false })
+    .order("id")
+    .range(from, to), 3);
 
   if (error) throw new Error(error.message);
 

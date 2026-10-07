@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pageAll } from "./paging";
 
 /* ------------------------------------------------------------------ */
 /*  Shared helpers for wiring the /dashboard admin pages to Supabase. */
@@ -175,25 +176,29 @@ export async function loadDashboardOverview(
       .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
       .order("createdAt", { ascending: false })
       .limit(5),
-    supabase
-      .from("order_lines")
-      .select("quantity,qte_recue,depuis_magasin,suppliers(name),orders!inner(devis)")
-      .eq("organization_id", orgId)
-      .eq("orders.devis", false)
-      .neq("reception_status", "RECEIVED")
-      .limit(1000),
-    supabase
-      .from("clients")
-      .select("name,phone,rating,is_active")
-      .eq("organization_id", orgId)
-      .limit(1000),
-    supabase
-      .from("orders")
-      .select("date_commande,client_id,clients(name)")
-      .eq("organization_id", orgId)
-      .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
-      .gte("date_commande", since30)
-      .limit(1000),
+    pageAll((from, to) =>
+      supabase
+        .from("order_lines")
+        .select("quantity,qte_recue,depuis_magasin,suppliers(name),orders!inner(devis)")
+        .eq("organization_id", orgId)
+        .eq("orders.devis", false)
+        .neq("reception_status", "RECEIVED")
+        .order("id")
+        .range(from, to),
+    ),
+    pageAll((from, to) =>
+      supabase.from("clients").select("name,phone,rating,is_active").eq("organization_id", orgId).order("id").range(from, to),
+    ),
+    pageAll((from, to) =>
+      supabase
+        .from("orders")
+        .select("date_commande,client_id,clients(name)")
+        .eq("organization_id", orgId)
+        .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
+        .gte("date_commande", since30)
+        .order("id")
+        .range(from, to),
+    ),
   ]);
 
   for (const res of [recentRes, recepRes, clientsRes, windowRes]) {
