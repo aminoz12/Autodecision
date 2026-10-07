@@ -400,6 +400,8 @@ export type OrderDetail = {
   isGarage: boolean;
   /** GARAGE, PRO (a professional served at the counter), or null for an ordinary counter client. */
   accountKind: "GARAGE" | "PRO" | null;
+  /** Null on a DELIVERED order = picked up at the counter (migration 20261007010000). */
+  livreurId: string | null;
   livreurName: string | null;
   /** Credit note amount consumed as payment on this order. */
   avoirApplique: number;
@@ -562,6 +564,7 @@ export async function loadOrderDetail(
       failedAt: (order.delivery_failed_at as string | null) ?? null,
       attempts: toNumber(order.delivery_attempts),
     },
+    livreurId: (order.livreur_id as string | null) ?? null,
     livreurName: (() => {
       const l = first(order.livreurs as Embedded<Record<string, unknown>>);
       return l ? String(l.name ?? "") : null;

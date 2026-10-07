@@ -259,7 +259,7 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {(data?.recentOrders ?? []).map((o) => {
-                  const wf = workflowLabel(o.workflow);
+                  const wf = workflowLabel(o.workflow, { livreurId: o.livreurId });
                   return (
                     <tr key={o.id}>
                       <td className="order-id">

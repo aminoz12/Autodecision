@@ -7,6 +7,7 @@ function order(p: Partial<GarageOrder> & { id: string }): GarageOrder {
     date: "2026-09-05",
     deliveryAt: null,
     workflow: "DELIVERED",
+    livreurId: "lv1",
     devis: false,
     devisStatus: null,
     total: 100,

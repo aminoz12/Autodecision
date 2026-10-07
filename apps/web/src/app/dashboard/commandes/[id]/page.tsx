@@ -385,7 +385,7 @@ export default function OrderDetailPage() {
     );
   }
 
-  const wf = workflowLabel(order.workflow);
+  const wf = workflowLabel(order.workflow, { livreurId: order.livreurId });
   const pay = PAIEMENT_LABEL[order.statutPaiement] ?? {
     label: order.statutPaiement,
     type: "info" as const,
@@ -987,7 +987,11 @@ export default function OrderDetailPage() {
                   </div>
                   <div className="od-kv-row">
                     <dt>Statut livreur</dt>
-                    <dd>{LIVREUR_LABEL[order.statutLivreur] ?? order.statutLivreur}</dd>
+                    <dd>
+                      {order.workflow === "DELIVERED" && !order.livreurId
+                        ? "Retirée au comptoir, sans livraison"
+                        : (LIVREUR_LABEL[order.statutLivreur] ?? order.statutLivreur)}
+                    </dd>
                   </div>
                   <div className="od-kv-row">
                     <dt>Date d&apos;envoi</dt>

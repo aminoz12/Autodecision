@@ -418,7 +418,7 @@ export default function ClientProfilePage() {
               </thead>
               <tbody>
                 {client.ordersList.map((o) => {
-                  const wf = workflowLabel(o.workflow);
+                  const wf = workflowLabel(o.workflow, { livreurId: o.livreurId });
                   const pay = PAY_LABEL[o.statutPaiement] ?? { label: o.statutPaiement, cls: "blue" };
                   const expanded = openOrder === o.id;
                   return (

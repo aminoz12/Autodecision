@@ -103,6 +103,8 @@ export type GarageOrder = {
   date: string | null;
   deliveryAt: string | null;
   workflow: string;
+  /** Null on a DELIVERED order = picked up at the counter, not delivered. */
+  livreurId: string | null;
   devis: boolean;
   devisStatus: string | null;
   total: number;
@@ -147,7 +149,7 @@ export async function loadGarageOrders(
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model",
+      "id,ref_demande,date_commande,date_envoi,workflow_status,livreur_id,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model",
     )
     .eq("organization_id", orgId)
     .eq("client_id", clientId)
@@ -209,6 +211,7 @@ export async function loadGarageOrders(
       date: (row.date_commande as string | null) ?? null,
       deliveryAt: (row.date_envoi as string | null) ?? null,
       workflow: String(row.workflow_status ?? "PENDING"),
+      livreurId: (row.livreur_id as string | null) ?? null,
       devis: Boolean(row.devis),
       devisStatus: (row.devis_status as string | null) ?? null,
       total: toNumber(row.montant_total),
@@ -565,19 +568,20 @@ export const WORKFLOW_LABEL: Record<string, { label: string; cls: string }> = {
  * Lines the magasin answered "non disponible" (NOT_RECEIVED) never arrive,
  * so they do not hold the order back.
  */
-export type GarageStage = "AWAITING_RECEPTION" | "PREPARING" | "IN_DELIVERY" | "DELIVERED";
+export type GarageStage = "AWAITING_RECEPTION" | "PREPARING" | "IN_DELIVERY" | "DELIVERED" | "PICKED_UP";
 
 export const GARAGE_STAGE_LABEL: Record<GarageStage, { label: string; cls: string }> = {
   AWAITING_RECEPTION: { label: "Commande en attente de réception", cls: "amber" },
   PREPARING: { label: "Commande en préparation", cls: "blue" },
   IN_DELIVERY: { label: "Commande en cours de livraison", cls: "violet" },
   DELIVERED: { label: "Commande livrée", cls: "green" },
+  PICKED_UP: { label: "Commande retirée au comptoir", cls: "green" },
 };
 
 export function garageStage(
-  order: Pick<GarageOrder, "workflow" | "lines">,
+  order: Pick<GarageOrder, "workflow" | "lines" | "livreurId">,
 ): GarageStage {
-  if (order.workflow === "DELIVERED") return "DELIVERED";
+  if (order.workflow === "DELIVERED") return order.livreurId ? "DELIVERED" : "PICKED_UP";
   if (order.workflow === "IN_TRANSIT") return "IN_DELIVERY";
   const awaited = order.lines.filter(
     (l) => l.status === "PENDING" || l.status === "BACKORDER" || l.status === "PARTIAL",
@@ -741,7 +745,7 @@ export async function loadGarageOrdersForStaff(
 ): Promise<GarageOrder[]> {
   /** 2 = règlement + montant offert, 1 = règlement only, 0 = neither (older databases). */
   const select = (level: 0 | 1 | 2) =>
-    "id,ref_demande,date_commande,date_envoi,workflow_status,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model," +
+    "id,ref_demande,date_commande,date_envoi,workflow_status,livreur_id,devis,devis_status,montant_total,montant_paye,solde_restant,mode_paiement,echeance,immatriculation,vehicle_model," +
     `order_lines(id,reference,nom_produit,quantity,reception_status,disponible,retour_impossible,prix_vente_unitaire${level >= 1 ? ",reglement" : ""}${level === 2 ? ",offert_montant" : ""})`;
   const query = (sel: string) =>
     supabase.from("orders").select(sel).eq("organization_id", orgId).eq("client_id", clientId).eq("is_restock", false).order("createdAt", { ascending: false }).limit(500);
@@ -784,6 +788,7 @@ export async function loadGarageOrdersForStaff(
       date: (row.date_commande as string | null) ?? null,
       deliveryAt: (row.date_envoi as string | null) ?? null,
       workflow: String(row.workflow_status ?? "PENDING"),
+      livreurId: (row.livreur_id as string | null) ?? null,
       devis: Boolean(row.devis),
       devisStatus: (row.devis_status as string | null) ?? null,
       total: toNumber(row.montant_total),

@@ -280,6 +280,7 @@ export type ClientOrder = {
   balance: number;
   statutPaiement: string;
   workflow: string;
+  livreurId: string | null;
   plate: string | null;
   vehicle: string | null;
   kilometrage: number | null;
@@ -343,7 +344,7 @@ export async function loadClientProfile(
     supabase
       .from("orders")
       .select(
-        "id,ref_demande,date_commande,montant_total,montant_paye,solde_restant,statut_paiement,workflow_status," +
+        "id,ref_demande,date_commande,montant_total,montant_paye,solde_restant,statut_paiement,workflow_status,livreur_id," +
           "immatriculation,vehicle_model,kilometrage," +
           "order_lines(id,reference,nom_produit,quantity,prix_vente_unitaire,depuis_magasin,reception_status,qte_remise,suppliers(name))",
       )
@@ -407,6 +408,7 @@ export async function loadClientProfile(
       balance: toNumber(row.solde_restant),
       statutPaiement: String(row.statut_paiement ?? ""),
       workflow: String(row.workflow_status ?? "PENDING"),
+      livreurId: (row.livreur_id as string | null) ?? null,
       plate: (row.immatriculation as string | null) ?? null,
       vehicle: (row.vehicle_model as string | null) ?? null,
       kilometrage: row.kilometrage == null ? null : toNumber(row.kilometrage),

@@ -19,14 +19,20 @@ function addDays(d: Date, n: number): Date {
   return x;
 }
 
-/** Map a workflow_status enum value to a French label + badge tone. */
-export function workflowLabel(status: string | null | undefined): {
+/**
+ * Map a workflow_status enum value to a French label + badge tone. A DELIVERED
+ * order with no livreur was picked up at the counter (migration 20261007010000).
+ */
+export function workflowLabel(
+  status: string | null | undefined,
+  opts?: { livreurId?: string | null },
+): {
   label: string;
   type: "success" | "info" | "warning";
 } {
   switch (status) {
     case "DELIVERED":
-      return { label: "Livré", type: "success" };
+      return opts && !opts.livreurId ? { label: "Retirée au comptoir", type: "success" } : { label: "Livrée", type: "success" };
     case "IN_TRANSIT":
       return { label: "En cours de livraison", type: "info" };
     case "TO_COLLECT":
@@ -55,6 +61,7 @@ export type RecentOrder = {
   ref: string;
   client: string;
   workflow: string;
+  livreurId: string | null;
   livraison: string | null;
 };
 
@@ -170,7 +177,7 @@ export async function loadDashboardOverview(
     supabase
       .from("orders")
       .select(
-        "id,ref_demande,workflow_status,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
+        "id,ref_demande,workflow_status,livreur_id,date_envoi,date_commande,client_phone,immatriculation,clients(name)",
       )
       .eq("organization_id", orgId)
       .eq("devis", false).eq("is_restock", false).is("cancelled_at", null)
@@ -232,6 +239,7 @@ export async function loadDashboardOverview(
       ref: String(row.ref_demande ?? ""),
       client,
       workflow: String(row.workflow_status ?? "PENDING"),
+      livreurId: (row.livreur_id as string | null) ?? null,
       livraison:
         (row.date_envoi as string | null) ??
         (row.date_commande as string | null) ??

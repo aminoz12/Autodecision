@@ -60,7 +60,7 @@ export async function globalSearch(
   const [ordersRes, clientsRes, linesRes, stockRes, savRes] = await Promise.all([
     supabase
       .from("orders")
-      .select("id,ref_demande,date_commande,client_phone,immatriculation,vehicle_model,workflow_status,montant_total,clients(name)")
+      .select("id,ref_demande,date_commande,client_phone,immatriculation,vehicle_model,workflow_status,livreur_id,montant_total,clients(name)")
       .eq("organization_id", orgId)
       .eq("devis", false)
       .or(
@@ -131,7 +131,10 @@ export async function globalSearch(
         .filter(Boolean)
         .join(" · "),
       href: `/dashboard/commandes/${row.id}`,
-      tag: WORKFLOW[String(row.workflow_status)] ?? String(row.workflow_status ?? ""),
+      tag:
+        String(row.workflow_status) === "DELIVERED" && !row.livreur_id
+          ? "Retirée au comptoir"
+          : (WORKFLOW[String(row.workflow_status)] ?? String(row.workflow_status ?? "")),
     };
   });
 
