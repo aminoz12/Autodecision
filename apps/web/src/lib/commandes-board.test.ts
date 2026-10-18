@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { BoardLine } from "@/lib/data/commandes";
-import { backorderLines, deliveryOrdersOf, lineMatches, pendingLines, prepareOrdersOf, toursOf } from "./commandes-board";
+import {
+  backorderLines,
+  boardTicketData,
+  deliveryOrdersOf,
+  lineMatches,
+  orderCompletion,
+  pendingLines,
+  prepareOrdersOf,
+  receiveOrdersOf,
+  toursOf,
+} from "./commandes-board";
 
 function line(p: Partial<BoardLine> & { id: string }): BoardLine {
   return {
@@ -64,5 +74,42 @@ describe("Suivi des commandes — shared rules (counter page and stock tablet)",
     expect(lineMatches(l, "ab-123")).toBe(true);
     expect(lineMatches(l, "gdb1322 dupont")).toBe(false);
     expect(lineMatches(l, "  ")).toBe(true);
+  });
+});
+
+describe("Pointage par commande (2026-10-18)", () => {
+  const board = [
+    line({ id: "a", orderId: "o1", quantity: 3 }),
+    line({ id: "b", orderId: "o1", status: "PARTIAL", quantity: 3, received: 1, expectedAt: "2026-10-19" }),
+    line({ id: "c", orderId: "o1", status: "NOT_RECEIVED" }),
+    line({ id: "d", orderId: "o2", orderRef: "REQ-2026-00002", isGarage: true, quantity: 2, expectedAt: "2026-10-18" }),
+    line({ id: "e", orderId: "o2", orderRef: "REQ-2026-00002", isGarage: true, status: "RECEIVED", received: 1 }),
+  ];
+
+  it("à recevoir: one card per order, the parts still missing counted, soonest expected first", () => {
+    const cards = receiveOrdersOf(pendingLines(board));
+    expect(cards.map((c) => c.ref)).toEqual(["REQ-2026-00002", "REQ-2026-00001"]);
+    const o1 = cards[1];
+    expect(o1.lines.map((l) => l.id)).toEqual(["a", "b"]); // « Non reçu » is not awaited any more
+    expect(o1.missing).toBe(3 + 2);
+    expect(cards[0].kind).toBe("GARAGE");
+  });
+
+  it("complete: no part awaited and at least one received; « non reçu » lines do not block", () => {
+    expect(orderCompletion(board, "o1").complete).toBe(false);
+    const done = board.map((l) => (l.orderId === "o1" && l.status !== "NOT_RECEIVED" ? { ...l, status: "RECEIVED" as const, received: l.quantity } : l));
+    const o1 = orderCompletion(done, "o1");
+    expect(o1.complete).toBe(true);
+    expect(o1.lines).toHaveLength(3);
+    expect(orderCompletion(board.filter((l) => l.id === "c"), "o1").complete).toBe(false);
+  });
+
+  it("ticket: built from the order's lines without the « non reçu » ones, casier kept", () => {
+    const t = boardTicketData(board.filter((l) => l.orderId === "o1"), { vendeur: "Sofia", casier: "A3" });
+    expect(t?.ref).toBe("REQ-2026-00001");
+    expect(t?.lines.map((l) => l.reference)).toEqual(["GDB1322", "GDB1322"]);
+    expect(t?.casier).toBe("A3");
+    expect(t?.vendeur).toBe("Sofia");
+    expect(boardTicketData([], {})).toBeNull();
   });
 });

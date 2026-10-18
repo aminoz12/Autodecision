@@ -13,6 +13,7 @@ import {
   LogOut,
   MessageSquare,
   PackageCheck,
+  Printer,
   RefreshCw,
   Search,
   Send,
@@ -25,9 +26,15 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { OrderDoneSheet, type DoneOrder } from "@/components/orders/OrderDoneSheet";
+import { ReceiveOrderCard } from "@/components/orders/ReceiveOrderCard";
+import { PrintTicketButton } from "@/components/print/PrintTicketButton";
 import {
   backorderLines,
+  boardTicketData,
   deliveryOrdersOf,
+  orderCompletion,
+  receiveOrdersOf,
   lineKind,
   lineMatches,
   pendingLines,
@@ -47,7 +54,7 @@ import {
   type SmsState,
 } from "@/lib/data/commandes";
 import { dispatchOrderToLivreur, loadLivreurs, markOrderDelivered, type Livreur } from "@/lib/data/livreurs";
-import { loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
+import { loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
 import { flushClientMessages } from "@/lib/data/sav";
 import { identify, loadStaff, release, tabletPeople, type Identity, type StaffEntry } from "@/lib/data/tablet";
 import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
@@ -165,6 +172,9 @@ export default function TablettePage() {
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
   const [magasin, setMagasin] = useState("");
+  const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
+  /** The order just completed by a pointing: its « and now? » sheet is open. */
+  const [doneId, setDoneId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -188,6 +198,7 @@ export default function TablettePage() {
         if (st) setStaff(st);
         if (org) {
           setMagasin(org.name);
+          setOrgSettings(org);
           setSmsSettings({ magasin: org.name, horaires: org.smsHoraires, readyTemplate: org.smsReadyTemplate, partialTemplate: org.smsPartialTemplate });
         }
         if (!quiet) setError(null);
@@ -251,6 +262,15 @@ export default function TablettePage() {
     [tourRows, kindFilter, search],
   );
   const reliquatRows = useMemo(() => backorders.filter((l) => lineMatches(l, search)), [backorders, search]);
+  /** « À recevoir » pointed order by order (2026-10-18). */
+  const receiveOrders = useMemo(() => receiveOrdersOf(recevoirRows), [recevoirRows]);
+  const doneOrder = useMemo<DoneOrder | null>(() => {
+    if (!doneId) return null;
+    const { complete, lines } = orderCompletion(board, doneId);
+    if (!complete) return null;
+    const first = lines[0];
+    return { orderId: doneId, ref: first.orderRef, clientName: first.clientName, clientPhone: first.clientPhone, isGarage: first.isGarage, isRestock: first.isRestock, lines, casier: null };
+  }, [doneId, board]);
   const prepareRows = useMemo(() => prepare.filter((o) => orderMatches(o, search)), [prepare, search]);
   const deliveryRows = useMemo(() => deliveries.filter((o) => orderMatches(o, search)), [deliveries, search]);
 
@@ -288,8 +308,27 @@ export default function TablettePage() {
           qty,
         );
         flushClientMessages(); // « commande prête » queued by the database, if the magasin switched it on
+        setDoneId(l.orderId); // shown only once the fresh board says the order is complete
       },
       qty ? `${l.reference} : ${qty} reçue${qty > 1 ? "s" : ""}.` : `${l.reference} reçue.`,
+    );
+
+  /** « Tout reçu » on an order: every awaited line is received, then the sheet opens. */
+  const receiveOrder = (o: (typeof receiveOrders)[number]) =>
+    act(
+      o.orderId,
+      async () => {
+        for (const l of o.lines) {
+          await markLineReceived(
+            supabase,
+            orgId as string,
+            { id: l.id, reference: l.reference, designation: l.designation, quantity: l.quantity, receivedQuantity: l.received },
+          );
+        }
+        flushClientMessages();
+        setDoneId(o.orderId);
+      },
+      `${o.ref} : ${o.missing} pièce${o.missing > 1 ? "s" : ""} reçue${o.missing > 1 ? "s" : ""}.`,
     );
 
   const setStatus = (l: BoardLine, status: "BACKORDER" | "NOT_RECEIVED") =>
@@ -362,7 +401,7 @@ export default function TablettePage() {
       `${deliverOrder.ref} livrée.`,
     );
 
-  const sheetOpen = Boolean(smsOrder || dispatch || deliverOrder || partial);
+  const sheetOpen = Boolean(smsOrder || dispatch || deliverOrder || partial || doneId);
   useEffect(() => {
     sheetOpenRef.current = sheetOpen;
   }, [sheetOpen]);
@@ -619,7 +658,23 @@ export default function TablettePage() {
                 <X className="h-4 w-4" /> Tout afficher ({pending.length})
               </button>
             )}
-            {recevoirRows.length === 0 ? empty(search ? "Aucune pièce pour cette recherche." : "Toutes les pièces sont pointées.") : recevoirRows.map(lineCard)}
+            {receiveOrders.length === 0 ? (
+              empty(search ? "Aucune pièce pour cette recherche." : "Toutes les pièces sont pointées.")
+            ) : (
+              <div className="ro-grid">
+                {receiveOrders.map((o) => (
+                  <ReceiveOrderCard
+                    key={o.orderId}
+                    order={o}
+                    busy={busy}
+                    staffNames={names}
+                    onReceiveAll={(order) => void receiveOrder(order)}
+                    onReceiveLine={(line, qty) => void receive(line, qty)}
+                    onStatus={(line, status) => void setStatus(line, status)}
+                  />
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -646,6 +701,15 @@ export default function TablettePage() {
                     {o.state.sent && <span className="tb-who">SMS envoyé</span>}
                   </div>
                   <div className="tb-actions">
+                    <PrintTicketButton
+                      ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: me.name })}
+                      kind="rangement"
+                      org={orgSettings}
+                      title={`${o.ref}-rangement`}
+                      className="tb-btn"
+                    >
+                      <Printer className="h-5 w-5" /> Ticket
+                    </PrintTicketButton>
                     <button type="button" className="tb-btn" disabled={busy !== null || !o.clientPhone} onClick={() => setSmsOrder(o)}>
                       <MessageSquare className="h-5 w-5" /> {o.state.sent ? "Renvoyer le SMS" : "Prévenir par SMS"}
                     </button>
@@ -706,14 +770,30 @@ export default function TablettePage() {
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          className={`tb-btn tb-btn--main${o.stage === "READY" ? " tb-btn--ok" : ""}`}
-                          disabled={busy !== null || livreurs.length === 0}
-                          onClick={() => openDispatch(o)}
-                        >
-                          <Send className="h-5 w-5" /> {o.stage === "READY" ? "Envoyer au livreur" : "Envoyer quand même"}
-                        </button>
+                        <>
+                          <PrintTicketButton
+                            ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: me.name })}
+                            kind="livraison"
+                            org={orgSettings}
+                            title={`${o.ref}-bon-livraison`}
+                            className="tb-btn"
+                          >
+                            <Printer className="h-5 w-5" /> Bon de livraison
+                          </PrintTicketButton>
+                          {o.stage === "READY" && (
+                            <button type="button" className="tb-btn tb-btn--ok" disabled={busy !== null} onClick={() => setDeliverOrder(o)} title="Le garage a emporté la commande">
+                              <Check className="h-5 w-5" /> Livrée
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={`tb-btn tb-btn--main${o.stage === "READY" ? " tb-btn--ok" : ""}`}
+                            disabled={busy !== null || livreurs.length === 0}
+                            onClick={() => openDispatch(o)}
+                          >
+                            <Send className="h-5 w-5" /> {o.stage === "READY" ? "Envoyer au livreur" : "Envoyer quand même"}
+                          </button>
+                        </>
                       )}
                     </div>
                   </article>
@@ -725,6 +805,35 @@ export default function TablettePage() {
         <div className="tb-toast" role="status">
           <Check className="h-5 w-5" /> {notice}
         </div>
+      )}
+
+      {doneOrder && (
+        <OrderDoneSheet
+          order={doneOrder}
+          org={orgSettings}
+          vendeur={me.name}
+          supabase={supabase}
+          tablet
+          canDispatch={livreurs.length > 0}
+          busy={busy !== null}
+          onClose={() => setDoneId(null)}
+          onSms={() => {
+            const row = prepare.find((o) => o.orderId === doneOrder.orderId);
+            setDoneId(null);
+            if (row) setSmsOrder(row);
+          }}
+          onDelivered={() => {
+            const row = deliveries.find((o) => o.orderId === doneOrder.orderId);
+            setDoneId(null);
+            if (row) setDeliverOrder(row);
+          }}
+          onDispatch={() => {
+            const row = deliveries.find((o) => o.orderId === doneOrder.orderId);
+            setDoneId(null);
+            if (row) openDispatch(row);
+          }}
+          onCasier={() => {}}
+        />
       )}
 
       {/* ---- SMS ---- */}
@@ -780,7 +889,7 @@ export default function TablettePage() {
       {deliverOrder && (
         <Sheet title={`${deliverOrder.ref} livrée ?`} onClose={() => setDeliverOrder(null)}>
           <p className="tb-sheet-line">
-            {deliverOrder.clientName} — {deliverOrder.livreurName ?? "livreur"}
+            {deliverOrder.clientName} — {deliverOrder.livreurName ?? "remise au garage sans livreur"}
           </p>
           <div className="tb-actions">
             <button type="button" className="tb-btn tb-btn--ghost" onClick={() => setDeliverOrder(null)}>

@@ -1266,3 +1266,63 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
   .tb-kindchip { font-size: 15px; }
   .tb-kindchip svg { display: none; }
 }
+
+/* ==================================================================
+   POINTAGE PAR COMMANDE (ro-) — « À recevoir » : une carte par commande,
+   « Tout reçu » en un geste, les exceptions ligne par ligne. Comptoir et
+   tablette (grosses cibles, lisible au doigt).
+   ================================================================== */
+.ro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 14px; margin-bottom: 16px; }
+.ro-card { background: var(--bg-card); border: 1px solid var(--border-card); border-left: 6px solid var(--clr-warning); border-radius: 14px; padding: 14px 16px; }
+.ro-card--garage { border-left-color: #1D4ED8; }
+.ro-card--stock { border-left-color: #334155; }
+.ro-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+.ro-head-main { min-width: 0; }
+.ro-ref { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; }
+.ro-kind { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.ro-kind--garage { background: #DBEAFE; color: #1D4ED8; }
+.ro-kind--stock { background: #E2E8F0; color: #334155; }
+.ro-client { margin: 2px 0 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.ro-meta { margin: 2px 0 0; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.ro-all { flex-shrink: 0; display: inline-flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 18px; border-radius: 12px; border: 2px solid var(--clr-success); background: var(--clr-success); color: #fff; font-size: 16px; font-weight: 800; text-align: left; }
+.ro-all small { display: block; font-size: 12px; font-weight: 600; opacity: 0.9; }
+.ro-all:disabled { opacity: 0.5; }
+.ro-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ro-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; padding: 10px 12px; border-radius: 10px; background: #F8FAFC; border: 1px solid var(--border-card); }
+.ro-line--partial { background: var(--clr-violet-bg); }
+.ro-line-main { flex: 1 1 260px; min-width: 0; }
+.ro-line-ref { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.ro-line-meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; color: var(--text-muted); }
+.ro-supplier { display: inline-flex; align-items: center; gap: 4px; }
+.ro-badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.ro-badge--partial { background: var(--clr-violet-bg); color: var(--clr-violet-text); }
+.ro-qty strong { font-size: 15px; color: var(--text-primary); }
+.ro-who { color: var(--clr-success-text); font-weight: 600; }
+.ro-line-acts, .ro-partial { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ro-act { display: inline-flex; align-items: center; gap: 5px; min-height: 40px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--border-card); background: var(--bg-card); font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.ro-act:disabled { opacity: 0.45; }
+.ro-act--ok { border-color: var(--clr-success-border); color: var(--clr-success-text); }
+.ro-act--no { border-color: var(--clr-danger-border); color: var(--clr-danger-text); }
+.ro-step { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-card); background: var(--bg-card); font-size: 22px; font-weight: 700; }
+.ro-partial strong { min-width: 28px; text-align: center; font-size: 20px; }
+.ro-partial-of { color: var(--text-muted); margin-right: 6px; }
+.od-done-actions { justify-content: flex-start; flex-wrap: wrap; }
+.od-casier-input { max-width: 160px; font-size: 22px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.tb-casier { display: flex; align-items: center; gap: 12px; }
+.tb-casier-label { font-size: 17px; font-weight: 700; }
+.tb-casier-input { width: 140px; min-height: 60px; padding: 0 14px; border-radius: 14px; border: 2px solid var(--border-card); font-size: 26px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; text-align: center; }
+/* Ticket de rangement */
+.tk-casier { display: flex; justify-content: space-between; align-items: baseline; margin: 2mm 0; padding: 1.5mm 2mm; border: 2px solid #000; }
+.tk-casier span { font-weight: 700; text-transform: uppercase; }
+.tk-casier strong { font-size: 16pt; letter-spacing: 0.08em; }
+.tk-phone { text-align: center; font-size: 11pt; font-weight: 700; margin: 1mm 0; }
+/* Tablet: cards full width, line actions on their own row */
+.tb-page .ro-grid { grid-template-columns: 1fr; gap: 12px; margin-bottom: 0; }
+.tb-page .ro-card { border-radius: 16px; }
+.tb-page .ro-all { min-height: 64px; font-size: 17px; }
+.tb-page .ro-act { min-height: 48px; font-size: 15px; padding: 0 14px; }
+.tb-page .ro-line-ref { font-size: 16px; }
+@media (max-width: 560px) {
+  .ro-head { flex-direction: column; align-items: stretch; }
+  .ro-all { justify-content: center; }
+}

@@ -9,12 +9,11 @@ import {
   Clock,
   ClipboardCheck,
   FileText,
-  Hourglass,
   Info,
-  ListChecks,
   Loader2,
   MessageSquare,
   PackageCheck,
+  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -31,22 +30,28 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { loadStaffNames } from "@/lib/data/tablet";
 import {
   backorderLines,
+  boardTicketData,
   deliveryOrdersOf,
   lineKind,
   lineMatches,
+  orderCompletion,
   pendingLines,
   prepareOrdersOf,
+  receiveOrdersOf,
   toursOf,
   type LineKind,
 } from "@/lib/commandes-board";
-import { fmtDay, fmtDayTime, LinesTable, STATUT, type LinesTableContext } from "@/components/orders/LinesTable";
+import { OrderDoneSheet, type DoneOrder } from "@/components/orders/OrderDoneSheet";
+import { ReceiveOrderCard } from "@/components/orders/ReceiveOrderCard";
+import { PrintTicketButton } from "@/components/print/PrintTicketButton";
+import { fmtDay, fmtDayTime, LinesTable, type LinesTableContext } from "@/components/orders/LinesTable";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
 import { ShelfCell, type Shelf } from "@/components/sav/ShelfCell";
 import { flushClientMessages, loadOrderShelves } from "@/lib/data/sav";
 import { parisDate } from "@/lib/data/tournees";
 import { createClient } from "@/lib/supabase/client";
-import { createWalkInReturn, deductionMessage, loadOrganizationSettings, markLineReceived } from "@/lib/data/saas";
+import { createWalkInReturn, deductionMessage, loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
 import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
 import { updateClientAddress } from "@/lib/data/delivery";
 import {
@@ -62,7 +67,6 @@ import {
   setLineHandedOver,
   setLineReceptionStatus,
   type BoardLine,
-  type ReceptionStatus,
   type SmsState,
 } from "@/lib/data/commandes";
 
@@ -152,6 +156,10 @@ export default function ReceptionCommandesPage() {
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [dispatchBusy, setDispatchBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Shop identity printed on the tickets (bon de livraison, rangement). */
+  const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
+  /** The order just completed by a pointing: its « and now? » sheet is open. */
+  const [doneId, setDoneId] = useState<string | null>(null);
 
   /* ---- SMS « commande prête » modal ---- */
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
@@ -177,6 +185,7 @@ export default function ReceptionCommandesPage() {
       setSms(s);
       setLivreurs(l);
       if (org) {
+        setOrgSettings(org);
         setSmsSettings({
           magasin: org.name,
           horaires: org.smsHoraires,
@@ -341,11 +350,10 @@ export default function ReceptionCommandesPage() {
     [tourRows, kindFilter],
   );
 
+  /** « À recevoir » pointed order by order (2026-10-18). */
+  const receiveOrders = useMemo(() => receiveOrdersOf(pointerRows), [pointerRows]);
+
   /* ---- selection for grouped actions (only visible rows count) ---- */
-  const selectedRows = useMemo(
-    () => pointerRows.filter((l) => selected.has(l.id)),
-    [pointerRows, selected],
-  );
   const allVisibleSelected =
     pointerRows.length > 0 && pointerRows.every((l) => selected.has(l.id));
   const toggleSelectAll = useCallback(() => {
@@ -482,13 +490,33 @@ export default function ReceptionCommandesPage() {
       const now = new Date().toISOString();
       const received = qty == null ? line.quantity : Math.min(line.quantity, line.received + qty);
       setPartial(null);
-      setBoard((prev) =>
-        prev.map((l) =>
-          l.id === line.id
-            ? { ...l, status: received >= l.quantity ? "RECEIVED" : "PARTIAL", received, receivedAt: now }
-            : l,
-        ),
+      const next = board.map((l) =>
+        l.id === line.id
+          ? { ...l, status: received >= l.quantity ? ("RECEIVED" as const) : ("PARTIAL" as const), received, receivedAt: now }
+          : l,
       );
+      setBoard(next);
+      // The last awaited part of the order just came in: say what comes next.
+      if (orderCompletion(next, line.orderId).complete) setDoneId(line.orderId);
+    });
+
+  /** « Tout reçu » on an order: every awaited line is received, then the sheet opens. */
+  const actReceiveOrder = (order: (typeof receiveOrders)[number]) =>
+    withBusy(order.orderId, async () => {
+      if (!orgId) return;
+      for (const line of order.lines) {
+        await markLineReceived(supabase, orgId, {
+          id: line.id,
+          reference: line.reference,
+          designation: line.designation,
+          quantity: line.quantity,
+          receivedQuantity: line.received,
+        });
+      }
+      flushClientMessages();
+      setNotice(`${order.ref} : ${order.missing} pièce${order.missing > 1 ? "s" : ""} reçue${order.missing > 1 ? "s" : ""}.`);
+      await load();
+      setDoneId(order.orderId);
     });
 
   // Hand over to the client everything currently available on this line
@@ -598,39 +626,6 @@ export default function ReceptionCommandesPage() {
     });
 
 
-  /* ---- grouped action on the ticked lines ---- */
-  const actBulk = (status: ReceptionStatus) =>
-    withBusy("bulk", async () => {
-      if (!orgId || selectedRows.length === 0) return;
-      const failures: string[] = [];
-      for (const line of selectedRows) {
-        try {
-          if (status === "RECEIVED") {
-            await markLineReceived(supabase, orgId, {
-              id: line.id,
-              reference: line.reference,
-              designation: line.designation,
-              quantity: line.quantity,
-              receivedQuantity: line.received,
-            });
-          } else if (status === "BACKORDER" || status === "NOT_RECEIVED") {
-            if (line.status !== status) {
-              await setLineReceptionStatus(supabase, orgId, line.id, status);
-            }
-          }
-        } catch (e) {
-          failures.push(`${line.reference} (${e instanceof Error ? e.message : String(e)})`);
-        }
-      }
-      const done = selectedRows.length - failures.length;
-      setNotice(
-        `${done} pièce${done > 1 ? "s" : ""} marquée${done > 1 ? "s" : ""} « ${STATUT[status].label} ».`,
-      );
-      if (failures.length > 0) setError(`Échec pour : ${failures.join(", ")}`);
-      if (status === "RECEIVED" || status === "BACKORDER") flushClientMessages();
-      await load();
-    });
-
   /* ---- dispatch / delivered ---- */
   const openDispatch = (o: (typeof deliveryOrders)[number]) => {
     setDispatchOrder({
@@ -684,6 +679,23 @@ export default function ReceptionCommandesPage() {
       setNotice(`${o.ref} livrée.`);
       await load();
     });
+
+  const doneOrder = useMemo<DoneOrder | null>(() => {
+    if (!doneId) return null;
+    const { complete, lines } = orderCompletion(board, doneId);
+    if (!complete) return null;
+    const first = lines[0];
+    return {
+      orderId: doneId,
+      ref: first.orderRef,
+      clientName: first.clientName,
+      clientPhone: first.clientPhone,
+      isGarage: first.isGarage,
+      isRestock: first.isRestock,
+      lines,
+      casier: shelves.get(doneId)?.casier ?? null,
+    };
+  }, [doneId, board, shelves]);
 
   /* ---- tabs ---- */
   const notReceived = board.filter((l) => l.status === "NOT_RECEIVED").length;
@@ -845,63 +857,30 @@ export default function ReceptionCommandesPage() {
                 })}
               </div>
 
-              {selectedRows.length > 0 && (
-                <div className="rc-bulk">
-                  <span className="rc-bulk-label">
-                    <ListChecks className="h-4 w-4" />
-                    {selectedRows.length} pièce{selectedRows.length > 1 ? "s" : ""} sélectionnée
-                    {selectedRows.length > 1 ? "s" : ""} — appliquer la même action :
-                  </span>
-                  <span className="rc-actions">
-                    <button
-                      type="button"
-                      className="rc-act rc-act--recu"
-                      disabled={busy.has("bulk")}
-                      onClick={() => actBulk("RECEIVED")}
-                    >
-                      {busy.has("bulk") ? (
-                        <Loader2 className="h-3.5 w-3.5 nc-spin" />
-                      ) : (
-                        <Check className="h-3.5 w-3.5" />
-                      )}
-                      Tout reçu
-                    </button>
-                    <button
-                      type="button"
-                      className="rc-act rc-act--reliquat"
-                      disabled={busy.has("bulk")}
-                      onClick={() => actBulk("BACKORDER")}
-                    >
-                      Reliquat <Hourglass className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      className="rc-act rc-act--nonrecu"
-                      disabled={busy.has("bulk")}
-                      onClick={() => actBulk("NOT_RECEIVED")}
-                    >
-                      Non reçu <X className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      className="rc-act"
-                      disabled={busy.has("bulk")}
-                      onClick={() => setSelected(new Set())}
-                    >
-                      Annuler
-                    </button>
-                  </span>
+              {receiveOrders.length === 0 ? (
+                <div className="od-card rc-empty"><p>{loading ? "Chargement…" : "Toutes les pièces sont pointées."}</p></div>
+              ) : (
+                <div className="ro-grid">
+                  {receiveOrders.map((o) => (
+                    <ReceiveOrderCard
+                      key={o.orderId}
+                      order={o}
+                      busy={[...busy][0] ?? null}
+                      staffNames={staffNames}
+                      onReceiveAll={(order) => void actReceiveOrder(order)}
+                      onReceiveLine={(line, qty) => void actReceive(line, qty)}
+                      onStatus={(line, status) => void actStatus(line, status)}
+                    />
+                  ))}
                 </div>
               )}
-
-              <LinesTable ctx={tableCtx} rows={pointerRows} showActions selectable />
 
               <div className="od-note rc-note">
                 <Info className="h-4 w-4" />
                 <div className="rc-note-text">
                   <p className="rl-note-strong">
-                    Pensez à bien pointer toutes les pièces reçues et à gérer les
-                    reliquats pour éviter les oublis.
+                    « Tout reçu » pointe toute la commande d&apos;un coup ; les boutons de chaque ligne
+                    servent aux exceptions (pièce manquante, reliquat, non disponible).
                   </p>
                   <p className="rl-note-sub">
                     «&nbsp;Reçu&nbsp;» ajoute automatiquement la quantité restante au
@@ -1043,6 +1022,16 @@ export default function ReceptionCommandesPage() {
                             </td>
                             <td>
                               <div className="rc-actions">
+                                <PrintTicketButton
+                                  ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: profile?.display_name ?? null, casier: shelves.get(o.orderId)?.casier ?? null })}
+                                  kind="rangement"
+                                  org={orgSettings}
+                                  title={`${o.ref}-rangement`}
+                                  className="rc-act"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                  Ticket
+                                </PrintTicketButton>
                                 <button
                                   type="button"
                                   className="rc-sms-act rc-sms-act--sms"
@@ -1266,6 +1255,31 @@ export default function ReceptionCommandesPage() {
                                     </button>
                                   </>
                                 ) : (
+                                  <>
+                                    <PrintTicketButton
+                                      ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: profile?.display_name ?? null })}
+                                      kind="livraison"
+                                      org={orgSettings}
+                                      title={`${o.ref}-bon-livraison`}
+                                      className="rc-act"
+                                    >
+                                      <Printer className="h-4 w-4" />
+                                      Bon de livraison
+                                    </PrintTicketButton>
+                                    {o.stage === "READY" && (
+                                      <button
+                                        type="button"
+                                        className="rc-act rc-act--recu"
+                                        disabled={busyDeliver}
+                                        onClick={() => {
+                                          if (window.confirm(`${o.ref} remise au garage sans livreur : la marquer livrée ?`)) void actDelivered(o);
+                                        }}
+                                        title="Le garage a emporté la commande (ou vous la livrez vous-même)"
+                                      >
+                                        {busyDeliver ? <Loader2 className="h-3.5 w-3.5 nc-spin" /> : <Check className="h-3.5 w-3.5" />}
+                                        Livrée
+                                      </button>
+                                    )}
                                   <button
                                     type="button"
                                     className={`rc-sms-act ${o.stage === "READY" ? "rc-sms-act--sms" : ""}`}
@@ -1279,6 +1293,7 @@ export default function ReceptionCommandesPage() {
                                     <Send className="h-4 w-4" />
                                     Envoyer au livreur
                                   </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -1352,6 +1367,53 @@ export default function ReceptionCommandesPage() {
           )}
 
         </>
+      )}
+
+      {doneOrder && (
+        <OrderDoneSheet
+          order={doneOrder}
+          org={orgSettings}
+          vendeur={profile?.display_name ?? null}
+          supabase={supabase}
+          canDispatch={livreurs.length > 0}
+          busy={busy.has(`deliver-${doneOrder.orderId}`)}
+          onClose={() => setDoneId(null)}
+          onSms={() => {
+            const row = smsOrders.find((o) => o.orderId === doneOrder.orderId);
+            openSms(
+              row ?? {
+                orderId: doneOrder.orderId,
+                ref: doneOrder.ref,
+                clientId: doneOrder.lines[0]?.clientId ?? null,
+                clientName: doneOrder.clientName,
+                clientPhone: doneOrder.clientPhone,
+                complet: true,
+                received: doneOrder.lines.length,
+                total: doneOrder.lines.length,
+                state: sms.get(doneOrder.orderId) ?? { sent: false, treated: false },
+              },
+            );
+            setDoneId(null);
+          }}
+          onDelivered={() => {
+            const row = deliveryOrders.find((o) => o.orderId === doneOrder.orderId);
+            setDoneId(null);
+            if (row) void actDelivered(row);
+          }}
+          onDispatch={() => {
+            const row = deliveryOrders.find((o) => o.orderId === doneOrder.orderId);
+            setDoneId(null);
+            if (row) openDispatch(row);
+          }}
+          onCasier={(casier) =>
+            setShelves((prev) => {
+              const next = new Map(prev);
+              const cur = next.get(doneOrder.orderId) ?? { casier: null, promisedDate: null, promiseRevisedDate: null, readyAt: null };
+              next.set(doneOrder.orderId, { ...cur, casier });
+              return next;
+            })
+          }
+        />
       )}
 
       {dispatchOrder && (

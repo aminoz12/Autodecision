@@ -1,4 +1,5 @@
 import type { BoardLine, SmsState } from "@/lib/data/commandes";
+import type { TicketData } from "@/components/print/OrderTicket";
 
 /*
  * « Suivi des commandes » — the lists shown on the counter's page
@@ -195,4 +196,120 @@ export function lineMatches(l: BoardLine, query: string): boolean {
     .join(" ")
     .toLowerCase();
   return terms.every((t) => hay.includes(t));
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pointage par commande (2026-10-18)                                 */
+/* ------------------------------------------------------------------ */
+
+
+/** One order of « À recevoir »: its awaited lines, pointed together or one by one. */
+export type ReceiveOrder = {
+  orderId: string;
+  ref: string;
+  date: string | null;
+  clientId: string | null;
+  clientName: string;
+  clientPhone: string | null;
+  isGarage: boolean;
+  isRestock: boolean;
+  kind: LineKind;
+  plate: string | null;
+  vehicle: string | null;
+  tourName: string | null;
+  suppliers: string[];
+  /** Earliest expected arrival among the awaited lines. */
+  expectedAt: string | null;
+  /** The awaited lines (not RECEIVED, not NOT_RECEIVED): what « Tout reçu » points. */
+  lines: BoardLine[];
+  /** Units still to come on those lines. */
+  missing: number;
+};
+
+export function receiveOrdersOf(pending: BoardLine[]): ReceiveOrder[] {
+  const byOrder = new Map<string, BoardLine[]>();
+  for (const l of pending) {
+    const arr = byOrder.get(l.orderId);
+    if (arr) arr.push(l);
+    else byOrder.set(l.orderId, [l]);
+  }
+  return [...byOrder.entries()]
+    .map(([orderId, lines]) => {
+      const first = lines[0];
+      const awaited = lines.filter((l) => l.status !== "NOT_RECEIVED");
+      const expected = awaited.map((l) => l.expectedAt).filter((v): v is string => !!v).sort()[0] ?? null;
+      return {
+        orderId,
+        ref: first.orderRef,
+        date: first.orderDate,
+        clientId: first.clientId,
+        clientName: first.clientName,
+        clientPhone: first.clientPhone,
+        isGarage: first.isGarage,
+        isRestock: first.isRestock,
+        kind: lineKind(first),
+        plate: first.plate,
+        vehicle: first.vehicle,
+        tourName: first.tourName,
+        suppliers: [...new Set(lines.map((l) => l.supplierName ?? "Stock magasin"))],
+        expectedAt: expected,
+        lines: awaited,
+        missing: awaited.reduce((s, l) => s + Math.max(0, l.quantity - l.received), 0),
+      };
+    })
+    .sort((a, b) => {
+      const ea = a.expectedAt ?? "9999";
+      const eb = b.expectedAt ?? "9999";
+      return ea.localeCompare(eb) || String(b.date ?? "").localeCompare(String(a.date ?? "")) || a.ref.localeCompare(b.ref);
+    });
+}
+
+/**
+ * Where an order stands once its lines were pointed: complete when nothing is
+ * awaited any more and at least one part came in (« non disponible » lines
+ * never hold an order back).
+ */
+export function orderCompletion(board: BoardLine[], orderId: string): { complete: boolean; lines: BoardLine[] } {
+  const lines = board.filter((l) => l.orderId === orderId);
+  const awaited = lines.some((l) => l.status === "PENDING" || l.status === "BACKORDER" || l.status === "PARTIAL");
+  const received = lines.some((l) => l.status === "RECEIVED");
+  return { complete: !awaited && received, lines };
+}
+
+/** A ticket (rangement / bon de livraison) built from the board's lines of one order. */
+export function boardTicketData(
+  lines: BoardLine[],
+  extra: { vendeur?: string | null; casier?: string | null; livreur?: string | null },
+): TicketData | null {
+  const first = lines[0];
+  if (!first) return null;
+  const kept = lines.filter((l) => l.status !== "NOT_RECEIVED");
+  const total = kept.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  return {
+    ref: first.orderRef,
+    createdAt: new Date().toISOString(),
+    vendeur: extra.vendeur ?? null,
+    tourName: first.tourName,
+    deliveryAt: first.dateEnvoi,
+    clientName: first.clientName,
+    clientPhone: first.clientPhone,
+    plate: first.plate,
+    vehicleModel: first.vehicle,
+    kilometrage: null,
+    lines: kept.map((l) => ({
+      reference: l.reference,
+      designation: l.designation,
+      quantity: l.quantity,
+      prixVente: l.unitPrice,
+      retourPossible: !l.retourImpossible,
+      taken: l.handedOver >= l.quantity,
+    })),
+    total,
+    avoirApplique: 0,
+    paye: 0,
+    reste: 0,
+    statutPaiement: "",
+    casier: extra.casier ?? null,
+    livreur: extra.livreur ?? null,
+  };
 }
