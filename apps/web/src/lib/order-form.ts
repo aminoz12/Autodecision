@@ -115,6 +115,29 @@ export function todayISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** A calendar day as yyyy-mm-dd in the user's local timezone. */
+export function isoDay(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Date de réception announced to the client right after the order is saved
+ * (2026-10-18): J+1 / J+2 / J+3 from today, each with its weekday so the
+ * cashier sees at a glance that « J+1 » is a Sunday. A free date is the
+ * fourth choice on screen.
+ */
+export function receptionChoices(today = new Date()): { label: string; day: string; date: string }[] {
+  return [1, 2, 3].map((n) => {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + n);
+    return {
+      label: `J+${n}`,
+      day: d.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" }),
+      date: isoDay(d),
+    };
+  });
+}
+
 /** Net unit price after the line discount, rounded to the cent (same rule as the database). */
 export function netUnit(gross: number, pct?: number): number {
   const p = Math.min(100, Math.max(0, pct || 0));

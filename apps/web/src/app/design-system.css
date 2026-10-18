@@ -1326,3 +1326,26 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
   .ro-head { flex-direction: column; align-items: stretch; }
   .ro-all { justify-content: center; }
 }
+
+/* ==================================================================
+   NOUVELLE COMMANDE — date de réception annoncée (nc-reception), écran
+   « Commande créée » : J+1 / J+2 / J+3 ou date libre (2026-10-18).
+   ================================================================== */
+.nc-reception { width: 100%; max-width: 640px; margin-top: 6px; padding: 16px 18px; border: 1px solid var(--border-card); border-radius: 14px; background: var(--bg-subtle); text-align: left; }
+.nc-reception-title { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; color: var(--text-primary); }
+.nc-reception-title svg { color: var(--clr-primary); }
+.nc-reception-chips { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.nc-reception-chip { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 96px; min-height: 52px; padding: 6px 14px; border-radius: 12px; border: 1.5px solid var(--border-card); background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
+.nc-reception-chip strong { font-size: 15px; font-weight: 800; line-height: 1.1; }
+.nc-reception-chip small { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: capitalize; }
+.nc-reception-chip:hover { border-color: var(--clr-primary); }
+.nc-reception-chip--active { border-color: var(--clr-primary); background: var(--clr-primary); color: #fff; }
+.nc-reception-chip--active small { color: rgba(255, 255, 255, 0.85); }
+.nc-reception-chip:disabled { opacity: 0.6; cursor: wait; }
+.nc-reception-free { display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.nc-reception-free .od-input { min-height: 40px; width: 170px; padding: 0 12px; font-weight: 700; }
+.nc-reception-note { margin: 10px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+@media (max-width: 560px) {
+  .nc-reception-chip { min-width: calc(33% - 6px); }
+  .nc-reception-free, .nc-reception-free .od-input { width: 100%; }
+}

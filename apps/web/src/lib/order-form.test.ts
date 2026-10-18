@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isoDay,
+  receptionChoices,
   clampMoney,
   emptyQuickRow,
   isQuickRowFilled,
@@ -80,5 +82,15 @@ describe("netUnit / clampMoney", () => {
     expect(clampMoney("150", 100)).toBe(100);
     expect(clampMoney("-4", 100)).toBe(0);
     expect(clampMoney("abc", 100)).toBe(0);
+  });
+});
+
+describe("receptionChoices", () => {
+  it("J+1, J+2, J+3 from the given day, across a month end, with the weekday shown", () => {
+    const choices = receptionChoices(new Date(2026, 9, 30)); // vendredi 30 octobre 2026
+    expect(choices.map((c) => c.label)).toEqual(["J+1", "J+2", "J+3"]);
+    expect(choices.map((c) => c.date)).toEqual(["2026-10-31", "2026-11-01", "2026-11-02"]);
+    expect(choices[1].day).toMatch(/dim\.? 01\/11/);
+    expect(isoDay(new Date(2026, 0, 5))).toBe("2026-01-05");
   });
 });

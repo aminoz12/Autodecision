@@ -39,11 +39,11 @@ import {
 } from "@/lib/data/saas";
 import { OrderTicketCopies, type TicketData } from "@/components/print/OrderTicket";
 import { matchClientByPhone } from "@/lib/data/clients";
-import { finalizeOrderSav, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
+import { finalizeOrderSav, loadOrderShelves, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
 import { QuickAddDone, QuickAddModal, useQuickAdd } from "@/components/orders/QuickAdd";
-import { clampMoney, eur, netUnit, REGLEMENT_LABEL, todayISO, type PourQui, type Reglement } from "@/lib/order-form";
+import { clampMoney, eur, netUnit, receptionChoices, REGLEMENT_LABEL, todayISO, type PourQui, type Reglement } from "@/lib/order-form";
 import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 
@@ -149,7 +149,16 @@ export default function NouvelleCommandePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
+  /* Date de réception announced to the client, chosen right after saving (2026-10-18):
+     J+1 / J+2 / J+3 or a free date, stored as the order's date promise. */
+  const [receptionNeeded, setReceptionNeeded] = useState(false);
+  const [receptionDate, setReceptionDate] = useState<string | null>(null);
+  const [receptionDefault, setReceptionDefault] = useState<string | null>(null);
+  const [receptionBusy, setReceptionBusy] = useState(false);
+  const [receptionSaved, setReceptionSaved] = useState(false);
+  const [receptionError, setReceptionError] = useState<string | null>(null);
   const [avoirWarning, setAvoirWarning] = useState<string | null>(null);
   /** Snapshot printed as a receipt-style ticket right after creation. */
   const [ticket, setTicket] = useState<TicketData | null>(null);
@@ -682,16 +691,25 @@ export default function NouvelleCommandePage() {
         payload,
       );
       // Champs après-vente : jamais bloquants — la commande existe déjà.
+      let promisedDefault: string | null = null;
       try {
         if (destineA === "COMPTOIR" && smsConsentTouched) {
           await setOrderSavFields(supabase, order.id, { smsMarketingConsent: smsConsent });
         }
         await finalizeOrderSav(supabase, order.id);
+        // The default date promise (arrival of the last awaited part), offered on the next screen.
+        promisedDefault = (await loadOrderShelves(supabase, orgId, [order.id])).get(order.id)?.promisedDate ?? null;
       } catch (savErr) {
         if (!(savErr instanceof Error && savErr.name === "SavUnavailableError")) {
           setSavWarning(savErr instanceof Error ? savErr.message : String(savErr));
         }
       }
+      setCreatedId(order.id);
+      setReceptionNeeded(validLines.some((l) => l.fournisseur_id || !l.client_a_pris));
+      setReceptionDefault(promisedDefault);
+      setReceptionDate(promisedDefault);
+      setReceptionSaved(false);
+      setReceptionError(null);
       setCreatedRef(order.ref_demande);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
       setAvoirWarning(order.avoirWarning ?? null);
@@ -721,7 +739,7 @@ export default function NouvelleCommandePage() {
         statutPaiement: effectiveStatut,
         modePaiement: onAccount ? "EN_COMPTE" : null,
         echeance: accountDueDate ? accountDueDate.toISOString().slice(0, 10) : null,
-        promisedDate: null,
+        promisedDate: promisedDefault,
         returnPolicy: savSettings?.returnPolicyText || RETURN_CONDITIONS_TEXT,
         consigneDeadline:
           savSettings && validLines.some((l) => l.consigne)
@@ -738,6 +756,23 @@ export default function NouvelleCommandePage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** The cashier announces the date: saved at once as the order's date promise, printed on the ticket. */
+  async function chooseReception(date: string) {
+    if (!createdId || receptionBusy) return;
+    setReceptionBusy(true);
+    setReceptionError(null);
+    try {
+      await setOrderSavFields(supabase, createdId, { promisedDate: date });
+      setReceptionDate(date);
+      setReceptionSaved(true);
+      setTicket((t) => (t ? { ...t, promisedDate: date } : t));
+    } catch (err) {
+      setReceptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceptionBusy(false);
     }
   }
 
@@ -766,7 +801,13 @@ export default function NouvelleCommandePage() {
     setAvoirAuto(false);
     setError(null);
     setCreatedRef(null);
+    setCreatedId(null);
     setCreatedTour(null);
+    setReceptionNeeded(false);
+    setReceptionDate(null);
+    setReceptionDefault(null);
+    setReceptionSaved(false);
+    setReceptionError(null);
     setAvoirWarning(null);
     setTicket(null);
   }
@@ -798,6 +839,51 @@ export default function NouvelleCommandePage() {
                 minute: "2-digit",
               })}
             </p>
+          )}
+          {receptionNeeded && createdId && (
+            <div className="nc-reception" role="group" aria-labelledby="nc-reception-title">
+              <p className="nc-reception-title" id="nc-reception-title">
+                <Calendar className="h-4 w-4" />
+                Date de réception annoncée au client
+              </p>
+              <div className="nc-reception-chips">
+                {receptionChoices().map((c) => (
+                  <button
+                    key={c.label}
+                    type="button"
+                    className={`nc-reception-chip${receptionDate === c.date ? " nc-reception-chip--active" : ""}`}
+                    disabled={receptionBusy}
+                    onClick={() => void chooseReception(c.date)}
+                  >
+                    <strong>{c.label}</strong>
+                    <small>{c.day}</small>
+                  </button>
+                ))}
+                <label className="nc-reception-free">
+                  <span>Date libre</span>
+                  <input
+                    type="date"
+                    className="od-input"
+                    min={todayISO()}
+                    value={receptionDate ?? ""}
+                    disabled={receptionBusy}
+                    onChange={(e) => {
+                      if (e.target.value) void chooseReception(e.target.value);
+                    }}
+                  />
+                </label>
+              </div>
+              <p className="nc-reception-note">
+                {receptionBusy
+                  ? "Enregistrement…"
+                  : receptionSaved && receptionDate
+                    ? `Enregistré : réception annoncée le ${new Date(receptionDate + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" })}.`
+                    : receptionDefault
+                      ? `Par défaut : le ${new Date(receptionDefault + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" })} (arrivée prévue de la dernière pièce). Changez-la si vous avez annoncé autre chose.`
+                      : "Choisissez la date annoncée au client : elle est imprimée sur le ticket et suivie dans « Commande à préparer »."}
+              </p>
+              {receptionError && <div className="nc-error">{receptionError}</div>}
+            </div>
           )}
           {avoirWarning && <div className="nc-error">{avoirWarning}</div>}
           {savWarning && <p className="nc-hint">Après-vente : {savWarning}</p>}
