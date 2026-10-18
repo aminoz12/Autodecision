@@ -2,6 +2,7 @@
 
 import {
   Building2,
+  CalendarDays,
   Check,
   ChevronDown,
   Copy,
@@ -26,7 +27,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CongesTab } from "@/components/admin/CongesTab";
 import { AdminGate } from "@/components/auth/AdminGate";
+import { loadAdminLeaveBoard } from "@/lib/data/espace";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
@@ -71,7 +74,7 @@ function frDate(v: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
 }
 
-type Tab = "equipe" | "garagistes" | "livreurs" | "magasins";
+type Tab = "equipe" | "garagistes" | "livreurs" | "magasins" | "conges";
 
 const BLOCKED_STATUSES = new Set(["past_due", "unpaid", "canceled", "cancelled", "incomplete_expired", "expired"]);
 
@@ -99,6 +102,19 @@ function AdminContent() {
   const supabase = useMemo(() => createClient(), []);
 
   const [tab, setTab] = useState<Tab>("equipe");
+  /** Leave requests waiting for a decision — shown on the « Congés » tab. */
+  const [congesPending, setCongesPending] = useState(0);
+  // A notification link (« Demande de congé ») opens the page on « Congés » directly.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "conges") setTab("conges");
+    // The tab shows how many requests wait even before it is opened (best-effort).
+    loadAdminLeaveBoard(supabase).then(
+      (b) => setCongesPending(b.pending.length),
+      () => {
+        /* the tab itself reports the error when opened */
+      },
+    );
+  }, [supabase]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [garageAccounts, setGarageAccounts] = useState<GarageAccount[]>([]);
   const [livreurAccounts, setLivreurAccounts] = useState<LivreurAccount[]>([]);
@@ -421,6 +437,7 @@ function AdminContent() {
     { id: "garagistes", label: "Accès garagistes", sub: "Comptes du portail garage", icon: Building2, count: garageAccounts.length },
     { id: "livreurs", label: "Livreurs", sub: "Équipe de livraison", icon: Truck, count: livreurs.length },
     { id: "magasins", label: "Mes magasins", sub: "Autres points de vente", icon: Store, count: magasins.length },
+    { id: "conges", label: "Congés", sub: "Demandes & soldes de l'équipe", icon: CalendarDays, count: congesPending },
   ];
 
   return (
@@ -496,6 +513,9 @@ function AdminContent() {
         <TableSkeleton rows={5} cols={6} />
       ) : (
         <>
+          {/* ================= Congés ================= */}
+          {tab === "conges" && <CongesTab onPendingCount={setCongesPending} />}
+
           {/* ================= Équipe ================= */}
           {tab === "equipe" && (
             <section className="od-card rl-table-card">

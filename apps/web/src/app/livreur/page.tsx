@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Trash2,
   Truck,
+  UserRound,
   Warehouse,
   X,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { NotificationBell } from "@/components/NotificationBell";
+import { EspaceTab } from "@/components/livreur/EspaceTab";
 import { ReturnsTab } from "@/components/livreur/ReturnsTab";
 import { TourTab, type NextTour } from "@/components/livreur/TourTab";
 import { Toast } from "@/components/ui/Toast";
@@ -152,7 +154,11 @@ export default function LivreurPage() {
   const refreshing = useRef(false);
 
   /* ---- Tournée fournisseurs (onglet) ---- */
-  const [tab, setTab] = useState<"tournee" | "livraisons" | "retours">("tournee");
+  const [tab, setTab] = useState<"tournee" | "livraisons" | "retours" | "espace">("tournee");
+  // A notification link (« Congé validé ») opens the page on « Mon espace » directly.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "espace") setTab("espace");
+  }, []);
   const [pickupDay, setPickupDay] = useState(() => parisDate());
   const [pickups, setPickups] = useState<SupplierTourBoard | null>(null);
   const [pickupsLoading, setPickupsLoading] = useState(false);
@@ -685,7 +691,7 @@ export default function LivreurPage() {
       <Toast message={notice} onClose={() => setNotice(null)} />
       <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />
 
-      <div className="lpt-tabs lpt-tabs--3" role="tablist">
+      <div className="lpt-tabs lpt-tabs--4" role="tablist">
         <button
           type="button"
           role="tab"
@@ -719,7 +725,23 @@ export default function LivreurPage() {
           Retours
           {returnsLeft > 0 && <span className="lp-count">{returnsLeft}</span>}
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "espace"}
+          className={`lpt-tab${tab === "espace" ? " lpt-tab--on" : ""}`}
+          onClick={() => setTab("espace")}
+        >
+          <UserRound className="h-5 w-5" />
+          Mon espace
+        </button>
       </div>
+
+      {tab === "espace" && (
+        <main className="lp-main">
+          <EspaceTab online={online} onNotice={setNotice} />
+        </main>
+      )}
 
       {tab === "tournee" && (
         <main className="lp-main">

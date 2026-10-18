@@ -22,6 +22,7 @@ import {
   Truck,
   type LucideIcon,
   Undo2,
+  UserRound,
   Users,
   Briefcase,
   Warehouse,
@@ -87,6 +88,11 @@ const navGroups: NavGroup[] = [
       { href: "/dashboard/rapports", label: "Rapports", icon: ChartColumn },
       { href: "/dashboard/parametres", label: "Paramètres", icon: Settings },
     ],
+  },
+  {
+    // Personal: the signed-in member's own figures and leave requests.
+    label: "Mon espace",
+    items: [{ href: "/dashboard/mon-espace", label: "Mes stats & congés", icon: UserRound }],
   },
 ];
 
@@ -207,6 +213,8 @@ export function Sidebar() {
           type="button"
           className="sidebar-mobile-toggle"
           aria-label="Menu"
+          aria-expanded={mobileOpen}
+          aria-controls="dashboard-sidebar"
           onClick={() => setMobileOpen(true)}
         >
           <Menu className="h-5 w-5" />
@@ -214,7 +222,7 @@ export function Sidebar() {
       </div>
 
       {/* Sidebar */}
-      <aside className={cn("sidebar", mobileOpen ? "sidebar--open" : "")}>
+      <aside id="dashboard-sidebar" className={cn("sidebar", mobileOpen ? "sidebar--open" : "")}>
         {/* Desktop: fold the menu into an icon rail (the choice is remembered) */}
         <button
           type="button"
@@ -269,6 +277,7 @@ export function Sidebar() {
                       onClick={() => setMobileOpen(false)}
                       className={cn("sidebar-nav-item", active && "sidebar-nav-item--active")}
                       aria-current={active ? "page" : undefined}
+                      aria-label={item.label}
                       title={collapsed ? item.label : undefined}
                     >
                       <Icon className="sidebar-nav-icon" />
