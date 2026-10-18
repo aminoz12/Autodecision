@@ -6,6 +6,7 @@ import {
   deliveryOrdersOf,
   lineMatches,
   orderCompletion,
+  partialTicketData,
   pendingLines,
   prepareOrdersOf,
   receiveOrdersOf,
@@ -111,5 +112,45 @@ describe("Pointage par commande (2026-10-18)", () => {
     expect(t?.casier).toBe("A3");
     expect(t?.vendeur).toBe("Sofia");
     expect(boardTicketData([], {})).toBeNull();
+  });
+});
+
+describe("Réception partielle (2026-10-18)", () => {
+  it("flags the orders where some units already came in", () => {
+    const board = [line({ id: "a", quantity: 4, received: 1, status: "PARTIAL" }), line({ id: "b", orderId: "o2", orderRef: "REQ-2026-00002", quantity: 2 })];
+    const orders = receiveOrdersOf(pendingLines(board), board);
+    expect(orders.find((o) => o.orderId === "o1")).toMatchObject({ partial: true, receivedUnits: 1, missing: 3 });
+    expect(orders.find((o) => o.orderId === "o2")).toMatchObject({ partial: false, receivedUnits: 0, missing: 2 });
+  });
+
+  it("counts a line already fully received when the rest of the order is awaited", () => {
+    const board = [line({ id: "a", quantity: 1, received: 1, status: "RECEIVED" }), line({ id: "b", reference: "X2", quantity: 2 })];
+    const [o] = receiveOrdersOf(pendingLines(board), board);
+    expect(o.lines.map((l) => l.id)).toEqual(["b"]);
+    expect(o).toMatchObject({ partial: true, receivedUnits: 1, missing: 2 });
+  });
+
+  it("is not partial without the whole board (pending lines only)", () => {
+    const board = [line({ id: "a", quantity: 1, received: 1, status: "RECEIVED" }), line({ id: "b", reference: "X2", quantity: 2 })];
+    const [o] = receiveOrdersOf(pendingLines(board));
+    expect(o.partial).toBe(false);
+  });
+
+  it("ticket: received units (before + now) on one side, the rest on the other", () => {
+    const board = [
+      line({ id: "a", quantity: 4, received: 1, status: "PARTIAL" }),
+      line({ id: "b", reference: "X2", quantity: 1 }),
+      line({ id: "c", reference: "NA", status: "NOT_RECEIVED" }),
+    ];
+    const t = partialTicketData(board, new Map([["a", 2]]), { vendeur: "Inès" });
+    expect(t?.lines).toEqual([expect.objectContaining({ reference: "GDB1322", quantity: 3 })]);
+    expect(t?.missing).toEqual([expect.objectContaining({ reference: "GDB1322", quantity: 1 }), expect.objectContaining({ reference: "X2", quantity: 1 })]);
+    expect(t?.casierBox).toBe(true);
+    expect(t?.vendeur).toBe("Inès");
+  });
+
+  it("ticket: a réappro prints no casier box", () => {
+    const board = [line({ id: "a", isRestock: true, fromStock: true, quantity: 4, received: 0 })];
+    expect(partialTicketData(board, new Map([["a", 3]]), {})?.casierBox).toBe(false);
   });
 });

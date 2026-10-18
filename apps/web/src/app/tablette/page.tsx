@@ -22,12 +22,14 @@ import {
   UserRound,
   X,
   type LucideIcon,
+  PackageOpen,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { OrderDoneSheet, type DoneOrder } from "@/components/orders/OrderDoneSheet";
 import { ReceiveOrderCard } from "@/components/orders/ReceiveOrderCard";
+import { ReceiveOrderSheet } from "@/components/orders/ReceiveOrderSheet";
 import { PrintTicketButton } from "@/components/print/PrintTicketButton";
 import {
   backorderLines,
@@ -35,6 +37,7 @@ import {
   deliveryOrdersOf,
   orderCompletion,
   receiveOrdersOf,
+  type ReceiveOrder,
   lineKind,
   lineMatches,
   pendingLines,
@@ -237,6 +240,10 @@ export default function TablettePage() {
   const [tourFilter, setTourFilter] = useState<string | null>(null);
   /** Client / Garages / Retour en stock, under the tournées (like the counter). */
   const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
+  /** « Partielles » only: some parts already came in. */
+  const [partialOnly, setPartialOnly] = useState(false);
+  /** The order whose checklist (pièce par pièce) is open — a snapshot, so the sheet survives the reload. */
+  const [openOrder, setOpenOrder] = useState<ReceiveOrder | null>(null);
   const pending = useMemo(() => pendingLines(board), [board]);
   const backorders = useMemo(() => backorderLines(board), [board]);
   const prepare = useMemo(() => prepareOrdersOf(board, sms), [board, sms]);
@@ -263,7 +270,9 @@ export default function TablettePage() {
   );
   const reliquatRows = useMemo(() => backorders.filter((l) => lineMatches(l, search)), [backorders, search]);
   /** « À recevoir » pointed order by order (2026-10-18). */
-  const receiveOrders = useMemo(() => receiveOrdersOf(recevoirRows), [recevoirRows]);
+  const receiveOrdersAll = useMemo(() => receiveOrdersOf(recevoirRows, board), [recevoirRows, board]);
+  const partialCount = useMemo(() => receiveOrdersAll.filter((o) => o.partial).length, [receiveOrdersAll]);
+  const receiveOrders = useMemo(() => (partialOnly ? receiveOrdersAll.filter((o) => o.partial) : receiveOrdersAll), [receiveOrdersAll, partialOnly]);
   const doneOrder = useMemo<DoneOrder | null>(() => {
     if (!doneId) return null;
     const { complete, lines } = orderCompletion(board, doneId);
@@ -330,6 +339,40 @@ export default function TablettePage() {
       },
       `${o.ref} : ${o.missing} pièce${o.missing > 1 ? "s" : ""} reçue${o.missing > 1 ? "s" : ""}.`,
     );
+
+  /** Checklist sheet: ticked units received line by line; the order stays « à recevoir » while parts are missing. */
+  const receivePartial = async (o: ReceiveOrder, picks: Map<string, number>): Promise<boolean> => {
+    if (!orgId || busy) return false;
+    setBusy(o.orderId);
+    setError(null);
+    try {
+      for (const l of o.lines) {
+        const qty = picks.get(l.id) ?? 0;
+        if (qty <= 0) continue;
+        const missing = Math.max(0, l.quantity - l.received);
+        await markLineReceived(
+          supabase,
+          orgId as string,
+          { id: l.id, reference: l.reference, designation: l.designation, quantity: l.quantity, receivedQuantity: l.received },
+          qty >= missing ? undefined : qty,
+        );
+      }
+      flushClientMessages();
+      const got = [...picks.values()].reduce((s, n) => s + n, 0);
+      setNotice(`${o.ref} : ${got} pièce${got > 1 ? "s" : ""} reçue${got > 1 ? "s" : ""}${got < o.missing ? " — commande partielle" : ""}.`);
+      await load(true);
+      if (got >= o.missing) {
+        setOpenOrder(null);
+        setDoneId(o.orderId);
+      }
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const setStatus = (l: BoardLine, status: "BACKORDER" | "NOT_RECEIVED") =>
     act(
@@ -401,7 +444,7 @@ export default function TablettePage() {
       `${deliverOrder.ref} livrée.`,
     );
 
-  const sheetOpen = Boolean(smsOrder || dispatch || deliverOrder || partial || doneId);
+  const sheetOpen = Boolean(smsOrder || dispatch || deliverOrder || partial || doneId || openOrder);
   useEffect(() => {
     sheetOpenRef.current = sheetOpen;
   }, [sheetOpen]);
@@ -645,14 +688,26 @@ export default function TablettePage() {
                   </button>
                 );
               })}
+              <button
+                type="button"
+                className={`tb-kindchip tb-kindchip--partial${partialOnly ? " tb-kindchip--on" : ""}`}
+                onClick={() => setPartialOnly((v) => !v)}
+                aria-pressed={partialOnly}
+                title="Commandes dont une partie des pièces est déjà arrivée"
+              >
+                <PackageOpen className="h-5 w-5" />
+                <span>Partielles</span>
+                <strong>{partialCount}</strong>
+              </button>
             </div>
-            {(tourFilter || kindFilter) && (
+            {(tourFilter || kindFilter || partialOnly) && (
               <button
                 type="button"
                 className="tb-clear-filters"
                 onClick={() => {
                   setTourFilter(null);
                   setKindFilter(null);
+                  setPartialOnly(false);
                 }}
               >
                 <X className="h-4 w-4" /> Tout afficher ({pending.length})
@@ -671,6 +726,7 @@ export default function TablettePage() {
                     onReceiveAll={(order) => void receiveOrder(order)}
                     onReceiveLine={(line, qty) => void receive(line, qty)}
                     onStatus={(line, status) => void setStatus(line, status)}
+                    onOpen={setOpenOrder}
                   />
                 ))}
               </div>
@@ -805,6 +861,20 @@ export default function TablettePage() {
         <div className="tb-toast" role="status">
           <Check className="h-5 w-5" /> {notice}
         </div>
+      )}
+
+      {openOrder && (
+        <ReceiveOrderSheet
+          order={openOrder}
+          allLines={board.filter((l) => l.orderId === openOrder.orderId)}
+          org={orgSettings}
+          vendeur={me.name}
+          casier={null}
+          tablet
+          busy={busy === openOrder.orderId}
+          onClose={() => setOpenOrder(null)}
+          onConfirm={(picks) => receivePartial(openOrder, picks)}
+        />
       )}
 
       {doneOrder && (

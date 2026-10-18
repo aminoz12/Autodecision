@@ -1,5 +1,5 @@
 import type { BoardLine, SmsState } from "@/lib/data/commandes";
-import type { TicketData } from "@/components/print/OrderTicket";
+import type { TicketData, TicketLine } from "@/components/print/OrderTicket";
 
 /*
  * « Suivi des commandes » — the lists shown on the counter's page
@@ -224,20 +224,33 @@ export type ReceiveOrder = {
   lines: BoardLine[];
   /** Units still to come on those lines. */
   missing: number;
+  /** Units already in (every line of the order, fully received ones included). */
+  receivedUnits: number;
+  /** « Commande partielle »: some parts came in, some are still awaited. */
+  partial: boolean;
 };
 
-export function receiveOrdersOf(pending: BoardLine[]): ReceiveOrder[] {
+export function receiveOrdersOf(pending: BoardLine[], all: BoardLine[] = pending): ReceiveOrder[] {
   const byOrder = new Map<string, BoardLine[]>();
   for (const l of pending) {
     const arr = byOrder.get(l.orderId);
     if (arr) arr.push(l);
     else byOrder.set(l.orderId, [l]);
   }
+  // Units already received per order, over the whole board (a line fully
+  // received is no longer « pending », yet it makes the order partial).
+  const receivedByOrder = new Map<string, number>();
+  for (const l of all) {
+    if (l.status === "NOT_RECEIVED") continue;
+    receivedByOrder.set(l.orderId, (receivedByOrder.get(l.orderId) ?? 0) + Math.min(l.quantity, l.received));
+  }
   return [...byOrder.entries()]
     .map(([orderId, lines]) => {
       const first = lines[0];
       const awaited = lines.filter((l) => l.status !== "NOT_RECEIVED");
       const expected = awaited.map((l) => l.expectedAt).filter((v): v is string => !!v).sort()[0] ?? null;
+      const missing = awaited.reduce((s, l) => s + Math.max(0, l.quantity - l.received), 0);
+      const receivedUnits = receivedByOrder.get(orderId) ?? 0;
       return {
         orderId,
         ref: first.orderRef,
@@ -254,7 +267,9 @@ export function receiveOrdersOf(pending: BoardLine[]): ReceiveOrder[] {
         suppliers: [...new Set(lines.map((l) => l.supplierName ?? "Stock magasin"))],
         expectedAt: expected,
         lines: awaited,
-        missing: awaited.reduce((s, l) => s + Math.max(0, l.quantity - l.received), 0),
+        missing,
+        receivedUnits,
+        partial: receivedUnits > 0 && missing > 0,
       };
     })
     .sort((a, b) => {
@@ -312,4 +327,28 @@ export function boardTicketData(
     casier: extra.casier ?? null,
     livreur: extra.livreur ?? null,
   };
+}
+
+/**
+ * Ticket « réception partielle » (2026-10-18): over every line of the order,
+ * what is in (already received + pointed now in `picks`, line id → units)
+ * and what is still awaited. « Non disponible » lines are left out.
+ */
+export function partialTicketData(
+  lines: BoardLine[],
+  picks: ReadonlyMap<string, number>,
+  extra: { vendeur?: string | null; casier?: string | null },
+): TicketData | null {
+  const base = boardTicketData(lines, extra);
+  if (!base) return null;
+  const received: TicketLine[] = [];
+  const missing: TicketLine[] = [];
+  for (const l of lines) {
+    if (l.status === "NOT_RECEIVED") continue;
+    const got = Math.min(l.quantity, l.received + (picks.get(l.id) ?? 0));
+    const row = { reference: l.reference, designation: l.designation, prixVente: l.unitPrice, retourPossible: !l.retourImpossible, taken: l.handedOver >= l.quantity };
+    if (got > 0) received.push({ ...row, quantity: got });
+    if (l.quantity - got > 0) missing.push({ ...row, quantity: l.quantity - got });
+  }
+  return { ...base, lines: received, missing, casierBox: !lines[0].isRestock };
 }

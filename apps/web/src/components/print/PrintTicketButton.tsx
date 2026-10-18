@@ -21,7 +21,7 @@ export function PrintTicketButton({
   children,
 }: {
   ticket: TicketData | null;
-  kind: "commande" | "livraison" | "rangement";
+  kind: "commande" | "livraison" | "rangement" | "reception";
   org: Pick<OrganizationSettings, "name" | "phone" | "address" | "city" | "tvaRate"> | null;
   /** Suggested file name when printing to PDF. */
   title: string;

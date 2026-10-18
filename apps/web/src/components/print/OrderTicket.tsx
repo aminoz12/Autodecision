@@ -53,6 +53,10 @@ export type TicketData = {
   livreur?: string | null;
   /** Ticket de rangement: the shelf slot the parts wait in. */
   casier?: string | null;
+  /** Réception partielle: the parts still awaited, printed under the received ones. */
+  missing?: TicketLine[];
+  /** Réception partielle: print the casier box (client / garage order, not a réappro). */
+  casierBox?: boolean;
 };
 
 function eur(v: number): string {
@@ -161,8 +165,9 @@ export function OrderTicket({
    * « commande »: the counter's ticket, with prices. « livraison »: quantities and
    * signature. « rangement »: stuck on the parts waiting on the shelf (client,
    * phone, casier), printed once every part of a walk-in order came in.
+   * « reception »: a partial reception — what came in, what is still awaited.
    */
-  kind?: "commande" | "livraison" | "rangement";
+  kind?: "commande" | "livraison" | "rangement" | "reception";
   copy?: TicketCopy;
 }) {
   const created = new Date(data.createdAt);
@@ -174,8 +179,13 @@ export function OrderTicket({
   const tva = data.total - totalHT;
   const delivery = kind === "livraison";
   const rangement = kind === "rangement";
-  const sections =
-    delivery || rangement
+  const reception = kind === "reception";
+  const sections = reception
+    ? [
+        { title: "Pièces reçues", rows: data.lines },
+        { title: "Pièces manquantes (à venir)", rows: data.missing ?? [] },
+      ]
+    : delivery || rangement
       ? [{ title: delivery ? "Pièces livrées" : "Pièces à ranger", rows: data.lines }]
     : [
         { title: "Pièces remises au client", rows: data.lines.filter((l) => l.taken) },
@@ -193,7 +203,8 @@ export function OrderTicket({
 
       <div className="tk-dash" />
 
-      <p className="tk-doctitle">{delivery ? "Bon de livraison" : rangement ? "Ticket de rangement" : "Bon de commande"}</p>
+      <p className="tk-doctitle">{delivery ? "Bon de livraison" : rangement ? "Ticket de rangement" : reception ? "Réception partielle" : "Bon de commande"}</p>
+      {reception && <p className="tk-partial">COMMANDE PARTIELLE</p>}
       {copy && <p className="tk-copy">{copy}</p>}
       <p className="tk-refband">N° {data.ref}</p>
 
@@ -244,7 +255,7 @@ export function OrderTicket({
                     <strong>{l.reference}</strong>
                     {same ? "" : ` ${des}`}
                   </p>
-                  {delivery || rangement ? (
+                  {delivery || rangement || reception ? (
                     <p className="tk-item-row">
                       <span>Quantité</span>
                       <strong>{l.quantity}</strong>
@@ -264,7 +275,27 @@ export function OrderTicket({
 
       <div className="tk-dash" />
 
-      {rangement ? (
+      {reception ? (
+        <>
+          <p className="tk-reglement">
+            Reçu : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s) · à venir : {(data.missing ?? []).reduce((n, l) => n + l.quantity, 0)} pièce(s)
+          </p>
+          {data.casierBox && (
+            <p className="tk-casier">
+              <span>Casier</span>
+              <strong>{data.casier || "________"}</strong>
+            </p>
+          )}
+          <p className="tk-reglement">Reçu le {dateStr} à {timeStr}</p>
+          {data.clientPhone && data.clientPhone !== "-" && <p className="tk-phone">{data.clientPhone}</p>}
+          <div className="tk-dash" />
+          <p className="tk-note">
+            {data.casierBox
+              ? "Commande partielle : le reste des pièces est attendu. À remettre au client sur présentation du bon de commande."
+              : "Réappro partielle : pièces rangées en stock, le reste est attendu."}
+          </p>
+        </>
+      ) : rangement ? (
         <>
           <p className="tk-reglement">Total : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s)</p>
           <p className="tk-casier">

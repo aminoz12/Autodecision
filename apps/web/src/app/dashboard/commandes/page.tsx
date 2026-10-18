@@ -23,6 +23,7 @@ import {
   Wallet,
   X,
   type LucideIcon,
+  PackageOpen,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -38,11 +39,13 @@ import {
   pendingLines,
   prepareOrdersOf,
   receiveOrdersOf,
+  type ReceiveOrder,
   toursOf,
   type LineKind,
 } from "@/lib/commandes-board";
 import { OrderDoneSheet, type DoneOrder } from "@/components/orders/OrderDoneSheet";
 import { ReceiveOrderCard } from "@/components/orders/ReceiveOrderCard";
+import { ReceiveOrderSheet } from "@/components/orders/ReceiveOrderSheet";
 import { PrintTicketButton } from "@/components/print/PrintTicketButton";
 import { fmtDay, fmtDayTime, LinesTable, type LinesTableContext } from "@/components/orders/LinesTable";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
@@ -133,6 +136,10 @@ export default function ReceptionCommandesPage() {
   const [tourFilter, setTourFilter] = useState<string | null>(null);
   /** Client / Garages / Retour en stock filter under the tournées. */
   const [kindFilter, setKindFilter] = useState<LineKind | null>(null);
+  /** « Commandes partielles » only: some parts already came in. */
+  const [partialOnly, setPartialOnly] = useState(false);
+  /** The order whose checklist (pièce par pièce) is open — a snapshot, so the sheet survives the reload. */
+  const [openOrder, setOpenOrder] = useState<ReceiveOrder | null>(null);
   /** Lines ticked for a grouped action (Reçu / Reliquat / Non reçu). */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [smsFilter, setSmsFilter] = useState<"all" | "complet" | "partiel">("all");
@@ -351,7 +358,9 @@ export default function ReceptionCommandesPage() {
   );
 
   /** « À recevoir » pointed order by order (2026-10-18). */
-  const receiveOrders = useMemo(() => receiveOrdersOf(pointerRows), [pointerRows]);
+  const receiveOrdersAll = useMemo(() => receiveOrdersOf(pointerRows, board), [pointerRows, board]);
+  const partialCount = useMemo(() => receiveOrdersAll.filter((o) => o.partial).length, [receiveOrdersAll]);
+  const receiveOrders = useMemo(() => (partialOnly ? receiveOrdersAll.filter((o) => o.partial) : receiveOrdersAll), [receiveOrdersAll, partialOnly]);
 
   /* ---- selection for grouped actions (only visible rows count) ---- */
   const allVisibleSelected =
@@ -518,6 +527,48 @@ export default function ReceptionCommandesPage() {
       await load();
       setDoneId(order.orderId);
     });
+
+  /**
+   * Checklist sheet: the ticked units are received line by line. With parts
+   * still missing the order stays in « Pièces à recevoir » as « partielle »;
+   * when everything was ticked the usual « commande complète » sheet opens.
+   */
+  const actReceivePartial = async (order: ReceiveOrder, picks: Map<string, number>): Promise<boolean> => {
+    if (!orgId) return false;
+    const key = `partial-${order.orderId}`;
+    setBusy((prev) => new Set(prev).add(key));
+    try {
+      for (const line of order.lines) {
+        const qty = picks.get(line.id) ?? 0;
+        if (qty <= 0) continue;
+        const missing = Math.max(0, line.quantity - line.received);
+        await markLineReceived(
+          supabase,
+          orgId,
+          { id: line.id, reference: line.reference, designation: line.designation, quantity: line.quantity, receivedQuantity: line.received },
+          qty >= missing ? undefined : qty,
+        );
+      }
+      flushClientMessages();
+      const got = [...picks.values()].reduce((s, n) => s + n, 0);
+      setNotice(`${order.ref} : ${got} pièce${got > 1 ? "s" : ""} reçue${got > 1 ? "s" : ""}${got < order.missing ? " — commande partielle" : ""}.`);
+      await load();
+      if (got >= order.missing) {
+        setOpenOrder(null);
+        setDoneId(order.orderId);
+      }
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
 
   // Hand over to the client everything currently available on this line
   // (on the shelf for stock lines, received units otherwise). Custom
@@ -855,6 +906,17 @@ export default function ReceptionCommandesPage() {
                     </button>
                   );
                 })}
+                <button
+                  type="button"
+                  onClick={() => setPartialOnly((v) => !v)}
+                  className={`rc-kind rc-kind--partial${partialOnly ? " rc-kind--active" : ""}`}
+                  aria-pressed={partialOnly}
+                  title="Commandes dont une partie des pièces est déjà arrivée"
+                >
+                  <PackageOpen className="h-4 w-4" />
+                  Commandes partielles
+                  <span className="rc-kind-count">{partialCount}</span>
+                </button>
               </div>
 
               {receiveOrders.length === 0 ? (
@@ -870,6 +932,7 @@ export default function ReceptionCommandesPage() {
                       onReceiveAll={(order) => void actReceiveOrder(order)}
                       onReceiveLine={(line, qty) => void actReceive(line, qty)}
                       onStatus={(line, status) => void actStatus(line, status)}
+                      onOpen={setOpenOrder}
                     />
                   ))}
                 </div>
@@ -1367,6 +1430,19 @@ export default function ReceptionCommandesPage() {
           )}
 
         </>
+      )}
+
+      {openOrder && (
+        <ReceiveOrderSheet
+          order={openOrder}
+          allLines={board.filter((l) => l.orderId === openOrder.orderId)}
+          org={orgSettings}
+          vendeur={profile?.display_name ?? null}
+          casier={shelves.get(openOrder.orderId)?.casier ?? null}
+          busy={busy.has(`partial-${openOrder.orderId}`)}
+          onClose={() => setOpenOrder(null)}
+          onConfirm={(picks) => actReceivePartial(openOrder, picks)}
+        />
       )}
 
       {doneOrder && (

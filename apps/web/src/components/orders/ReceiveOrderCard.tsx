@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Hourglass, Loader2, Truck, X } from "lucide-react";
+import { Check, Hourglass, ListChecks, Loader2, Truck, X } from "lucide-react";
 import { useState } from "react";
 import type { ReceiveOrder } from "@/lib/commandes-board";
 import type { BoardLine } from "@/lib/data/commandes";
@@ -34,6 +34,7 @@ export function ReceiveOrderCard({
   onReceiveAll,
   onReceiveLine,
   onStatus,
+  onOpen,
 }: {
   order: ReceiveOrder;
   /** Order id or line id of the action running (null = none). */
@@ -42,6 +43,8 @@ export function ReceiveOrderCard({
   onReceiveAll: (order: ReceiveOrder) => void;
   onReceiveLine: (line: BoardLine, qty?: number) => void;
   onStatus: (line: BoardLine, status: "BACKORDER" | "NOT_RECEIVED") => void;
+  /** Opens the checklist (which parts came in, which did not) — offered when more than one part is awaited. */
+  onOpen?: (order: ReceiveOrder) => void;
 }) {
   /** The line whose « Partiel » quantity picker is open. */
   const [partial, setPartial] = useState<{ lineId: string; qty: number } | null>(null);
@@ -55,6 +58,11 @@ export function ReceiveOrderCard({
           <p className="ro-ref">
             {order.ref}
             <span className={`ro-kind ro-kind--${order.kind.toLowerCase()}`}>{KIND_LABEL[order.kind]}</span>
+            {order.partial && (
+              <span className="ro-kind ro-kind--partial" title={`${order.receivedUnits} pièce(s) déjà reçue(s), ${order.missing} manquante(s)`}>
+                Partielle
+              </span>
+            )}
           </p>
           <p className="ro-client">{order.clientName}</p>
           <p className="ro-meta">
@@ -69,6 +77,12 @@ export function ReceiveOrderCard({
               .join(" · ")}
           </p>
         </div>
+        <div className="ro-head-acts">
+        {onOpen && order.missing > 1 && (
+          <button type="button" className="ro-open" disabled={anyBusy} onClick={() => onOpen(order)} title="Cocher pièce par pièce ce qui est arrivé">
+            <ListChecks className="h-5 w-5" /> Ouvrir
+          </button>
+        )}
         <button
           type="button"
           className="ro-all"
@@ -84,6 +98,7 @@ export function ReceiveOrderCard({
             </small>
           </span>
         </button>
+        </div>
       </header>
 
       <ul className="ro-lines">
