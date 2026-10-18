@@ -104,6 +104,9 @@ export function ReceiveOrderCard({
                   <span className="ro-supplier">
                     <Truck className="h-3.5 w-3.5" /> {l.supplierName ?? "Stock magasin"}
                   </span>
+                  {l.referenceCommande && l.referenceCommande !== l.reference && (
+                    <span className="ro-ref-sup">réf. fourn. {l.referenceCommande}</span>
+                  )}
                   <span className={`ro-badge ro-badge--${st.cls}`}>{st.label}</span>
                   <span className="ro-qty">
                     reçu <strong>{l.received}</strong> / {l.quantity}

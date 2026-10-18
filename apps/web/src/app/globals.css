@@ -7430,3 +7430,19 @@ a.sav-strip-item:hover { border-color: var(--clr-primary); color: var(--clr-prim
 .sav-order .sav-table td:first-child .rt-badge { margin-top: 4px; text-decoration: none; }
 .sav-order-acts { display: flex; justify-content: flex-end; gap: 6px; }
 .sav-order-acts .od-btn { padding: 0; width: 36px; height: 36px; justify-content: center; }
+
+/* 2026-10-18 — Tournées : réf. fournisseur visible + changement de fournisseur */
+.tf-ref-sup { display: block; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-muted); text-decoration: none; }
+/* text-decoration propagates to children and cannot be cancelled there: strike the reference only */
+.tf-chip--picked .tf-ref, .tf-chip--received .tf-ref, .tf-chip--unavailable .tf-ref { text-decoration: none; }
+.tf-chip--picked .tf-ref-main, .tf-chip--received .tf-ref-main, .tf-chip--unavailable .tf-ref-main { text-decoration: line-through; }
+.tf-change { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border-card); border-radius: 10px; background: var(--bg-subtle); display: flex; flex-direction: column; gap: 10px; }
+.tf-change--alert { border-color: var(--clr-danger-border); background: var(--clr-danger-bg); }
+.tf-change-title { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.tf-change-hint { margin: 0; font-size: 13px; color: var(--clr-danger-text); font-weight: 600; }
+.tf-change-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tf-change-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.tf-refcmd-input { max-width: 180px; text-align: right; font-weight: 700; text-transform: uppercase; }
+.lv-ref-sup { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; background: var(--clr-warning-bg); color: var(--clr-warning-text); font-size: 12.5px; font-weight: 800; letter-spacing: .02em; }
+.ro-ref-sup { font-weight: 700; color: var(--text-secondary); }
+@media (max-width: 560px) { .tf-change-fields { grid-template-columns: 1fr; } }

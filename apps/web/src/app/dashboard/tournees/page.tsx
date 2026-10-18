@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  ArrowRightLeft,
   Ban,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -28,9 +30,11 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
 import { loadLivreurs, type Livreur } from "@/lib/data/livreurs";
+import { loadSupplierOptions, type SupplierOption } from "@/lib/data/saas";
 import {
   addDays,
   buildTourGrid,
+  changeLineSupplier,
   departureText,
   ensureSupplierTour,
   filterTourLines,
@@ -40,6 +44,7 @@ import {
   focusSlot,
   loadSupplierTourBoard,
   loadTeamOrder,
+  normalizeReferenceCommande,
   parisDate,
   pct,
   pickupState,
@@ -48,8 +53,10 @@ import {
   daySlots,
   DEFAULT_TOUR_SCHEDULE,
   setLinePickup,
+  setLineReferenceCommande,
   setSupplierTourStatus,
   slotLabel,
+  supplierChangeLabel,
   supplierStops,
   TOUR_STATUS_LABEL,
   tourColor,
@@ -135,6 +142,8 @@ function PartChip({
 }) {
   const state = pickupState(line);
   const picked = state === "picked";
+  // The supplier's own reference, when it is not simply the part reference again.
+  const supplierRef = line.referenceCommande && line.referenceCommande !== line.reference ? line.referenceCommande : null;
   return (
     <span className={`tf-chip tf-chip--${state}`} style={{ "--vc": color } as CSSProperties}>
       <button
@@ -149,11 +158,111 @@ function PartChip({
       >
         <StateIcon state={state} />
       </button>
-      <button type="button" className="tf-ref" onClick={() => onOpen(line)} title={`${line.designation} — ${PICKUP_STATE_LABEL[state]}`}>
-        {line.reference}
-        {line.quantity > 1 && <em>×{line.quantity}</em>}
+      <button
+        type="button"
+        className="tf-ref"
+        onClick={() => onOpen(line)}
+        title={`${line.designation} — ${PICKUP_STATE_LABEL[state]}${supplierRef ? ` — réf. fournisseur ${supplierRef}` : ""}`}
+      >
+        {/* The strike-through of a picked / unavailable part stays on its reference: the supplier ref must stay readable. */}
+        <span className="tf-ref-main">
+          {line.reference}
+          {line.quantity > 1 && <em>×{line.quantity}</em>}
+        </span>
+        {supplierRef && <small className="tf-ref-sup">réf. {supplierRef}</small>}
       </button>
     </span>
+  );
+}
+
+/**
+ * « Changer de fournisseur » in the line modal: the part is re-ordered from
+ * another supplier of the magasin. Open straight away when the livreur found
+ * the part unavailable, folded behind a button otherwise. Keyed by the line
+ * from the modal, so the choice resets when another part opens.
+ */
+function SupplierChange({
+  line,
+  suppliers,
+  saving,
+  onChange,
+}: {
+  line: TourLine;
+  suppliers: SupplierOption[];
+  saving: boolean;
+  onChange: (supplierId: string, reference: string) => void;
+}) {
+  const alert = line.pickupStatus === "UNAVAILABLE";
+  const [changeOpen, setChangeOpen] = useState(alert);
+  const [supplierId, setSupplierId] = useState("");
+  const [reference, setReference] = useState("");
+  const options = suppliers.filter((s) => s.id !== line.supplierId);
+  const chosen = options.find((s) => s.id === supplierId) ?? null;
+  const open = changeOpen || alert;
+  return (
+    <div className={`tf-change${alert ? " tf-change--alert" : ""}`}>
+      {open ? (
+        <>
+          <p className="tf-change-title">
+            <ArrowRightLeft className="h-4 w-4" />
+            Changer de fournisseur
+          </p>
+          {alert && (
+            <p className="tf-change-hint">Indisponible chez {line.supplier} : recommandez la pièce chez un autre fournisseur.</p>
+          )}
+          <div className="tf-change-fields">
+            <label className="od-field">
+              <span className="od-label">Nouveau fournisseur</span>
+              <div className="od-select">
+                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} disabled={saving}>
+                  <option value="">Choisir un fournisseur…</option>
+                  {options.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="h-4 w-4" />
+              </div>
+            </label>
+            <label className="od-field">
+              <span className="od-label">Réf. chez ce fournisseur</span>
+              <input
+                className="od-input"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="Optionnel"
+                maxLength={60}
+                autoComplete="off"
+                disabled={saving}
+              />
+            </label>
+          </div>
+          {options.length === 0 && <p className="od-hint">Aucun autre fournisseur enregistré pour ce magasin.</p>}
+          <div className="tf-change-actions">
+            {!alert && (
+              <button type="button" className="od-btn od-btn--ghost" disabled={saving} onClick={() => setChangeOpen(false)}>
+                Annuler
+              </button>
+            )}
+            <button
+              type="button"
+              className="od-btn od-btn--primary"
+              disabled={!chosen || saving}
+              onClick={() => chosen && onChange(chosen.id, reference)}
+            >
+              {saving ? <Loader2 className="h-4 w-4 nc-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+              {chosen ? `Recommander chez ${chosen.name}` : "Recommander chez…"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <button type="button" className="od-btn od-btn--ghost" disabled={saving} onClick={() => setChangeOpen(true)}>
+          <ArrowRightLeft className="h-4 w-4" />
+          Changer de fournisseur
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -171,6 +280,7 @@ export default function TourneesPage() {
   const [board, setBoard] = useState<SupplierTourBoard | null>(null);
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
   const [team, setTeam] = useState<string[]>([]);
+  const [allSuppliers, setAllSuppliers] = useState<SupplierOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -239,10 +349,13 @@ export default function TourneesPage() {
     void Promise.all([
       loadLivreurs(supabase, orgId).catch(() => [] as Livreur[]),
       loadTeamOrder(supabase, orgId),
-    ]).then(([l, t]) => {
+      // Every supplier of the magasin, for « Changer de fournisseur » — the board only knows the day's.
+      loadSupplierOptions(supabase, orgId).catch(() => [] as SupplierOption[]),
+    ]).then(([l, t, s]) => {
       if (cancelled) return;
       setLivreurs(l);
       setTeam(t);
+      setAllSuppliers(s);
     });
     return () => {
       cancelled = true;
@@ -360,6 +473,48 @@ export default function TourneesPage() {
         next.delete(line.id);
         return next;
       });
+    }
+  }
+
+  const doneSaving = (id: string) =>
+    setSavingLines((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+
+  /** « Réf. fournisseur » typed in the line modal — saved on blur (Enter blurs). */
+  async function saveReferenceCommande(line: TourLine, raw: string) {
+    const value = normalizeReferenceCommande(raw);
+    if (value === line.referenceCommande || savingLines.has(line.id)) return;
+    setSavingLines((s) => new Set(s).add(line.id));
+    setError(null);
+    try {
+      await setLineReferenceCommande(supabase, line.id, value);
+      patchLine(line.id, { referenceCommande: value });
+      setNotice(value ? `Réf. fournisseur enregistrée : ${value}` : "Réf. fournisseur effacée.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      doneSaving(line.id);
+    }
+  }
+
+  /** The part is re-ordered elsewhere: the modal closes and the toast says where it now comes from. */
+  async function changeSupplier(line: TourLine, supplierId: string, reference: string) {
+    if (savingLines.has(line.id)) return;
+    setSavingLines((s) => new Set(s).add(line.id));
+    setError(null);
+    try {
+      const result = await changeLineSupplier(supabase, line.id, supplierId, reference);
+      setOpenLineId(null);
+      setNotice(supplierChangeLabel(line.reference, result, today));
+      await refresh(true);
+    } catch (e) {
+      // The modal stays open with the refusal (« Même fournisseur. », …) shown inside it.
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      doneSaving(line.id);
     }
   }
 
@@ -674,7 +829,11 @@ export default function TourneesPage() {
                                       color={colors.get(row.vendeurKey) ?? "#1A1F36"}
                                       saving={savingLines.has(l.id)}
                                       onToggle={(ln, st) => void pickup(ln, st)}
-                                      onOpen={(ln) => setOpenLineId(ln.id)}
+                                      onOpen={(ln) => {
+                                        // A stale page error would otherwise show up inside the modal.
+                                        setError(null);
+                                        setOpenLineId(ln.id);
+                                      }}
                                     />
                                   ))}
                                 </td>
@@ -904,17 +1063,36 @@ export default function TourneesPage() {
                 const saving = savingLines.has(openLine.id);
                 return (
                   <>
+                    {/* The page banner sits behind the overlay: the refusal must be readable here. */}
+                    {error && <div className="nc-error">{error}</div>}
                     <dl className="tf-kv">
                       <div>
                         <dt>Désignation</dt>
                         <dd>{openLine.designation || "—"}</dd>
                       </div>
-                      {openLine.referenceCommande && (
-                        <div>
-                          <dt>Réf. fournisseur</dt>
-                          <dd>{openLine.referenceCommande}</dd>
-                        </div>
-                      )}
+                      <div>
+                        <dt>Réf. fournisseur</dt>
+                        <dd>
+                          <input
+                            key={openLine.id}
+                            className="od-input tf-refcmd-input"
+                            defaultValue={openLine.referenceCommande ?? ""}
+                            placeholder="—"
+                            aria-label="Référence chez le fournisseur"
+                            maxLength={60}
+                            autoComplete="off"
+                            disabled={saving}
+                            onBlur={(e) => void saveReferenceCommande(openLine, e.currentTarget.value)}
+                            onKeyDown={(e) => {
+                              // Enter saves through the blur, so a value is never sent twice.
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                              }
+                            }}
+                          />
+                        </dd>
+                      </div>
                       <div>
                         <dt>Quantité</dt>
                         <dd>{openLine.quantity}</dd>
@@ -956,6 +1134,15 @@ export default function TourneesPage() {
                         </dd>
                       </div>
                     </dl>
+                    {state !== "received" && (
+                      <SupplierChange
+                        key={openLine.id}
+                        line={openLine}
+                        suppliers={allSuppliers}
+                        saving={saving}
+                        onChange={(supplierId, reference) => void changeSupplier(openLine, supplierId, reference)}
+                      />
+                    )}
                     {state === "received" ? (
                       <p className="od-hint">Pièce déjà reçue au magasin : rien à récupérer.</p>
                     ) : (

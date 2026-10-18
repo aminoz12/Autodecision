@@ -408,6 +408,12 @@ function PartRow({
             {line.reference}
             {line.quantity > 1 ? ` ×${line.quantity}` : ""}
           </strong>
+          {/* The reference the livreur asks for at the supplier's counter — kept apart from the part reference. */}
+          {line.referenceCommande && line.referenceCommande !== line.reference && (
+            <span className="lv-ref-sup" title="Référence chez le fournisseur">
+              réf. fourn. {line.referenceCommande}
+            </span>
+          )}
           {line.kind && Icon && (
             <span className={`lv-badge lv-badge--${line.kind}`}>
               <Icon />
@@ -417,8 +423,7 @@ function PartRow({
           {queued && <CloudOff className="lv-queued" aria-label="En attente de réseau" />}
         </p>
         <p className="lv-part-meta">
-          {line.designation}
-          {line.referenceCommande ? ` · réf. ${line.referenceCommande}` : ""} · {line.vendeur}
+          {line.designation} · {line.vendeur}
         </p>
         {state !== "pending" && (
           <p className={`lv-part-state lv-part-state--${state}`}>

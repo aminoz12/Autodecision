@@ -844,6 +844,91 @@ export function applyQueuedTourActions(board: SupplierTourBoard, items: QueuedTo
 }
 
 /* ------------------------------------------------------------------ */
+/*  Changement de fournisseur — a part the livreur could not get is    */
+/*  re-ordered elsewhere (migration 20261018020000)                    */
+/* ------------------------------------------------------------------ */
+
+/** What change_line_supplier() answers: where the part now goes. */
+export type ChangedLineSupplier = {
+  lineId: string;
+  supplierId: string;
+  supplier: string;
+  /** The supplier brings the part to the magasin itself — no tournée. */
+  ownDelivery: boolean;
+  tourId: string | null;
+  tourName: string | null;
+  /** yyyy-mm-dd */
+  tourDate: string | null;
+  /** Departure "HH:MM" (Paris). */
+  tourSlot: string | null;
+  /** When the part is expected at the magasin (ISO). */
+  prevueLe: string | null;
+};
+
+/** change_line_supplier() JSON → result; anything missing reads as null. */
+export function parseChangedLineSupplier(json: unknown): ChangedLineSupplier {
+  const r = (json && typeof json === "object" ? json : {}) as Record<string, unknown>;
+  const tourSlot = text(r.tour_slot)?.slice(0, 5) ?? null;
+  return {
+    lineId: String(r.line_id ?? ""),
+    supplierId: String(r.supplier_id ?? ""),
+    supplier: text(r.supplier) ?? "Fournisseur",
+    ownDelivery: r.own_delivery === true,
+    tourId: text(r.tour_id),
+    tourName: text(r.tour_name),
+    tourDate: text(r.tour_date)?.slice(0, 10) ?? null,
+    tourSlot: tourSlot && HHMM.test(tourSlot) ? tourSlot : null,
+    prevueLe: text(r.prevue_le),
+  };
+}
+
+/** The supplier's own reference as it is stored: trimmed, uppercase, nothing → null. */
+export function normalizeReferenceCommande(value: string | null | undefined): string | null {
+  const v = (value ?? "").trim().toUpperCase();
+  return v ? v.slice(0, 60) : null;
+}
+
+/** « aujourd'hui », « demain », else « lundi 20/10 » — how the counter says when a tournée leaves. */
+function tourDayWord(ymd: string, today: string): string {
+  if (ymd === today) return "aujourd'hui";
+  if (ymd === addDays(today, 1)) return "demain";
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
+/** "20/10" of an ISO instant, Paris calendar. */
+function fmtShortDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Paris" });
+}
+
+/**
+ * Toast after a part was re-ordered elsewhere — where it will now come from:
+ * « GDB1322 recommandée chez Bosch — Tournée 2 · 13h00 demain », or, when the
+ * supplier delivers, « … — livrée par le fournisseur, prévue le 20/10 ».
+ */
+export function supplierChangeLabel(reference: string, r: ChangedLineSupplier, today: string): string {
+  const head = `${reference} recommandée chez ${r.supplier}`;
+  const due = r.prevueLe ? `prévue le ${fmtShortDate(r.prevueLe)}` : "";
+  if (r.ownDelivery) return `${head} — livrée par le fournisseur${due ? `, ${due}` : ""}`;
+  if (r.tourName) {
+    const when = [r.tourSlot ? slotLabel(r.tourSlot).toLowerCase() : "", r.tourDate ? tourDayWord(r.tourDate, today) : ""]
+      .filter(Boolean)
+      .join(" ");
+    return when ? `${head} — ${r.tourName} · ${when}` : `${head} — ${r.tourName}`;
+  }
+  return due ? `${head} — ${due}` : head;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Server calls                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -926,6 +1011,51 @@ export async function deferLineToNextTour(
     slot: typeof r.slot === "string" ? r.slot : null,
     date: String(r.date ?? ""),
   };
+}
+
+/** change_line_supplier() is not in the database yet — the other tournée RPCs may well be. */
+export class SupplierChangeUnavailableError extends Error {
+  constructor() {
+    super("Le changement de fournisseur demande la migration 20261018020000 : mettez la base à jour.");
+    this.name = "SupplierChangeUnavailableError";
+  }
+}
+
+/**
+ * Counter only: the part is re-ordered from another supplier, with that
+ * supplier's reference when known. The database refuses in French (« Même
+ * fournisseur. », « Pièce déjà reçue au magasin. »…) — shown as is.
+ */
+export async function changeLineSupplier(
+  supabase: SupabaseClient,
+  lineId: string,
+  supplierId: string,
+  referenceCommande: string | null,
+): Promise<ChangedLineSupplier> {
+  const { data, error } = await supabase.rpc("change_line_supplier", {
+    p_line_id: lineId,
+    p_supplier_id: supplierId,
+    p_reference_commande: normalizeReferenceCommande(referenceCommande),
+  });
+  if (error) {
+    if (error.code === "PGRST202" || /could not find the function/i.test(error.message)) throw new SupplierChangeUnavailableError();
+    throw toTourError(error.message, error.code);
+  }
+  return parseChangedLineSupplier(data);
+}
+
+/**
+ * Counter: the supplier's own reference for a part — what the livreur asks
+ * for at the supplier's counter. A direct update of that single column (the
+ * grant is per column, so nothing else is sent and nothing is read back).
+ */
+export async function setLineReferenceCommande(supabase: SupabaseClient, lineId: string, ref: string | null): Promise<void> {
+  const { error } = await supabase
+    .from("order_lines")
+    .update({ reference_commande: normalizeReferenceCommande(ref) })
+    .eq("id", lineId);
+  // The column grant (update reference_commande) predates this feature: a refusal here is not a missing migration.
+  if (error) throw toTourError(error.message, error.code);
 }
 
 /** Livreur or counter: the return leg is done (collected at the garage / dropped at the supplier), or back to « à faire ». */

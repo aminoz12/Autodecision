@@ -12,8 +12,11 @@ import {
   nextTourFromNow,
   nextOpenDay,
   nextDayWord,
+  normalizeReferenceCommande,
   daySlots,
+  parseChangedLineSupplier,
   parseTourSchedule,
+  supplierChangeLabel,
   DEFAULT_TOUR_SCHEDULE,
   type TourSchedule,
   parisDate,
@@ -416,5 +419,81 @@ describe("livreur view", () => {
     expect(tourErrorMessage("This tour is assigned to another livreur.")).toBe("Cette tournée est confiée à un autre livreur.");
     expect(tourErrorMessage("This part has already been received at the magasin.")).toMatch(/déjà reçue/);
     expect(tourErrorMessage("boom")).toBe("boom");
+  });
+});
+
+describe("changement de fournisseur", () => {
+  const today = "2026-10-18";
+
+  it("reads where the part now goes", () => {
+    expect(
+      parseChangedLineSupplier({
+        line_id: "l1",
+        supplier_id: "s-bosch",
+        supplier: "Bosch",
+        own_delivery: false,
+        tour_id: "t2",
+        tour_name: "Tournée 2",
+        tour_date: "2026-10-19",
+        tour_slot: "13:00:00",
+        prevue_le: "2026-10-19T11:00:00+00:00",
+      }),
+    ).toEqual({
+      lineId: "l1",
+      supplierId: "s-bosch",
+      supplier: "Bosch",
+      ownDelivery: false,
+      tourId: "t2",
+      tourName: "Tournée 2",
+      tourDate: "2026-10-19",
+      tourSlot: "13:00",
+      prevueLe: "2026-10-19T11:00:00+00:00",
+    });
+  });
+
+  it("reads a supplier that delivers itself: no tournée at all", () => {
+    const r = parseChangedLineSupplier({
+      line_id: "l1",
+      supplier_id: "s-ad",
+      supplier: "Autodistribution",
+      own_delivery: true,
+      tour_id: null,
+      tour_name: null,
+      tour_date: null,
+      tour_slot: null,
+      prevue_le: "2026-10-20T06:00:00Z",
+    });
+    expect(r).toEqual({
+      lineId: "l1",
+      supplierId: "s-ad",
+      supplier: "Autodistribution",
+      ownDelivery: true,
+      tourId: null,
+      tourName: null,
+      tourDate: null,
+      tourSlot: null,
+      prevueLe: "2026-10-20T06:00:00Z",
+    });
+    expect(parseChangedLineSupplier(null)).toMatchObject({ lineId: "", supplier: "Fournisseur", ownDelivery: false, tourId: null, prevueLe: null });
+  });
+
+  it("tells the counter where the part now comes from", () => {
+    const viaTour = parseChangedLineSupplier({
+      line_id: "l1",
+      supplier_id: "s-bosch",
+      supplier: "Bosch",
+      tour_id: "t2",
+      tour_name: "Tournée 2",
+      tour_date: "2026-10-19",
+      tour_slot: "13:00",
+    });
+    expect(supplierChangeLabel("GDB1322", viaTour, today)).toBe("GDB1322 recommandée chez Bosch — Tournée 2 · 13h00 demain");
+    expect(supplierChangeLabel("GDB1322", { ...viaTour, tourDate: today }, today)).toBe("GDB1322 recommandée chez Bosch — Tournée 2 · 13h00 aujourd'hui");
+    expect(supplierChangeLabel("GDB1322", { ...viaTour, tourDate: "2026-10-20" }, today)).toBe("GDB1322 recommandée chez Bosch — Tournée 2 · 13h00 mardi 20/10");
+    const delivered = parseChangedLineSupplier({ line_id: "l1", supplier_id: "s-ad", supplier: "Bosch", own_delivery: true, prevue_le: "2026-10-20T06:00:00Z" });
+    expect(supplierChangeLabel("GDB1322", delivered, today)).toBe("GDB1322 recommandée chez Bosch — livrée par le fournisseur, prévue le 20/10");
+    expect(supplierChangeLabel("GDB1322", { ...delivered, prevueLe: null }, today)).toBe("GDB1322 recommandée chez Bosch — livrée par le fournisseur");
+    expect(normalizeReferenceCommande("  gdb1322 ")).toBe("GDB1322");
+    expect(normalizeReferenceCommande("   ")).toBeNull();
   });
 });
