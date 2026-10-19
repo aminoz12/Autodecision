@@ -42,6 +42,7 @@ import {
   updateParticulierClient,
   type ClientProfile,
 } from "@/lib/data/clients";
+import { PhoneHint } from "@/components/ui/PhoneHint";
 
 function frDate(v: string | null): string {
   if (!v) return "—";
@@ -282,7 +283,7 @@ export default function ClientProfilePage() {
             <form className="cl-edit" onSubmit={saveProfile}>
               <div className="ga-modal-row">
                 <div className="od-field"><span className="od-label">Nom <span className="od-req">*</span></span><input className="od-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-                <div className="od-field"><span className="od-label">Téléphone</span><input className="od-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+                <div className="od-field"><span className="od-label">Téléphone</span><input className="od-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /><PhoneHint value={form.phone} /></div>
               </div>
               <div className="ga-modal-row">
                 <div className="od-field"><span className="od-label">Email</span><input className="od-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>

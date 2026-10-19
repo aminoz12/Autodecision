@@ -4,6 +4,7 @@ import {
   buildClientSms,
   formatE164,
   renderSmsTemplate,
+  smsPhoneCheck,
   smsSize,
   toE164,
   toGsm7,
@@ -38,6 +39,36 @@ describe("toE164", () => {
   it("formats French numbers for display", () => {
     expect(formatE164("+33612345678")).toBe("+33 6 12 34 56 78");
     expect(formatE164("+212612345678")).toBe("+212612345678");
+  });
+  it("rejects French numbers that do not have 9 national digits", () => {
+    expect(toE164("06 05 12 34")).toBeNull(); // journal 2026-10-19: +33605…, Twilio 21211
+    expect(toE164("+33 6 05 12 34")).toBeNull();
+    expect(toE164("06 12 34 56 78 9")).toBeNull();
+    expect(toE164("0033612345678")).toBe("+33612345678");
+  });
+});
+
+describe("smsPhoneCheck", () => {
+  it("accepts French mobiles in any spelling", () => {
+    expect(smsPhoneCheck("06 12 34 56 78")).toEqual({ ok: true, e164: "+33612345678" });
+    expect(smsPhoneCheck("07.98.76.54.32")).toEqual({ ok: true, e164: "+33798765432" });
+    expect(smsPhoneCheck("+33 (0)6 12 34 56 78")).toEqual({ ok: true, e164: "+33612345678" });
+  });
+  it("refuses landlines and box numbers", () => {
+    expect(smsPhoneCheck("01 47 85 12 34")).toEqual({ ok: false, reason: "LANDLINE" }); // Twilio 21635
+    expect(smsPhoneCheck("04 91 00 00 00")).toEqual({ ok: false, reason: "LANDLINE" });
+    expect(smsPhoneCheck("09 70 00 00 00")).toEqual({ ok: false, reason: "LANDLINE" });
+  });
+  it("tells an empty number from a malformed one", () => {
+    expect(smsPhoneCheck("")).toEqual({ ok: false, reason: "EMPTY" });
+    expect(smsPhoneCheck(null)).toEqual({ ok: false, reason: "EMPTY" });
+    expect(smsPhoneCheck("-")).toEqual({ ok: false, reason: "EMPTY" });
+    expect(smsPhoneCheck("06 05 12 34")).toEqual({ ok: false, reason: "INVALID" });
+    expect(smsPhoneCheck("abc")).toEqual({ ok: false, reason: "INVALID" });
+  });
+  it("checks foreign numbers on shape only", () => {
+    expect(smsPhoneCheck("+212612345678")).toEqual({ ok: true, e164: "+212612345678" });
+    expect(smsPhoneCheck("0612345678", "212")).toEqual({ ok: true, e164: "+212612345678" });
   });
 });
 

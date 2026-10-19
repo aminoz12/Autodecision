@@ -57,7 +57,7 @@ import { flushClientMessages, loadOrderShelves, loadSavSettingsSafe } from "@/li
 import { parisDate } from "@/lib/data/tournees";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, deductionMessage, loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
-import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
+import { SMS_PHONE_MESSAGE, buildClientSms, formatE164, smsPhoneCheck, type SmsSettings } from "@/lib/sms";
 import { updateClientAddress } from "@/lib/data/delivery";
 import {
   dispatchOrderToLivreur,
@@ -688,7 +688,8 @@ export default function ReceptionCommandesPage() {
       { client: smsOrder.clientId ? smsOrder.clientName : "", commande: smsOrder.ref },
       smsSettings,
     );
-    return { to: toE164(smsOrder.clientPhone), ...built };
+    const phone = smsPhoneCheck(smsOrder.clientPhone);
+    return { to: phone.ok ? phone.e164 : null, problem: phone.ok ? null : SMS_PHONE_MESSAGE[phone.reason], ...built };
   }, [smsOrder, smsSettings]);
 
   const sendSms = async () => {
@@ -1714,7 +1715,8 @@ export default function ReceptionCommandesPage() {
                 ) : (
                   <span className="sms-to-bad">
                     <AlertTriangle className="h-4 w-4" />
-                    Numéro invalide : {smsOrder.clientPhone ?? "aucun numéro"}
+                    {smsPreview.problem}
+                    {smsOrder.clientPhone && smsOrder.clientPhone !== "-" ? ` (${smsOrder.clientPhone})` : ""}
                   </span>
                 )}
               </div>

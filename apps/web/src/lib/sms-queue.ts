@@ -12,8 +12,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MAINTENANCE_RULES } from "@/lib/sav";
-import { buildQueuedSms, isQueuedSmsKind, toE164, type QueuedSmsKind, type SmsSettings } from "@/lib/sms";
-import { sendTextMessage } from "@/lib/sms-provider";
+import { buildQueuedSms, isQueuedSmsKind, smsPhoneCheck, type QueuedSmsKind, type SmsSettings } from "@/lib/sms";
+import { explainRefusal, sendTextMessage } from "@/lib/sms-provider";
 
 const PER_ORG_PER_DAY = 300;
 /** Messages the client did not ask for: never on a Sunday. */
@@ -171,12 +171,14 @@ export async function processSmsQueue(
       continue;
     }
 
-    const to = toE164(row.phone, countryCode);
-    if (!to) {
-      await close(row.id, { status: "ECHEC", error: "INVALID_PHONE", traite: true });
+    const check = smsPhoneCheck(row.phone, countryCode);
+    if (!check.ok) {
+      // Landline or malformed: no point asking the provider (Twilio 21635 / 21211).
+      await close(row.id, { status: "ECHEC", error: check.reason === "LANDLINE" ? "LANDLINE" : "INVALID_PHONE", traite: true });
       result.failed += 1;
       continue;
     }
+    const to = check.e164;
 
     if (!sentToday.has(row.organization_id)) {
       const { count } = await admin
@@ -214,7 +216,15 @@ export async function processSmsQueue(
     try {
       const sent = await sendTextMessage({ to, body: text, channel, mediaUrl });
       if (!sent.ok) {
-        await close(row.id, { status: "ECHEC", message: text, phone: to, error: `HTTP ${sent.status} ${sent.detail}`.slice(0, 300) });
+        const why = explainRefusal(sent.code);
+        await close(row.id, {
+          status: "ECHEC",
+          message: text,
+          phone: to,
+          error: `${why.kind !== "PROVIDER" ? `${why.kind} — ` : ""}HTTP ${sent.status} ${sent.detail}`.slice(0, 300),
+          // A bad number or an opt-out will not improve on its own: nothing to retry.
+          traite: why.kind !== "PROVIDER" ? true : undefined,
+        });
         result.failed += 1;
         continue;
       }

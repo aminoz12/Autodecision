@@ -37,6 +37,7 @@ import {
 import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
+import { PhoneHint } from "@/components/ui/PhoneHint";
 
 /*
  * « Rajout rapide » of the Nouvelle commande page: several parts typed in a
@@ -591,6 +592,7 @@ export function QuickAddModal({
                       value={row.clientPhone}
                       onChange={(e) => setRow(idx, "clientPhone", e.target.value)}
                     />
+                    <PhoneHint value={row.clientPhone} />
                   </div>
                 </div>
               )}

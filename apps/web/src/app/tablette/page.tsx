@@ -64,7 +64,7 @@ import { dispatchOrderToLivreur, loadLivreurs, markOrderDelivered, type Livreur 
 import { loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
 import { flushClientMessages, loadSavSettingsSafe } from "@/lib/data/sav";
 import { identify, loadStaff, release, tabletPeople, type Identity, type StaffEntry } from "@/lib/data/tablet";
-import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
+import { SMS_PHONE_MESSAGE, buildClientSms, formatE164, smsPhoneCheck, type SmsSettings } from "@/lib/sms";
 import { accountSpace } from "@/lib/spaces";
 import { createClient, setActorToken } from "@/lib/supabase/client";
 
@@ -481,7 +481,8 @@ export default function TablettePage() {
       { client: smsOrder.clientId ? smsOrder.clientName : "", commande: smsOrder.ref },
       smsSettings,
     );
-    return { to: toE164(smsOrder.clientPhone), ...built };
+    const phone = smsPhoneCheck(smsOrder.clientPhone);
+    return { to: phone.ok ? phone.e164 : null, problem: phone.ok ? null : SMS_PHONE_MESSAGE[phone.reason], ...built };
   }, [smsOrder, smsSettings]);
   const sendSms = () =>
     smsOrder &&
@@ -1008,7 +1009,7 @@ export default function TablettePage() {
       {smsOrder && smsPreview && (
         <Sheet title={`Prévenir ${smsOrder.clientName}`} onClose={() => setSmsOrder(null)}>
           <p className="tb-sheet-line">
-            {smsPreview.to ? <strong>{formatE164(smsPreview.to)}</strong> : <span className="tb-fail">Numéro de téléphone invalide</span>}
+            {smsPreview.to ? <strong>{formatE164(smsPreview.to)}</strong> : <span className="tb-fail">{smsPreview.problem}</span>}
           </p>
           <div className="sms-bubble">{smsPreview.text}</div>
           <div className="tb-actions">

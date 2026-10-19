@@ -27,6 +27,7 @@ import {
   LOYALTY,
   type ClientSummary,
 } from "@/lib/data/clients";
+import { PhoneHint } from "@/components/ui/PhoneHint";
 
 function frDate(v: string | null): string {
   if (!v) return "—";
@@ -313,6 +314,7 @@ export default function ClientsParticuliersPage() {
                 <div className="od-field">
                   <span className="od-label">Téléphone</span>
                   <input className="od-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="06 …" />
+                  <PhoneHint value={form.phone} />
                 </div>
               </div>
               <div className="ga-modal-row">

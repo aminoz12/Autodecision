@@ -47,6 +47,7 @@ import { QuickAddDone, QuickAddModal, useQuickAdd } from "@/components/orders/Qu
 import { clampMoney, eur, netUnit, receptionChoices, REGLEMENT_LABEL, todayISO, type PourQui, type Reglement } from "@/lib/order-form";
 import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { paymentTermsLabel } from "@/lib/constants/enums";
+import { PhoneHint } from "@/components/ui/PhoneHint";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -1124,6 +1125,7 @@ export default function NouvelleCommandePage() {
               value={clientPhone}
               onChange={(e) => setClientPhone(e.target.value)}
             />
+            <PhoneHint value={clientPhone} />
           </div>
           <div className="od-field">
             <span className="od-label">Email</span>

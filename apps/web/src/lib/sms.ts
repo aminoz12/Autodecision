@@ -172,6 +172,9 @@ export function toE164(raw: string | null | undefined, defaultCountryCode = "33"
     else if (!d.startsWith(cc)) d = cc + d;
   }
   if (d.length < 8 || d.length > 15) return null;
+  // A French number is +33 followed by exactly 9 digits — anything else is a
+  // typo (journal 2026-10-19: "+33605…", two digits short, Twilio 21211).
+  if (d.startsWith("33") && d.length !== 11) return null;
   return "+" + d;
 }
 
@@ -179,6 +182,32 @@ export function toE164(raw: string | null | undefined, defaultCountryCode = "33"
 export function formatE164(e164: string): string {
   const m = /^\+33(\d)(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(e164);
   return m ? `+33 ${m[1]} ${m[2]} ${m[3]} ${m[4]} ${m[5]}` : e164;
+}
+
+export type SmsPhoneReason = "EMPTY" | "INVALID" | "LANDLINE";
+export type SmsPhoneCheck = { ok: true; e164: string } | { ok: false; reason: SmsPhoneReason };
+
+/** What to tell the cashier, per reason. */
+export const SMS_PHONE_MESSAGE: Record<SmsPhoneReason, string> = {
+  EMPTY: "Ce client n'a pas de numéro de téléphone.",
+  INVALID: "Numéro de téléphone invalide (attendu : 06 12 34 56 78).",
+  LANDLINE: "Numéro fixe : un SMS ne peut partir que vers un mobile (06 ou 07).",
+};
+
+/**
+ * Can a text message reach this number? A French number must be a mobile
+ * (06 / 07): the provider refuses landlines (Twilio 21635) and malformed
+ * numbers (21211) — both seen in the journal on 2026-10-19, each costing the
+ * cashier a « Serveur » error at « Tout reçu ». "-" is the order form's
+ * placeholder for « no phone ». Other countries are checked on shape only.
+ */
+export function smsPhoneCheck(raw: string | null | undefined, defaultCountryCode = "33"): SmsPhoneCheck {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed || trimmed === "-") return { ok: false, reason: "EMPTY" };
+  const e164 = toE164(trimmed, defaultCountryCode);
+  if (!e164) return { ok: false, reason: "INVALID" };
+  if (e164.startsWith("+33") && !/^\+33[67]\d{8}$/.test(e164)) return { ok: false, reason: "LANDLINE" };
+  return { ok: true, e164 };
 }
 
 /* ------------------------------------------------------------------ */

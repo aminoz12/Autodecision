@@ -739,6 +739,9 @@ table .od-btn--primary:disabled:hover { background: #fff; color: var(--clr-prima
 .tf-note-label, .od-label > svg, .st-rajout-title > svg, .sav-client-label { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .od-label { display: flex; align-items: center; gap: 6px; }
 .od-label > svg { width: 14px; height: 14px; color: var(--text-muted); }
+/* Under a phone input (PhoneHint): the number cannot receive an SMS. */
+.phone-hint { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 12.5px; font-weight: 600; color: var(--clr-warning-text); }
+.phone-hint > svg { flex-shrink: 0; }
 
 /* Clients table: money and counts never wrap */
 .cl-table td:nth-child(n+4) { white-space: nowrap; }
@@ -1683,3 +1686,6 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .ac-cancelled-tag { margin-left: 6px; }
 .ac-cancel { color: var(--clr-danger-text); border-color: var(--clr-danger-border); }
 .ac-cancel:hover:enabled { background: var(--clr-danger-bg); }
+
+/* Reporter la tournée (tournée fournisseurs, 2026-10-19): one field wide. */
+.tf-change-fields--one { grid-template-columns: minmax(0, 1fr); }

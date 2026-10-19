@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { buildClientSms, toE164, type SmsKind, type SmsSettings } from "@/lib/sms";
-import { sendTextMessage } from "@/lib/sms-provider";
+import { SMS_PHONE_MESSAGE, buildClientSms, formatE164, smsPhoneCheck, type SmsKind, type SmsSettings } from "@/lib/sms";
+import { explainRefusal, sendTextMessage } from "@/lib/sms-provider";
 
 /**
  * Send the « commande prête » SMS to the client of an order (server-only).
@@ -95,13 +95,17 @@ export async function POST(request: Request) {
       | { name?: string | null; phone?: string | null }
       | null;
     const countryCode = process.env.SMS_DEFAULT_COUNTRY_CODE || "33";
-    const phone = toE164(order.client_phone, countryCode) ?? toE164(clientRow?.phone, countryCode);
-    if (!phone) {
-      return NextResponse.json(
-        { error: "Ce client n'a pas de numéro de téléphone valide (ex. 06 12 34 56 78)." },
-        { status: 400 },
-      );
+    // The number on the order first, the client file as a fallback. A landline
+    // or a malformed number is refused HERE, with a message the cashier can act
+    // on, instead of coming back as a provider error (Twilio 21635 / 21211,
+    // journal 2026-10-19) filed as a « Serveur » failure.
+    const onOrder = smsPhoneCheck(order.client_phone, countryCode);
+    const onClient = smsPhoneCheck(clientRow?.phone, countryCode);
+    const check = onOrder.ok ? onOrder : onClient.ok ? onClient : onOrder.reason === "EMPTY" ? onClient : onOrder;
+    if (!check.ok) {
+      return NextResponse.json({ error: SMS_PHONE_MESSAGE[check.reason], code: `PHONE_${check.reason}` }, { status: 400 });
     }
+    const phone = check.e164;
 
     const settings = await loadSmsSettings(admin, orgId);
     const { text: message, size } = buildClientSms(
@@ -157,8 +161,14 @@ export async function POST(request: Request) {
     const sent = await sendTextMessage({ to: phone, body: message });
     if (!sent.ok) {
       await record("ECHEC");
+      const why = explainRefusal(sent.code);
+      if (why.kind !== "PROVIDER") {
+        // The number is at fault, not the service: a 422 the journal files as a warning.
+        return NextResponse.json({ error: `${why.message} (${formatE164(phone)})`, code: `PROVIDER_${why.kind}` }, { status: 422 });
+      }
+      const reason = why.message || sent.detail;
       return NextResponse.json(
-        { error: `Envoi refusé par le fournisseur SMS (${sent.status})${sent.detail ? ` : ${sent.detail}` : "."}` },
+        { error: `Envoi refusé par le fournisseur SMS (${sent.status})${reason ? ` : ${reason}` : "."}` },
         { status: 502 },
       );
     }

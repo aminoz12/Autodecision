@@ -15,7 +15,30 @@
  */
 export type SendResult =
   | { ok: true; simulated: boolean; channel: "SMS" | "WHATSAPP" }
-  | { ok: false; status: number; detail: string };
+  | { ok: false; status: number; detail: string; code?: number | null };
+
+/**
+ * What a refusal means for the magasin: the NUMBER is wrong (fix the client
+ * file), the client opted OUT (nothing to do), or the PROVIDER itself failed
+ * (configuration, balance, outage). Codes: twilio.com/docs/api/errors.
+ */
+export type RefusalKind = "NUMBER" | "OPTOUT" | "PROVIDER";
+export function explainRefusal(code: number | null | undefined): { kind: RefusalKind; message: string } {
+  switch (code) {
+    case 21211: // Invalid 'To' Phone Number
+    case 21217: // Phone number does not appear to be valid
+      return { kind: "NUMBER", message: "Numéro de téléphone invalide pour le fournisseur SMS." };
+    case 21614: // 'To' number is not a valid mobile number
+    case 21635: // 'To' number cannot be a landline
+      return { kind: "NUMBER", message: "Numéro fixe ou non mobile : le fournisseur SMS refuse l'envoi." };
+    case 21610: // the customer has replied with STOP
+      return { kind: "OPTOUT", message: "Ce numéro a demandé l'arrêt des SMS (STOP)." };
+    case 21408: // Permission to send an SMS has not been enabled for the region
+      return { kind: "PROVIDER", message: "L'envoi de SMS vers ce pays n'est pas activé chez le fournisseur." };
+    default:
+      return { kind: "PROVIDER", message: "" };
+  }
+}
 
 export function smsProviderConfigured(): boolean {
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM);
@@ -60,12 +83,14 @@ export async function sendTextMessage(input: {
 
   const raw = await res.text().catch(() => "");
   let detail = "";
+  let code: number | null = null;
   try {
     const parsed = JSON.parse(raw) as { message?: string; code?: number };
-    detail = [parsed.code ? `code ${parsed.code}` : "", parsed.message ?? ""].filter(Boolean).join(", ");
+    code = typeof parsed.code === "number" ? parsed.code : null;
+    detail = [code ? `code ${code}` : "", parsed.message ?? ""].filter(Boolean).join(", ");
   } catch {
     detail = raw.slice(0, 200);
   }
   console.error("sms-provider: refused", res.status, raw);
-  return { ok: false, status: res.status, detail };
+  return { ok: false, status: res.status, detail, code };
 }
