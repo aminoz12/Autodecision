@@ -564,6 +564,15 @@ input.rc-check, input.nc-cell-check, .rc-check--label input, .sav-check input { 
 /*  MODALS                                                                */
 /* ==================================================================== */
 .ga-modal-overlay { background: rgba(26, 31, 54, 0.5); backdrop-filter: blur(1px); overflow-y: auto; }
+/* Chromium composites sticky parts of the page (table header rows, pinned
+   first / last columns, the right-hand column of the order page, the top bar)
+   into their own layers and paints those layers ABOVE the blurred modal
+   overlay — on /dashboard/commandes/[id] the two header rows and the
+   « Remettre » cells floated over « Encaisser » (2026-10-19). While a modal is
+   open nothing stays sticky; everything is pinned again as soon as it closes. */
+body:has(.ga-modal-overlay) :is(.rc-table, .rl-table, .stk-table, .od-table, .cl-table) thead th,
+body:has(.ga-modal-overlay) :is(.rc-table--sticky-actions, .av-table, .rt-table) :is(th, td),
+body:has(.ga-modal-overlay) :is(.od-side, .rt-detail, .tf-side, .nc-footer, .topbar) { position: static !important; }
 .ga-modal { max-height: calc(100dvh - 48px); overflow-y: auto; overscroll-behavior: contain; border-radius: var(--radius-card); border: 1px solid var(--border-card); box-shadow: 0 24px 60px -12px rgba(26, 31, 54, 0.35); }
 .ga-modal-head { padding: 14px 20px; border-bottom: 1px solid var(--border-card); background: #fff; }
 .ga-modal-title { font-size: 16px; font-weight: 600; }
