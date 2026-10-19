@@ -2,6 +2,7 @@
 
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isNewerDeploy } from "@/lib/app-version";
 
 /* ------------------------------------------------------------------ */
 /*  Nouvelle version déployée — un onglet laissé ouvert (caisse, garage)
@@ -9,7 +10,8 @@ import { useEffect, useState } from "react";
     la version compilée dans CE bundle (NEXT_PUBLIC_APP_VERSION) à celle
     que /api/version publie (figée à chaque déploiement) et propose de
     recharger. Jamais de reload automatique : le caissier peut être en
-    pleine saisie. */
+    pleine saisie. (La tablette du stock, elle, se recharge seule sur
+    son écran « Qui pointe ? » — voir app/tablette/page.tsx.) */
 /* ------------------------------------------------------------------ */
 
 const CHECK_EVERY_MS = 5 * 60 * 1000;
@@ -28,8 +30,13 @@ async function fetchDeployed(): Promise<string | null> {
   }
 }
 
-export function NewVersionNotice() {
-  const [stale, setStale] = useState(false);
+/**
+ * Interroge /api/version toutes les 5 min (et au retour au premier plan).
+ * Renvoie l'identifiant du déploiement plus récent que ce bundle, ou null
+ * tant que l'onglet est à jour (toujours null en dev).
+ */
+export function useDeployedVersion(): string | null {
+  const [newer, setNewer] = useState<string | null>(null);
 
   useEffect(() => {
     if (RUNNING === "dev") return; // dev local : jamais de bandeau
@@ -37,8 +44,8 @@ export function NewVersionNotice() {
 
     const check = async () => {
       const deployed = await fetchDeployed();
-      if (stopped || !deployed || deployed === "dev") return;
-      if (deployed !== RUNNING) setStale(true);
+      if (stopped) return;
+      if (isNewerDeploy(RUNNING, deployed)) setNewer(deployed);
     };
 
     void check();
@@ -54,6 +61,12 @@ export function NewVersionNotice() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+
+  return newer;
+}
+
+export function NewVersionNotice() {
+  const stale = useDeployedVersion() !== null;
 
   if (!stale) return null;
   return (

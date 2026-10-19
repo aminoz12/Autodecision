@@ -33,6 +33,8 @@ import { ReceiveOrderSheet } from "@/components/orders/ReceiveOrderSheet";
 import { AutoPrintTicket } from "@/components/print/AutoPrintTicket";
 import type { TicketData } from "@/components/print/OrderTicket";
 import { PrintTicketButton } from "@/components/print/PrintTicketButton";
+import { useDeployedVersion } from "@/components/ui/NewVersionNotice";
+import { readLastReload, rememberReload, shouldAutoReload } from "@/lib/app-version";
 import {
   backorderLines,
   boardTicketData,
@@ -151,6 +153,20 @@ export default function TablettePage() {
 
   // Never leave a token behind when the page goes away.
   useEffect(() => () => setActorToken(null), []);
+
+  /* ---- Nouvelle version en ligne ---- */
+  // The tablet is pinned open for weeks and nobody ever reloads it, so a
+  // deploy never reached it (seen 2026-10-19: the per-order pointing shipped
+  // the 18th was still invisible there). On the « Qui pointe ? » screen nobody
+  // is typing: reload on our own, once per version. While someone is pointing,
+  // only offer a button (an action may be in flight).
+  const newerBuild = useDeployedVersion();
+  useEffect(() => {
+    if (!newerBuild || me) return;
+    if (!shouldAutoReload(newerBuild, readLastReload())) return;
+    rememberReload(newerBuild);
+    window.location.reload();
+  }, [newerBuild, me]);
 
   // 2 minutes without touching the screen: back to « Qui pointe ? ».
   useEffect(() => {
@@ -710,6 +726,15 @@ export default function TablettePage() {
       {error && (
         <div className="tb-error">
           <AlertTriangle className="h-5 w-5" /> {error}
+        </div>
+      )}
+
+      {newerBuild && (
+        <div className="tb-update" role="status">
+          <span>Une nouvelle version est disponible.</span>
+          <button type="button" className="tb-btn tb-btn--ok" onClick={() => window.location.reload()}>
+            <RefreshCw className="h-5 w-5" /> Recharger
+          </button>
         </div>
       )}
 

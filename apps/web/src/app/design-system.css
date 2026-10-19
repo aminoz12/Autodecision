@@ -1185,6 +1185,10 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 
 
 .tb-error { display: flex; align-items: center; gap: 10px; margin: 12px 18px 0; padding: 14px 16px; border-radius: 12px; background: var(--clr-danger-bg); color: var(--clr-danger-text); font-size: 16px; font-weight: 600; }
+/* Nouvelle version déployée pendant qu'un caissier pointe : rechargement au
+   doigt seulement (sur l'écran « Qui pointe ? » la tablette se recharge seule). */
+.tb-update { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 12px 18px 0; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--clr-warning-border); background: var(--clr-warning-bg); color: var(--clr-warning-text); font-size: 16px; font-weight: 700; }
+.tb-update .tb-btn { flex: 0 0 auto; min-height: 52px; }
 .tb-list { display: flex; flex-direction: column; gap: 12px; padding: 12px 18px 0; }
 .tb-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 56px 24px; color: var(--text-muted); font-size: 18px; text-align: center; }
 
