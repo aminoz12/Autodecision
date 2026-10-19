@@ -77,13 +77,14 @@ export function Topbar() {
       <div className="topbar-actions">
         {!onNewOrder && (
           <>
-            <Link href="/dashboard/nouvelle-commande" className="od-btn od-btn--primary topbar-new">
+            <Link href="/dashboard/nouvelle-commande" className="od-btn od-btn--primary topbar-new" aria-label="Nouvelle commande" title="Nouvelle commande">
               <CirclePlus />
               <span>Nouvelle commande</span>
             </Link>
             <Link
               href="/dashboard/nouvelle-commande?rajout=1"
               className="od-btn od-btn--ghost topbar-quick"
+              aria-label="Rajout rapide"
               title="Plusieurs commandes en une fois : une ligne par pièce"
             >
               <Zap />
@@ -98,6 +99,7 @@ export function Topbar() {
           <button
             type="button"
             className="topbar-user-btn"
+            aria-label={`Menu du compte de ${userName}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((v) => !v)}
