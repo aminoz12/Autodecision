@@ -9,7 +9,6 @@ import {
   orderCompletion,
   partialTicketData,
   pendingLines,
-  prepareOrdersOf,
   receiveOrdersOf,
   toursOf,
 } from "./commandes-board";
@@ -42,17 +41,6 @@ describe("Suivi des commandes — shared rules (counter page and stock tablet)",
   it("tournées: « Tournée … » first, then the others", () => {
     const tours = toursOf([line({ id: "a", tourName: null }), line({ id: "b", tourName: "Tournée 2" }), line({ id: "c", tourName: "Livraison fournisseur" })]);
     expect(tours.map((t) => t.name)).toEqual(["Tournée 2", "Hors tournée", "Livraison fournisseur"]);
-  });
-
-  it("à préparer: client orders with parts in, until treated", () => {
-    const board = [
-      line({ id: "a", orderId: "o1", status: "RECEIVED", receivedAt: "2026-10-05T10:00:00Z" }),
-      line({ id: "b", orderId: "o1" }),
-      line({ id: "c", orderId: "o2", isGarage: true, status: "RECEIVED" }),
-      line({ id: "d", orderId: "o3", status: "RECEIVED" }),
-    ];
-    const rows = prepareOrdersOf(board, new Map([["o3", { sent: true, treated: true }]]));
-    expect(rows.map((o) => [o.orderId, o.received, o.total, o.complet])).toEqual([["o1", 1, 2, false]]);
   });
 
   it("à livrer: garage orders and orders out with a livreur, ready first", () => {

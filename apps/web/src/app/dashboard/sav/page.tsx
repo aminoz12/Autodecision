@@ -240,7 +240,7 @@ export default function SavPage() {
           </span>
         </button>
 
-        <Link className="sav-kpi sav-kpi--amber" href="/dashboard/commandes?tab=apreparer">
+        <Link className="sav-kpi sav-kpi--amber" href="/dashboard/commandes?tab=historique">
           <span className="sav-kpi-icon"><Hourglass className="h-5 w-5" /></span>
           <span className="sav-kpi-label">Pièces en attente de retrait</span>
           <span className="sav-kpi-value">{dash ? fmtMoney(dash.pickup.value) : "—"}</span>

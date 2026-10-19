@@ -1,4 +1,4 @@
-import type { BoardLine, SmsState } from "@/lib/data/commandes";
+import type { BoardLine } from "@/lib/data/commandes";
 import type { TicketData, TicketLine } from "@/components/print/OrderTicket";
 
 /*
@@ -86,8 +86,8 @@ export function deliveryOrdersOf(board: BoardLine[]): DeliveryOrder[] {
   const byOrder = new Map<string, BoardLine[]>();
   for (const l of board) {
     if (l.isRestock) continue;
-    // Garages are delivered; clients are prepared in « Commande à préparer » —
-    // unless the order is already out with a livreur: it must stay closable.
+    // Garages are delivered; walk-in clients collect at the counter — unless
+    // the order is already out with a livreur: it must stay closable.
     if (!l.isGarage && l.workflow !== "IN_TRANSIT") continue;
     if (l.workflow === "DELIVERED") continue;
     const arr = byOrder.get(l.orderId);
@@ -133,65 +133,6 @@ export function deliveryOrdersOf(board: BoardLine[]): DeliveryOrder[] {
       const rank = { READY: 0, AWAITING: 1, TRANSIT: 2 };
       return rank[a.stage] - rank[b.stage] || String(b.date ?? "").localeCompare(String(a.date ?? ""));
     });
-}
-
-export type PrepareOrder = {
-  orderId: string;
-  ref: string;
-  date: string | null;
-  clientId: string | null;
-  clientName: string;
-  clientPhone: string | null;
-  vehicle: string | null;
-  plate: string | null;
-  total: number;
-  received: number;
-  complet: boolean;
-  lastAt: string | null;
-  lastSupplier: string | null;
-  state: SmsState;
-};
-
-/**
- * « Commande à préparer » — walk-in CLIENT orders whose parts arrived: the
- * client is told by SMS and the order is prepared at the counter.
- * Stock-replenishment lines never notify a client, and garage / delivery
- * orders live in « Commande à livrer » instead.
- */
-export function prepareOrdersOf(board: BoardLine[], sms: Map<string, SmsState>): PrepareOrder[] {
-  const byOrder = new Map<string, BoardLine[]>();
-  for (const l of board) {
-    // Out with a livreur: nothing left to prepare at the counter.
-    if (l.fromStock || l.isRestock || l.isGarage || l.workflow === "IN_TRANSIT") continue;
-    const arr = byOrder.get(l.orderId);
-    if (arr) arr.push(l);
-    else byOrder.set(l.orderId, [l]);
-  }
-  return [...byOrder.entries()]
-    .map(([orderId, lines]) => {
-      const receivedLines = lines.filter((l) => l.status === "RECEIVED");
-      const last = receivedLines
-        .slice()
-        .sort((a, b) => String(b.receivedAt ?? "").localeCompare(String(a.receivedAt ?? "")))[0];
-      return {
-        orderId,
-        ref: lines[0].orderRef,
-        date: lines[0].orderDate,
-        clientId: lines[0].clientId,
-        clientName: lines[0].clientName,
-        clientPhone: lines[0].clientPhone,
-        vehicle: lines[0].vehicle,
-        plate: lines[0].plate,
-        total: lines.length,
-        received: receivedLines.length,
-        complet: receivedLines.length === lines.length,
-        lastAt: last?.receivedAt ?? null,
-        lastSupplier: last?.supplierName ?? null,
-        state: sms.get(orderId) ?? { sent: false, treated: false },
-      };
-    })
-    .filter((o) => o.received > 0 && !o.state.treated)
-    .sort((a, b) => String(b.lastAt ?? "").localeCompare(String(a.lastAt ?? "")));
 }
 
 /** Free search over a line (several words: every word must match). */

@@ -12,8 +12,6 @@ import {
   FileText,
   Info,
   Loader2,
-  MessageSquare,
-  PackageCheck,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -38,7 +36,6 @@ import {
   lineMatches,
   orderCompletion,
   pendingLines,
-  prepareOrdersOf,
   receiveOrdersOf,
   type ReceiveOrder,
   toursOf,
@@ -53,12 +50,12 @@ import { PrintTicketButton } from "@/components/print/PrintTicketButton";
 import { fmtDay, fmtDayTime, LinesTable, type LinesTableContext } from "@/components/orders/LinesTable";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { Toast } from "@/components/ui/Toast";
-import { ShelfCell, type Shelf } from "@/components/sav/ShelfCell";
+import type { Shelf } from "@/components/sav/ShelfCell";
 import { flushClientMessages, loadOrderShelves, loadSavSettingsSafe } from "@/lib/data/sav";
 import { parisDate } from "@/lib/data/tournees";
 import { createClient } from "@/lib/supabase/client";
 import { createWalkInReturn, deductionMessage, loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
-import { SMS_PHONE_MESSAGE, buildClientSms, formatE164, smsPhoneCheck, type SmsSettings } from "@/lib/sms";
+import { formatE164 } from "@/lib/sms";
 import { updateClientAddress } from "@/lib/data/delivery";
 import {
   dispatchOrderToLivreur,
@@ -68,12 +65,9 @@ import {
 } from "@/lib/data/livreurs";
 import {
   loadReceptionBoard,
-  loadSmsStates,
-  markOrderSmsTreated,
   setLineHandedOver,
   setLineReceptionStatus,
   type BoardLine,
-  type SmsState,
 } from "@/lib/data/commandes";
 
 /* ------------------------------------------------------------------ */
@@ -100,28 +94,12 @@ const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
   { id: "STOCK", label: "Retour en stock", icon: Box },
 ];
 
-/** One row of « Commande à préparer », as handed to the SMS modal. */
-type SmsOrderRow = {
-  orderId: string;
-  ref: string;
-  clientId: string | null;
-  clientName: string;
-  clientPhone: string | null;
-  complet: boolean;
-  received: number;
-  total: number;
-  state: SmsState;
-};
-
-const NO_SMS_SETTINGS: SmsSettings = { magasin: "", horaires: null, readyTemplate: null, partialTemplate: null };
-
 export default function ReceptionCommandesPage() {
   const { profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const orgId = profile?.organization_id;
 
   const [board, setBoard] = useState<BoardLine[]>([]);
-  const [sms, setSms] = useState<Map<string, SmsState>>(new Map());
   /** Who pointed what (« par Sofia · … »), migration 20261005020000. */
   const [staffNames, setStaffNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -131,9 +109,10 @@ export default function ReceptionCommandesPage() {
   const [tab, setTab] = useState(() => {
     if (typeof window === "undefined") return "arecevoir";
     const raw = new URLSearchParams(window.location.search).get("tab");
-    // Deep links (notifications, after-sales KPIs) say "apreparer"; the tab id stayed "sms".
-    const wanted = raw === "apreparer" ? "sms" : raw;
-    return wanted && ["arecevoir", "sms", "alivrer", "reliquats", "historique"].includes(wanted)
+    // « Commande à préparer » is gone (2026-10-19: SMS and ticket go out by themselves at
+    // « Tout reçu »): its deep links (notifications, SAV KPI) land on the history.
+    const wanted = raw === "apreparer" || raw === "sms" ? "historique" : raw;
+    return wanted && ["arecevoir", "alivrer", "reliquats", "historique"].includes(wanted)
       ? wanted
       : "arecevoir";
   });
@@ -146,7 +125,6 @@ export default function ReceptionCommandesPage() {
   const [openOrder, setOpenOrder] = useState<ReceiveOrder | null>(null);
   /** Lines ticked for a grouped action (Reçu / Reliquat / Non reçu). */
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [smsFilter, setSmsFilter] = useState<"all" | "complet" | "partiel">("all");
   const [livraisonFilter, setLivraisonFilter] = useState<"all" | "ready" | "transit">("all");
 
   /* ---- livreurs + dispatch modal ---- */
@@ -176,20 +154,13 @@ export default function ReceptionCommandesPage() {
   /** The order just completed by a pointing: its « and now? » sheet is open. */
   const [doneId, setDoneId] = useState<string | null>(null);
 
-  /* ---- SMS « commande prête » modal ---- */
-  const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
-  const [smsOrder, setSmsOrder] = useState<SmsOrderRow | null>(null);
-  const [smsBusy, setSmsBusy] = useState(false);
-  const [smsError, setSmsError] = useState<string | null>(null);
-
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
-      const [b, s, l, org, names, sav] = await Promise.all([
+      const [b, l, org, names, sav] = await Promise.all([
         loadReceptionBoard(supabase, orgId),
-        loadSmsStates(supabase, orgId),
         loadLivreurs(supabase, orgId, { activeOnly: true }),
         // Wording of the client SMS; the defaults apply if the profile can't be read.
         loadOrganizationSettings(supabase, orgId).catch(() => null),
@@ -199,17 +170,8 @@ export default function ReceptionCommandesPage() {
       setBoard(b);
       setAutoSmsReady(sav?.settings.autoSmsReady ?? false);
       setStaffNames(names);
-      setSms(s);
       setLivreurs(l);
-      if (org) {
-        setOrgSettings(org);
-        setSmsSettings({
-          magasin: org.name,
-          horaires: org.smsHoraires,
-          readyTemplate: org.smsReadyTemplate,
-          partialTemplate: org.smsPartialTemplate,
-        });
-      }
+      if (org) setOrgSettings(org);
       setSelected(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -412,33 +374,11 @@ export default function ReceptionCommandesPage() {
     [deliveryOrders, livraisonFilter],
   );
 
-  /**
-   * "Commande à préparer" — walk-in CLIENT orders whose parts arrived: the
-   * client is told by SMS and the order is prepared at the counter.
-   * Stock-replenishment lines never notify a client, and garage / delivery
-   * orders live in "Commande à livrer" instead.
-   */
-  const smsOrders = useMemo(() => prepareOrdersOf(board, sms), [board, sms]);
-
-
-  const smsRows = useMemo(
-    () =>
-      smsFilter === "all"
-        ? smsOrders
-        : smsOrders.filter((o) => (smsFilter === "complet" ? o.complet : !o.complet)),
-    [smsOrders, smsFilter],
-  );
-
-  // Après-vente : casier de retrait et date promise (à préparer), date promise
-  // seule sur les pièces à recevoir / reliquats. Empty maps, hence nothing
-  // shown, before the SAV migration.
+  // Après-vente : casier et date promise des commandes du tableau (promesse
+  // sous la référence, casier sur le ticket de réception partielle). Empty
+  // map, hence nothing shown, before the SAV migration.
   const [shelves, setShelves] = useState<Map<string, Shelf>>(new Map());
-  const smsOrderIds = useMemo(() => smsOrders.map((o) => o.orderId).join(","), [smsOrders]);
-  const boardOrderIds = useMemo(() => [...new Set(board.map((l) => l.orderId))].join(","), [board]);
-  const allOrderIds = useMemo(
-    () => [...new Set([...(smsOrderIds ? smsOrderIds.split(",") : []), ...(boardOrderIds ? boardOrderIds.split(",") : [])])].join(","),
-    [smsOrderIds, boardOrderIds],
-  );
+  const allOrderIds = useMemo(() => [...new Set(board.map((l) => l.orderId))].join(","), [board]);
   useEffect(() => {
     if (!orgId || !allOrderIds) return;
     let alive = true;
@@ -579,12 +519,6 @@ export default function ReceptionCommandesPage() {
         const sent = (await res.json().catch(() => ({}))) as { simulated?: boolean; to?: string; error?: string };
         if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
         parts.push(sent.simulated ? "SMS enregistré (mode simulation)" : `SMS envoyé au ${formatE164(sent.to ?? first.clientPhone ?? "")}`);
-        setSms((prev) => {
-          const next = new Map(prev);
-          const cur = next.get(first.orderId) ?? { sent: false, treated: false };
-          next.set(first.orderId, { ...cur, sent: true });
-          return next;
-        });
       } catch (e) {
         parts.push(`SMS non envoyé : ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -676,77 +610,6 @@ export default function ReceptionCommandesPage() {
       );
     });
 
-  /** Opens the confirmation modal: recipient, exact text, cost in SMS. */
-  const openSms = (o: SmsOrderRow) => {
-    setSmsError(null);
-    setSmsOrder(o);
-  };
-
-  const smsPreview = useMemo(() => {
-    if (!smsOrder) return null;
-    const built = buildClientSms(
-      smsOrder.complet ? "READY" : "PARTIAL",
-      // "Client comptoir" is a placeholder, not a name.
-      { client: smsOrder.clientId ? smsOrder.clientName : "", commande: smsOrder.ref },
-      smsSettings,
-    );
-    const phone = smsPhoneCheck(smsOrder.clientPhone);
-    return { to: phone.ok ? phone.e164 : null, problem: phone.ok ? null : SMS_PHONE_MESSAGE[phone.reason], ...built };
-  }, [smsOrder, smsSettings]);
-
-  const sendSms = async () => {
-    if (!smsOrder || !orgId) return;
-    setSmsBusy(true);
-    setSmsError(null);
-    try {
-      // The server resolves the number from the order, builds the same text
-      // from the magasin settings, sends through Twilio (or simulates when no
-      // provider is configured) and records the send.
-      const res = await fetch("/api/send-sms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: smsOrder.orderId, kind: smsOrder.complet ? "READY" : "PARTIAL" }),
-      });
-      const sent = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        simulated?: boolean;
-        to?: string;
-        error?: string;
-      };
-      if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
-      setNotice(
-        sent.simulated
-          ? `SMS enregistré pour ${smsOrder.clientName} (mode simulation : renseignez TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN et TWILIO_FROM pour l'envoi réel).`
-          : `SMS envoyé à ${smsOrder.clientName} (${formatE164(sent.to ?? "")}).`,
-      );
-      const orderId = smsOrder.orderId;
-      setSms((prev) => {
-        const next = new Map(prev);
-        const cur = next.get(orderId) ?? { sent: false, treated: false };
-        next.set(orderId, { ...cur, sent: true });
-        return next;
-      });
-      setSmsOrder(null);
-    } catch (e) {
-      setSmsError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSmsBusy(false);
-    }
-  };
-
-  const actTreated = (o: (typeof smsOrders)[number]) =>
-    withBusy(`done-${o.orderId}`, async () => {
-      if (!orgId) return;
-      await markOrderSmsTreated(supabase, orgId, o.orderId);
-      setSms((prev) => {
-        const next = new Map(prev);
-        const cur = next.get(o.orderId) ?? { sent: false, treated: false };
-        next.set(o.orderId, { ...cur, treated: true });
-        return next;
-      });
-    });
-
-
   /* ---- dispatch / delivered ---- */
   const openDispatch = (o: (typeof deliveryOrders)[number]) => {
     setDispatchOrder({
@@ -814,9 +677,8 @@ export default function ReceptionCommandesPage() {
       isGarage: first.isGarage,
       isRestock: first.isRestock,
       lines,
-      casier: shelves.get(doneId)?.casier ?? null,
     };
-  }, [doneId, board, shelves]);
+  }, [doneId, board]);
 
   /* ---- tabs ---- */
   const notReceived = board.filter((l) => l.status === "NOT_RECEIVED").length;
@@ -833,7 +695,6 @@ export default function ReceptionCommandesPage() {
     alert?: string;
   }[] = [
     { id: "arecevoir", label: "Pièces à recevoir", sub: "Livraisons à réceptionner", icon: ClipboardCheck, count: pending.length, tone: "amber", alert: notReceived > 0 ? `${notReceived} non reçu${notReceived > 1 ? "s" : ""}` : undefined },
-    { id: "sms", label: "Commande à préparer", sub: "Pièces reçues, clients à prévenir", icon: PackageCheck, count: smsOrders.length, tone: "green" },
     { id: "alivrer", label: "Commande à livrer", sub: "Garages — envoi au livreur", icon: Truck, count: deliveryOrders.length, tone: "violet", alert: readyToShip > 0 ? `${readyToShip} prête${readyToShip > 1 ? "s" : ""}` : undefined },
     { id: "reliquats", label: "Reliquats", sub: "En attente de livraison", icon: Clock, count: backorders.length, tone: "orange" },
     { id: "historique", label: "Historique", sub: "Réceptions passées", icon: FileText },
@@ -1018,197 +879,6 @@ export default function ReceptionCommandesPage() {
                   <p className="rl-note-sub">
                     «&nbsp;Reçu&nbsp;» ajoute automatiquement la quantité restante au
                     stock magasin.
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ---- Commande SMS ---- */}
-          {tab === "sms" && (
-            <>
-              <div className="rc-sms-filters">
-                <button
-                  type="button"
-                  onClick={() => setSmsFilter("all")}
-                  className={`rc-sms-all${smsFilter === "all" ? " rc-sms-all--active" : ""}`}
-                >
-                  Tous les clients prêts
-                  <span className="rc-sms-all-count">{smsOrders.length}</span>
-                </button>
-                <div className="rc-sms-group">
-                  <button
-                    type="button"
-                    onClick={() => setSmsFilter("complet")}
-                    className="rc-sms-seg rc-sms-seg--green"
-                  >
-                    <span className="rc-sms-seg-top">
-                      <span className="rc-sms-seg-dot" />
-                      Complet
-                      <span className="rc-sms-seg-count">
-                        {smsOrders.filter((o) => o.complet).length}
-                      </span>
-                    </span>
-                    <span className="rc-sms-seg-sub">Toutes les pièces reçues</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSmsFilter("partiel")}
-                    className="rc-sms-seg rc-sms-seg--orange"
-                  >
-                    <span className="rc-sms-seg-top">
-                      <span className="rc-sms-seg-dot" />
-                      Partiel
-                      <span className="rc-sms-seg-count">
-                        {smsOrders.filter((o) => !o.complet).length}
-                      </span>
-                    </span>
-                    <span className="rc-sms-seg-sub">Certaines pièces en reliquat</span>
-                  </button>
-                </div>
-              </div>
-
-              <section className="od-card rc-table-card">
-                <div className="rc-table-wrap">
-                  <table className="rc-table">
-                    <thead>
-                      <tr>
-                        <th>N° CMD / Date</th>
-                        <th>Client</th>
-                        <th>Véhicule</th>
-                        <th>
-                          Pièces reçues
-                          <span className="rc-th-sub">Reçues / Commandées</span>
-                        </th>
-                        <th>Statut</th>
-                        <th>Dernière pièce reçue</th>
-                        <th className="rc-th-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {smsRows.map((o) => {
-                        const pct = Math.round((o.received / o.total) * 100);
-                        const manque = o.total - o.received;
-                        return (
-                          <tr key={o.orderId} className="rc-row">
-                            <td>
-                              <Link
-                                href={`/dashboard/commandes/${o.orderId}`}
-                                className="rc-cmd"
-                              >
-                                {o.ref}
-                              </Link>
-                              <p className="rl-muted">{fmtDay(o.date)}</p>
-                              {shelves.has(o.orderId) && (
-                                <ShelfCell
-                                  orderId={o.orderId}
-                                  shelf={shelves.get(o.orderId) as Shelf}
-                                  onSaved={(casier) =>
-                                    setShelves((prev) => {
-                                      const next = new Map(prev);
-                                      const cur = next.get(o.orderId);
-                                      if (cur) next.set(o.orderId, { ...cur, casier });
-                                      return next;
-                                    })
-                                  }
-                                />
-                              )}
-                            </td>
-                            <td>
-                              <p className="rl-client">{o.clientName}</p>
-                              <p className="rl-muted">{o.clientPhone ?? "—"}</p>
-                            </td>
-                            <td>
-                              <p className="rc-vehicle">{o.vehicle ?? "—"}</p>
-                              <p className="rl-muted">{o.plate ?? ""}</p>
-                            </td>
-                            <td>
-                              <div className="rc-prog">
-                                <span className="rc-prog-label">
-                                  {o.received} / {o.total}
-                                </span>
-                                <span className="rc-prog-track">
-                                  <span
-                                    className={`rc-prog-fill rc-prog-fill--${o.complet ? "green" : "orange"}`}
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </span>
-                              </div>
-                            </td>
-                            <td>
-                              <div className="rc-statcell">
-                                <span
-                                  className={`rt-badge rt-badge--${o.complet ? "green" : "amber"}`}
-                                >
-                                  {o.complet ? "Complet" : "Partiel"}
-                                </span>
-                                <span className="rc-statcell-sub">
-                                  {o.complet
-                                    ? "Toutes les pièces reçues"
-                                    : `${manque} pièce${manque > 1 ? "s" : ""} en reliquat`}
-                                </span>
-                              </div>
-                            </td>
-                            <td>
-                              <p className="rc-last">{fmtDayTime(o.lastAt)}</p>
-                              <p className="rc-last-sub">{o.lastSupplier ?? ""}</p>
-                            </td>
-                            <td>
-                              <div className="rc-actions">
-                                <PrintTicketButton
-                                  ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: profile?.display_name ?? null, casier: shelves.get(o.orderId)?.casier ?? null })}
-                                  kind="rangement"
-                                  org={orgSettings}
-                                  title={`${o.ref}-rangement`}
-                                  className="rc-act"
-                                >
-                                  <Printer className="h-4 w-4" />
-                                  Ticket
-                                </PrintTicketButton>
-                                <button
-                                  type="button"
-                                  className="rc-sms-act rc-sms-act--sms"
-                                  onClick={() => openSms(o)}
-                                >
-                                  <MessageSquare className="h-4 w-4" />
-                                  {o.state.sent ? "SMS envoyé" : "SMS"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rc-sms-act rc-sms-act--traite"
-                                  disabled={busy.has(`done-${o.orderId}`)}
-                                  onClick={() => actTreated(o)}
-                                >
-                                  <Check className="h-4 w-4" />
-                                  Traité
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {!loading && smsRows.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="rc-empty-cell">
-                            Aucun client à prévenir.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <div className="od-note rc-note">
-                <Info className="h-4 w-4" />
-                <div className="rc-note-text">
-                  <p className="rl-note-strong">
-                    Envoyez un SMS au client pour l&apos;informer que ses pièces sont
-                    disponibles.
-                  </p>
-                  <p className="rl-note-sub">
-                    Cliquez sur «&nbsp;Traité&nbsp;» une fois le client informé — la
-                    commande disparaîtra de cette liste.
                   </p>
                 </div>
               </div>
@@ -1524,27 +1194,9 @@ export default function ReceptionCommandesPage() {
           order={doneOrder}
           org={orgSettings}
           vendeur={profile?.display_name ?? null}
-          supabase={supabase}
           canDispatch={livreurs.length > 0}
           busy={busy.has(`deliver-${doneOrder.orderId}`)}
           onClose={() => setDoneId(null)}
-          onSms={() => {
-            const row = smsOrders.find((o) => o.orderId === doneOrder.orderId);
-            openSms(
-              row ?? {
-                orderId: doneOrder.orderId,
-                ref: doneOrder.ref,
-                clientId: doneOrder.lines[0]?.clientId ?? null,
-                clientName: doneOrder.clientName,
-                clientPhone: doneOrder.clientPhone,
-                complet: true,
-                received: doneOrder.lines.length,
-                total: doneOrder.lines.length,
-                state: sms.get(doneOrder.orderId) ?? { sent: false, treated: false },
-              },
-            );
-            setDoneId(null);
-          }}
           onDelivered={() => {
             const row = deliveryOrders.find((o) => o.orderId === doneOrder.orderId);
             setDoneId(null);
@@ -1555,14 +1207,6 @@ export default function ReceptionCommandesPage() {
             setDoneId(null);
             if (row) openDispatch(row);
           }}
-          onCasier={(casier) =>
-            setShelves((prev) => {
-              const next = new Map(prev);
-              const cur = next.get(doneOrder.orderId) ?? { casier: null, promisedDate: null, promiseRevisedDate: null, readyAt: null };
-              next.set(doneOrder.orderId, { ...cur, casier });
-              return next;
-            })
-          }
         />
       )}
 
@@ -1674,84 +1318,6 @@ export default function ReceptionCommandesPage() {
                     <Send className="h-4 w-4" />
                   )}
                   {dispatchOrder.livreurId ? "Changer de livreur" : "Partir en livraison"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {smsOrder && smsPreview && (
-        <div className="ga-modal-overlay" onClick={() => !smsBusy && setSmsOrder(null)}>
-          <div className="ga-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <div className="ga-modal-head">
-              <span className="ga-modal-title">
-                <MessageSquare className="h-4 w-4" />
-                Prévenir le client par SMS
-              </span>
-              <button
-                type="button"
-                className="ga-modal-close"
-                onClick={() => setSmsOrder(null)}
-                aria-label="Fermer"
-                disabled={smsBusy}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="ga-modal-form">
-              {smsError && <div className="nc-error">{smsError}</div>}
-              <div className="rt-picked">
-                <div>
-                  <p className="rt-order-ref">{smsOrder.ref}</p>
-                  <p className="rt-order-client">{smsOrder.clientName}</p>
-                </div>
-                <span className={`rt-badge rt-badge--${smsOrder.complet ? "green" : "amber"}`}>
-                  {smsOrder.complet ? "Complet" : `Partiel · ${smsOrder.received}/${smsOrder.total}`}
-                </span>
-              </div>
-              <div className="sms-to">
-                <span className="od-label">Destinataire</span>
-                {smsPreview.to ? (
-                  <strong>{formatE164(smsPreview.to)}</strong>
-                ) : (
-                  <span className="sms-to-bad">
-                    <AlertTriangle className="h-4 w-4" />
-                    {smsPreview.problem}
-                    {smsOrder.clientPhone && smsOrder.clientPhone !== "-" ? ` (${smsOrder.clientPhone})` : ""}
-                  </span>
-                )}
-              </div>
-              <div className="od-field">
-                <span className="od-label">Message</span>
-                <div className="sms-bubble">{smsPreview.text}</div>
-                <span className="sms-meta">
-                  {smsPreview.size.chars} caractères · {smsPreview.size.segments} SMS
-                  {smsPreview.size.encoding === "UCS-2" ? " (caractères spéciaux : 70 par SMS)" : ""}
-                </span>
-              </div>
-              <p className="st-cmd-hint">
-                {smsOrder.state.sent ? "Un SMS a déjà été envoyé pour cette commande ; vous pouvez le renvoyer. " : ""}
-                Texte et horaires se règlent dans{" "}
-                <Link href="/dashboard/parametres" className="rc-cmd">Paramètres → SMS aux clients</Link>.
-              </p>
-              <div className="ga-modal-actions">
-                <button
-                  type="button"
-                  className="od-btn od-btn--ghost"
-                  onClick={() => setSmsOrder(null)}
-                  disabled={smsBusy}
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  className="od-btn od-btn--primary"
-                  onClick={() => void sendSms()}
-                  disabled={smsBusy || !smsPreview.to}
-                >
-                  {smsBusy ? <Loader2 className="h-4 w-4 nc-spin" /> : <Send className="h-4 w-4" />}
-                  Envoyer le SMS
                 </button>
               </div>
             </div>

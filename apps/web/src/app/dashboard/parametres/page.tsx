@@ -256,7 +256,7 @@ export default function ParametresPage() {
             <h2 className="st-rajout-title"><MessageSquare className="h-4 w-4" /> SMS aux clients</h2>
           </header>
           <p className="st-cmd-hint" style={{ marginBottom: 10 }}>
-            Envoyé depuis «&nbsp;Commande à préparer&nbsp;» quand les pièces d&apos;un client sont arrivées.
+            Envoyé automatiquement quand la dernière pièce d&apos;un client est pointée («&nbsp;Tout reçu&nbsp;»).
             Champs disponibles : {"{client}"}, {"{commande}"}, {"{horaires}"}, {"{magasin}"}. Vide = texte par défaut.
             Les lettres hors alphabet SMS (ê, ô, ç…) sont remplacées à l&apos;envoi pour tenir en un seul SMS.
           </p>

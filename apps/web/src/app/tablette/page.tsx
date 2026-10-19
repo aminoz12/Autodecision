@@ -12,7 +12,6 @@ import {
   Hourglass,
   Loader2,
   LogOut,
-  MessageSquare,
   PackageCheck,
   Printer,
   RefreshCw,
@@ -47,26 +46,21 @@ import {
   lineKind,
   lineMatches,
   pendingLines,
-  prepareOrdersOf,
   toursOf,
   type DeliveryOrder,
   type LineKind,
-  type PrepareOrder,
 } from "@/lib/commandes-board";
 import {
   loadReceptionBoard,
-  loadSmsStates,
-  markOrderSmsTreated,
   setLineReceptionStatus,
   type BoardLine,
   type ReceptionStatus,
-  type SmsState,
 } from "@/lib/data/commandes";
 import { dispatchOrderToLivreur, loadLivreurs, markOrderDelivered, type Livreur } from "@/lib/data/livreurs";
 import { loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
 import { flushClientMessages, loadSavSettingsSafe } from "@/lib/data/sav";
 import { identify, loadStaff, release, tabletPeople, type Identity, type StaffEntry } from "@/lib/data/tablet";
-import { SMS_PHONE_MESSAGE, buildClientSms, formatE164, smsPhoneCheck, type SmsSettings } from "@/lib/sms";
+import { formatE164 } from "@/lib/sms";
 import { accountSpace } from "@/lib/spaces";
 import { createClient, setActorToken } from "@/lib/supabase/client";
 
@@ -78,10 +72,9 @@ import { createClient, setActorToken } from "@/lib/supabase/client";
 /*  l'écran → retour au choix du nom.                                  */
 /* ------------------------------------------------------------------ */
 
-type Tab = "recevoir" | "preparer" | "livrer" | "reliquats";
+type Tab = "recevoir" | "livrer" | "reliquats";
 const IDLE_MS = 2 * 60_000;
 const REFRESH_MS = 30_000;
-const NO_SMS_SETTINGS: SmsSettings = { magasin: "", horaires: null, readyTemplate: null, partialTemplate: null };
 
 const STATUS: Record<ReceptionStatus, { label: string; cls: string }> = {
   PENDING: { label: "En attente", cls: "wait" },
@@ -191,9 +184,7 @@ export default function TablettePage() {
 
   /* ---- Données ---- */
   const [board, setBoard] = useState<BoardLine[]>([]);
-  const [sms, setSms] = useState<Map<string, SmsState>>(new Map());
   const [livreurs, setLivreurs] = useState<Livreur[]>([]);
-  const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
   const [magasin, setMagasin] = useState("");
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
   /** Après-vente automation « SMS commande prête » on: the database sends it, the page must not send a second one. */
@@ -212,9 +203,8 @@ export default function TablettePage() {
       if (!orgId) return;
       if (!quiet) setLoading(true);
       try {
-        const [b, s, l, org, st, sav] = await Promise.all([
+        const [b, l, org, st, sav] = await Promise.all([
           loadReceptionBoard(supabase, orgId),
-          loadSmsStates(supabase, orgId),
           loadLivreurs(supabase, orgId, { activeOnly: true }),
           loadOrganizationSettings(supabase, orgId).catch(() => null),
           loadStaff(supabase).catch(() => null),
@@ -222,13 +212,11 @@ export default function TablettePage() {
         ]);
         setBoard(b);
         setAutoSmsReady(sav?.settings.autoSmsReady ?? false);
-        setSms(s);
         setLivreurs(l);
         if (st) setStaff(st);
         if (org) {
           setMagasin(org.name);
           setOrgSettings(org);
-          setSmsSettings({ magasin: org.name, horaires: org.smsHoraires, readyTemplate: org.smsReadyTemplate, partialTemplate: org.smsPartialTemplate });
         }
         if (!quiet) setError(null);
       } catch (e) {
@@ -272,7 +260,6 @@ export default function TablettePage() {
   const [openOrder, setOpenOrder] = useState<ReceiveOrder | null>(null);
   const pending = useMemo(() => pendingLines(board), [board]);
   const backorders = useMemo(() => backorderLines(board), [board]);
-  const prepare = useMemo(() => prepareOrdersOf(board, sms), [board, sms]);
   const deliveries = useMemo(() => deliveryOrdersOf(board), [board]);
   const tours = useMemo(() => toursOf(pending), [pending]);
   const dispatchedBy = useMemo(() => {
@@ -304,14 +291,12 @@ export default function TablettePage() {
     const { complete, lines } = orderCompletion(board, doneId);
     if (!complete) return null;
     const first = lines[0];
-    return { orderId: doneId, ref: first.orderRef, clientName: first.clientName, clientPhone: first.clientPhone, isGarage: first.isGarage, isRestock: first.isRestock, lines, casier: null };
+    return { orderId: doneId, ref: first.orderRef, clientName: first.clientName, clientPhone: first.clientPhone, isGarage: first.isGarage, isRestock: first.isRestock, lines };
   }, [doneId, board]);
-  const prepareRows = useMemo(() => prepare.filter((o) => orderMatches(o, search)), [prepare, search]);
   const deliveryRows = useMemo(() => deliveries.filter((o) => orderMatches(o, search)), [deliveries, search]);
 
   const TABS: { id: Tab; label: string; count: number }[] = [
     { id: "recevoir", label: "À recevoir", count: pending.length },
-    { id: "preparer", label: "À préparer", count: prepare.length },
     { id: "livrer", label: "À livrer", count: deliveries.length },
     { id: "reliquats", label: "Reliquats", count: backorders.length },
   ];
@@ -409,12 +394,6 @@ export default function TablettePage() {
         const sent = (await res.json().catch(() => ({}))) as { simulated?: boolean; to?: string; error?: string };
         if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
         parts.push(sent.simulated ? "SMS enregistré (mode simulation)" : `SMS envoyé au ${formatE164(sent.to ?? first.clientPhone ?? "")}`);
-        setSms((prev) => {
-          const next = new Map(prev);
-          const cur = next.get(first.orderId) ?? { sent: false, treated: false };
-          next.set(first.orderId, { ...cur, sent: true });
-          return next;
-        });
       } catch (e) {
         parts.push(`SMS non envoyé : ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -474,35 +453,6 @@ export default function TablettePage() {
   /** Réception partielle: the line whose quantity picker is open. */
   const [partial, setPartial] = useState<{ lineId: string; qty: number } | null>(null);
 
-  /* SMS « commande prête » */
-  const [smsOrder, setSmsOrder] = useState<PrepareOrder | null>(null);
-  const smsPreview = useMemo(() => {
-    if (!smsOrder) return null;
-    const built = buildClientSms(
-      smsOrder.complet ? "READY" : "PARTIAL",
-      { client: smsOrder.clientId ? smsOrder.clientName : "", commande: smsOrder.ref },
-      smsSettings,
-    );
-    const phone = smsPhoneCheck(smsOrder.clientPhone);
-    return { to: phone.ok ? phone.e164 : null, problem: phone.ok ? null : SMS_PHONE_MESSAGE[phone.reason], ...built };
-  }, [smsOrder, smsSettings]);
-  const sendSms = () =>
-    smsOrder &&
-    act(
-      `sms-${smsOrder.orderId}`,
-      async () => {
-        const res = await fetch("/api/send-sms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orderId: smsOrder.orderId, kind: smsOrder.complet ? "READY" : "PARTIAL" }),
-        });
-        const sent = (await res.json().catch(() => ({}))) as { error?: string };
-        if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
-        setSmsOrder(null);
-      },
-      `SMS envoyé à ${smsOrder.clientName}.`,
-    );
-
   /* Livreur */
   const [dispatch, setDispatch] = useState<{ order: DeliveryOrder; livreurId: string } | null>(null);
   const openDispatch = (o: DeliveryOrder) => {
@@ -532,7 +482,7 @@ export default function TablettePage() {
       `${deliverOrder.ref} livrée.`,
     );
 
-  const sheetOpen = Boolean(smsOrder || dispatch || deliverOrder || partial || doneId || openOrder);
+  const sheetOpen = Boolean(dispatch || deliverOrder || partial || doneId || openOrder);
   useEffect(() => {
     sheetOpenRef.current = sheetOpen;
   }, [sheetOpen]);
@@ -833,53 +783,6 @@ export default function TablettePage() {
 
         {tab === "reliquats" && (reliquatRows.length === 0 ? empty("Aucun reliquat.") : reliquatRows.map(lineCard))}
 
-        {tab === "preparer" &&
-          (prepareRows.length === 0
-            ? empty("Aucune commande à préparer.")
-            : prepareRows.map((o) => (
-                <article key={o.orderId} className="tb-card">
-                  <div className="tb-card-head">
-                    <p className="tb-ref">{o.ref}</p>
-                    <span className={`tb-badge tb-badge--${o.complet ? "ok" : "partial"}`}>{o.complet ? "Complète" : "Partielle"}</span>
-                  </div>
-                  <p className="tb-meta">
-                    <strong>{o.clientName}</strong>
-                    {o.clientPhone ? ` · ${o.clientPhone}` : ""}
-                    {o.plate ? ` · ${o.plate}` : ""}
-                  </p>
-                  <div className="tb-qty">
-                    <span>
-                      <strong>{o.received}</strong> / {o.total} pièce{o.total > 1 ? "s" : ""} reçue{o.received > 1 ? "s" : ""}
-                    </span>
-                    {o.state.sent && <span className="tb-who">SMS envoyé</span>}
-                  </div>
-                  <div className="tb-actions">
-                    <PrintTicketButton
-                      ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: me.name })}
-                      kind="rangement"
-                      org={orgSettings}
-                      title={`${o.ref}-rangement`}
-                      className="tb-btn"
-                    >
-                      <Printer className="h-5 w-5" /> Ticket
-                    </PrintTicketButton>
-                    <button type="button" className="tb-btn" disabled={busy !== null || !o.clientPhone} onClick={() => setSmsOrder(o)}>
-                      <MessageSquare className="h-5 w-5" /> {o.state.sent ? "Renvoyer le SMS" : "Prévenir par SMS"}
-                    </button>
-                    <button
-                      type="button"
-                      className="tb-btn tb-btn--ok tb-btn--main"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        void act(`done-${o.orderId}`, () => markOrderSmsTreated(supabase, orgId as string, o.orderId), `${o.ref} traitée.`)
-                      }
-                    >
-                      {busy === `done-${o.orderId}` ? <Loader2 className="h-5 w-5 nc-spin" /> : <Check className="h-5 w-5" />} Traité
-                    </button>
-                  </div>
-                </article>
-              )))}
-
         {tab === "livrer" &&
           (deliveryRows.length === 0
             ? empty("Aucune commande à livrer.")
@@ -983,16 +886,10 @@ export default function TablettePage() {
           order={doneOrder}
           org={orgSettings}
           vendeur={me.name}
-          supabase={supabase}
           tablet
           canDispatch={livreurs.length > 0}
           busy={busy !== null}
           onClose={() => setDoneId(null)}
-          onSms={() => {
-            const row = prepare.find((o) => o.orderId === doneOrder.orderId);
-            setDoneId(null);
-            if (row) setSmsOrder(row);
-          }}
           onDelivered={() => {
             const row = deliveries.find((o) => o.orderId === doneOrder.orderId);
             setDoneId(null);
@@ -1003,26 +900,7 @@ export default function TablettePage() {
             setDoneId(null);
             if (row) openDispatch(row);
           }}
-          onCasier={() => {}}
         />
-      )}
-
-      {/* ---- SMS ---- */}
-      {smsOrder && smsPreview && (
-        <Sheet title={`Prévenir ${smsOrder.clientName}`} onClose={() => setSmsOrder(null)}>
-          <p className="tb-sheet-line">
-            {smsPreview.to ? <strong>{formatE164(smsPreview.to)}</strong> : <span className="tb-fail">{smsPreview.problem}</span>}
-          </p>
-          <div className="sms-bubble">{smsPreview.text}</div>
-          <div className="tb-actions">
-            <button type="button" className="tb-btn tb-btn--ghost" onClick={() => setSmsOrder(null)}>
-              Annuler
-            </button>
-            <button type="button" className="tb-btn tb-btn--ok tb-btn--main" disabled={busy !== null || !smsPreview.to} onClick={() => void sendSms()}>
-              {busy?.startsWith("sms-") ? <Loader2 className="h-5 w-5 nc-spin" /> : <MessageSquare className="h-5 w-5" />} Envoyer le SMS
-            </button>
-          </div>
-        </Sheet>
       )}
 
       {/* ---- Livreur ---- */}
