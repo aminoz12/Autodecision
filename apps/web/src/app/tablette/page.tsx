@@ -30,6 +30,8 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { OrderDoneSheet, type DoneOrder } from "@/components/orders/OrderDoneSheet";
 import { ReceiveOrderCard } from "@/components/orders/ReceiveOrderCard";
 import { ReceiveOrderSheet } from "@/components/orders/ReceiveOrderSheet";
+import { AutoPrintTicket } from "@/components/print/AutoPrintTicket";
+import type { TicketData } from "@/components/print/OrderTicket";
 import { PrintTicketButton } from "@/components/print/PrintTicketButton";
 import {
   backorderLines,
@@ -58,7 +60,7 @@ import {
 } from "@/lib/data/commandes";
 import { dispatchOrderToLivreur, loadLivreurs, markOrderDelivered, type Livreur } from "@/lib/data/livreurs";
 import { loadOrganizationSettings, markLineReceived, type OrganizationSettings } from "@/lib/data/saas";
-import { flushClientMessages } from "@/lib/data/sav";
+import { flushClientMessages, loadSavSettingsSafe } from "@/lib/data/sav";
 import { identify, loadStaff, release, tabletPeople, type Identity, type StaffEntry } from "@/lib/data/tablet";
 import { buildClientSms, formatE164, toE164, type SmsSettings } from "@/lib/sms";
 import { accountSpace } from "@/lib/spaces";
@@ -176,6 +178,10 @@ export default function TablettePage() {
   const [smsSettings, setSmsSettings] = useState<SmsSettings>(NO_SMS_SETTINGS);
   const [magasin, setMagasin] = useState("");
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
+  /** Après-vente automation « SMS commande prête » on: the database sends it, the page must not send a second one. */
+  const [autoSmsReady, setAutoSmsReady] = useState(false);
+  /** The « commande prête » ticket printing by itself after the last part came in. */
+  const [autoTicket, setAutoTicket] = useState<{ ticket: TicketData; title: string } | null>(null);
   /** The order just completed by a pointing: its « and now? » sheet is open. */
   const [doneId, setDoneId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,14 +194,16 @@ export default function TablettePage() {
       if (!orgId) return;
       if (!quiet) setLoading(true);
       try {
-        const [b, s, l, org, st] = await Promise.all([
+        const [b, s, l, org, st, sav] = await Promise.all([
           loadReceptionBoard(supabase, orgId),
           loadSmsStates(supabase, orgId),
           loadLivreurs(supabase, orgId, { activeOnly: true }),
           loadOrganizationSettings(supabase, orgId).catch(() => null),
           loadStaff(supabase).catch(() => null),
+          loadSavSettingsSafe(supabase).catch(() => null),
         ]);
         setBoard(b);
+        setAutoSmsReady(sav?.settings.autoSmsReady ?? false);
         setSms(s);
         setLivreurs(l);
         if (st) setStaff(st);
@@ -317,7 +325,9 @@ export default function TablettePage() {
           qty,
         );
         flushClientMessages(); // « commande prête » queued by the database, if the magasin switched it on
-        setDoneId(l.orderId); // shown only once the fresh board says the order is complete
+        const received = qty == null ? l.quantity : Math.min(l.quantity, l.received + qty);
+        const next = board.map((x) => (x.id === l.id ? { ...x, status: received >= x.quantity ? ("RECEIVED" as const) : ("PARTIAL" as const), received } : x));
+        if (orderCompletion(next, l.orderId).complete) completeOrder(next, l.orderId);
       },
       qty ? `${l.reference} : ${qty} reçue${qty > 1 ? "s" : ""}.` : `${l.reference} reçue.`,
     );
@@ -335,10 +345,69 @@ export default function TablettePage() {
           );
         }
         flushClientMessages();
-        setDoneId(o.orderId);
+        completeOrder(board, o.orderId);
       },
       `${o.ref} : ${o.missing} pièce${o.missing > 1 ? "s" : ""} reçue${o.missing > 1 ? "s" : ""}.`,
     );
+
+
+  /**
+   * The last awaited part of an order came in (2026-10-19, user: « annuler
+   * casier & rangement, SMS automatique, ticket sort automatiquement »):
+   * a walk-in client is told by SMS at once and the « commande prête »
+   * ticket is printed by itself; a garage order still opens the bon de
+   * livraison sheet; a réappro just goes back on the shelf.
+   */
+  const completeOrder = (lines: BoardLine[], orderId: string) => {
+    const mine = lines.filter((l) => l.orderId === orderId);
+    const first = mine[0];
+    if (!first) return;
+    if (first.isGarage) {
+      setDoneId(orderId);
+      return;
+    }
+    if (first.isRestock) {
+      setNotice(`${first.orderRef} : réappro reçue, pièces rangées en stock.`);
+      return;
+    }
+    void finishClientOrder(first, mine);
+  };
+
+  const finishClientOrder = async (first: BoardLine, lines: BoardLine[]) => {
+    const parts: string[] = [];
+    const hasPhone = !!first.clientPhone && first.clientPhone !== "-";
+    if (!hasPhone) {
+      parts.push("pas de numéro, SMS non envoyé");
+    } else if (autoSmsReady) {
+      // The database already queued « commande prête » (automation on): flushClientMessages() sends it.
+      parts.push("SMS « commande prête » envoyé automatiquement");
+    } else {
+      try {
+        const res = await fetch("/api/send-sms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: first.orderId, kind: "READY" }),
+        });
+        const sent = (await res.json().catch(() => ({}))) as { simulated?: boolean; to?: string; error?: string };
+        if (!res.ok) throw new Error(sent.error ?? "Envoi du SMS impossible.");
+        parts.push(sent.simulated ? "SMS enregistré (mode simulation)" : `SMS envoyé au ${formatE164(sent.to ?? first.clientPhone ?? "")}`);
+        setSms((prev) => {
+          const next = new Map(prev);
+          const cur = next.get(first.orderId) ?? { sent: false, treated: false };
+          next.set(first.orderId, { ...cur, sent: true });
+          return next;
+        });
+      } catch (e) {
+        parts.push(`SMS non envoyé : ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const ticket = boardTicketData(lines, { vendeur: me?.name ?? null });
+    if (ticket) {
+      setAutoTicket({ ticket, title: `${first.orderRef}-commande-prete` });
+      parts.push("ticket imprimé");
+    }
+    setNotice(`${first.orderRef} complète — ${parts.join(" · ")}.`);
+  };
 
   /** Checklist sheet: ticked units received line by line; the order stays « à recevoir » while parts are missing. */
   const receivePartial = async (o: ReceiveOrder, picks: Map<string, number>): Promise<boolean> => {
@@ -363,7 +432,7 @@ export default function TablettePage() {
       await load(true);
       if (got >= o.missing) {
         setOpenOrder(null);
-        setDoneId(o.orderId);
+        completeOrder(board, o.orderId);
       }
       return true;
     } catch (e) {
@@ -875,6 +944,10 @@ export default function TablettePage() {
           onClose={() => setOpenOrder(null)}
           onConfirm={(picks) => receivePartial(openOrder, picks)}
         />
+      )}
+
+      {autoTicket && (
+        <AutoPrintTicket ticket={autoTicket.ticket} kind="pret" org={orgSettings} title={autoTicket.title} onDone={() => setAutoTicket(null)} />
       )}
 
       {doneOrder && (

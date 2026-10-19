@@ -166,8 +166,10 @@ export function OrderTicket({
    * signature. « rangement »: stuck on the parts waiting on the shelf (client,
    * phone, casier), printed once every part of a walk-in order came in.
    * « reception »: a partial reception — what came in, what is still awaited.
+   * « pret »: printed by itself when the last part of a walk-in order came in
+   * (client, phone, parts — no casier).
    */
-  kind?: "commande" | "livraison" | "rangement" | "reception";
+  kind?: "commande" | "livraison" | "rangement" | "reception" | "pret";
   copy?: TicketCopy;
 }) {
   const created = new Date(data.createdAt);
@@ -180,13 +182,14 @@ export function OrderTicket({
   const delivery = kind === "livraison";
   const rangement = kind === "rangement";
   const reception = kind === "reception";
+  const pret = kind === "pret";
   const sections = reception
     ? [
         { title: "Pièces reçues", rows: data.lines },
         { title: "Pièces manquantes (à venir)", rows: data.missing ?? [] },
       ]
-    : delivery || rangement
-      ? [{ title: delivery ? "Pièces livrées" : "Pièces à ranger", rows: data.lines }]
+    : delivery || rangement || pret
+      ? [{ title: delivery ? "Pièces livrées" : pret ? "Pièces reçues" : "Pièces à ranger", rows: data.lines }]
     : [
         { title: "Pièces remises au client", rows: data.lines.filter((l) => l.taken) },
         { title: "Pièces à livrer", rows: data.lines.filter((l) => !l.taken) },
@@ -203,7 +206,7 @@ export function OrderTicket({
 
       <div className="tk-dash" />
 
-      <p className="tk-doctitle">{delivery ? "Bon de livraison" : rangement ? "Ticket de rangement" : reception ? "Réception partielle" : "Bon de commande"}</p>
+      <p className="tk-doctitle">{delivery ? "Bon de livraison" : rangement ? "Ticket de rangement" : reception ? "Réception partielle" : pret ? "Commande prête" : "Bon de commande"}</p>
       {reception && <p className="tk-partial">COMMANDE PARTIELLE</p>}
       {copy && <p className="tk-copy">{copy}</p>}
       <p className="tk-refband">N° {data.ref}</p>
@@ -255,7 +258,7 @@ export function OrderTicket({
                     <strong>{l.reference}</strong>
                     {same ? "" : ` ${des}`}
                   </p>
-                  {delivery || rangement || reception ? (
+                  {delivery || rangement || reception || pret ? (
                     <p className="tk-item-row">
                       <span>Quantité</span>
                       <strong>{l.quantity}</strong>
@@ -294,6 +297,14 @@ export function OrderTicket({
               ? "Commande partielle : le reste des pièces est attendu. À remettre au client sur présentation du bon de commande."
               : "Réappro partielle : pièces rangées en stock, le reste est attendu."}
           </p>
+        </>
+      ) : pret ? (
+        <>
+          <p className="tk-reglement">Total : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s)</p>
+          <p className="tk-reglement">Reçu le {dateStr} à {timeStr}</p>
+          {data.clientPhone && data.clientPhone !== "-" && <p className="tk-phone">{data.clientPhone}</p>}
+          <div className="tk-dash" />
+          <p className="tk-note">Commande complète. À remettre au client sur présentation du bon de commande.</p>
         </>
       ) : rangement ? (
         <>
