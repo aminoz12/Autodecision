@@ -51,7 +51,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         count("suppliers"),
         admin.from("orders").select("montant_total").eq("organization_id", id).eq("devis", false).eq("is_restock", false).is("cancelled_at", null).gte("createdAt", since30).limit(5000),
         admin.from("orders").select("solde_restant").eq("organization_id", id).eq("devis", false).gt("solde_restant", 0).limit(5000),
-        admin.from("payments").select("amount, kind").eq("organization_id", id).gte("received_at", since30).limit(5000),
+        admin.from("payments").select("amount, kind").eq("organization_id", id).is("cancelled_at", null).gte("received_at", since30).limit(5000),
         admin.from("app_events").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("level", "error").gte("created_at", since7),
         admin
           .from("orders")
@@ -59,7 +59,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           .eq("organization_id", id)
           .order("createdAt", { ascending: false })
           .limit(20),
-        admin.from("payments").select("id, received_at, kind, mode, amount, order_id, received_by, note").eq("organization_id", id).order("received_at", { ascending: false }).limit(20),
+        admin.from("payments").select("id, received_at, kind, mode, amount, order_id, received_by, note").eq("organization_id", id).is("cancelled_at", null).order("received_at", { ascending: false }).limit(20),
         admin.from("sales_returns").select("id, ref, created_at, designation, statut_traitement, montant").eq("organization_id", id).order("created_at", { ascending: false }).limit(15),
       ]);
     if (profilesRes.error) throw new Error(profilesRes.error.message);

@@ -222,6 +222,7 @@ async function loadReportDataInBrowser(
         .from("payments")
         .select("kind,mode,amount,received_at")
         .eq("organization_id", orgId)
+        .is("cancelled_at", null)
         .gte("received_at", `${range.from}T00:00:00`)
         .lte("received_at", `${range.to}T23:59:59`)
         .order("received_at", { ascending: true })

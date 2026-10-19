@@ -37,6 +37,9 @@ export type Payment = {
   orderRef: string | null;
   /** Orders settled by this payment (règlement de compte). */
   allocations: { orderId: string; orderRef: string | null; amount: number }[];
+  /** Set when the règlement was cancelled (saisi par erreur): the orders it paid owe the money again. */
+  cancelledAt: string | null;
+  cancelReason: string | null;
 };
 
 type Embedded<T> = T | T[] | null | undefined;
@@ -50,7 +53,7 @@ function arr<T>(v: Embedded<T>): T[] {
 }
 
 const PAYMENT_SELECT =
-  "id,kind,mode,amount,reference,note,received_at,received_by,client_id,order_id," +
+  "id,kind,mode,amount,reference,note,received_at,received_by,client_id,order_id,cancelled_at,cancel_reason," +
   "clients(name),orders(ref_demande)," +
   "payment_allocations(order_id,amount,orders(ref_demande))";
 
@@ -73,6 +76,8 @@ function mapPayment(raw: unknown, names: Map<string, string>): Payment {
     clientName: client ? String(client.name ?? "") : null,
     orderId: (row.order_id as string | null) ?? null,
     orderRef: order ? String(order.ref_demande ?? "") : null,
+    cancelledAt: (row.cancelled_at as string | null) ?? null,
+    cancelReason: (row.cancel_reason as string | null) ?? null,
     allocations: arr(row.payment_allocations as Embedded<Record<string, unknown>>).map((a) => {
       const o = first(a.orders as Embedded<Record<string, unknown>>);
       return {
@@ -262,5 +267,26 @@ export async function imputeCreditNote(
       ref: String(a.ref ?? ""),
       amount: toNumber(a.amount),
     })),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Annuler un règlement (2026-10-19)                                  */
+/* ------------------------------------------------------------------ */
+
+export type CancelledPayment = { paymentId: string; amount: number; reversed: { orderId: string; ref: string; amount: number }[] };
+
+/** Cancels a règlement recorded by mistake (cancel_payment): every order it paid owes the money again. */
+export async function cancelPayment(supabase: SupabaseClient, paymentId: string, reason?: string): Promise<CancelledPayment> {
+  const { data, error } = await supabase.rpc("cancel_payment", { p_payment_id: paymentId, p_reason: reason?.trim() || null });
+  if (error) throw new Error(error.message);
+  const j = (data ?? {}) as Record<string, unknown>;
+  return {
+    paymentId: String(j.payment_id ?? paymentId),
+    amount: toNumber(j.amount),
+    reversed: (Array.isArray(j.reversed) ? j.reversed : []).map((r) => {
+      const x = (r ?? {}) as Record<string, unknown>;
+      return { orderId: String(x.order_id ?? ""), ref: String(x.ref ?? ""), amount: toNumber(x.amount) };
+    }),
   };
 }

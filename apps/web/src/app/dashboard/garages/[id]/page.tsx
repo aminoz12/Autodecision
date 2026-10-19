@@ -22,6 +22,7 @@ import {
   Trash2,
   Wallet,
   X,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -52,6 +53,7 @@ import {
   type GarageOrder,
 } from "@/lib/data/garage";
 import {
+  cancelPayment,
   imputeCreditNote,
   loadClientPayments,
   PAYMENT_KIND_LABEL,
@@ -170,16 +172,28 @@ export default function GarageDetailPage() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
+  /** « Régler la sélection »: the ticked orders only (2026-10-19). */
+  const [settleIds, setSettleIds] = useState<string[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   /** The order the règlement is restricted to (a line's « Payé », or « Régler »), else the whole account. */
   const scopeId = payLine?.orderId ?? settleOrderId;
-  const scopeOrders = useMemo(() => (scopeId ? openOrders.filter((o) => o.id === scopeId) : openOrders), [openOrders, scopeId]);
+  const scopeOrders = useMemo(
+    () => (scopeId ? openOrders.filter((o) => o.id === scopeId) : settleIds ? openOrders.filter((o) => settleIds.includes(o.id)) : openOrders),
+    [openOrders, scopeId, settleIds],
+  );
   const scopeOwed = scopeOrders.reduce((s, o) => s + o.balance, 0);
-  const scopeRef = scopeId ? orders.find((o) => o.id === scopeId)?.ref ?? null : null;
+  const scopeRef = scopeId
+    ? orders.find((o) => o.id === scopeId)?.ref ?? null
+    : settleIds
+      ? `${settleIds.length} commande${settleIds.length > 1 ? "s" : ""} sélectionnée${settleIds.length > 1 ? "s" : ""}`
+      : null;
 
   const openSettle = () => {
     setPayLine(null);
     setSettleOrderId(null);
+    setSettleIds(null);
     setAmount(owed > 0 ? String(owed.toFixed(2)) : "");
     setMode("VIREMENT");
     setReference("");
@@ -192,6 +206,7 @@ export default function GarageDetailPage() {
   const openSettleOrder = (o: GarageOrder) => {
     setPayLine(null);
     setSettleOrderId(o.id);
+    setSettleIds(null);
     setAmount(o.balance.toFixed(2));
     setMode("VIREMENT");
     setReference("");
@@ -212,6 +227,38 @@ export default function GarageDetailPage() {
     }
     return rows;
   }, [amount, scopeOrders]);
+
+  /** « Régler la sélection »: the money is spread over the ticked orders only (oldest échéance first). */
+  const openSettleSelection = () => {
+    const picked = openOrders.filter((o) => selected.has(o.id));
+    if (picked.length === 0) return;
+    setPayLine(null);
+    setSettleOrderId(null);
+    setSettleIds(picked.map((o) => o.id));
+    setAmount(picked.reduce((s, o) => s + o.balance, 0).toFixed(2));
+    setMode("VIREMENT");
+    setReference("");
+    setNote(picked.length === 1 ? `Règlement ${picked[0].ref}` : `Règlement de ${picked.length} commandes`);
+    setSettleError(null);
+    setSettleOpen(true);
+  };
+
+  /** « Annuler » a règlement recorded by mistake: the orders it paid owe the money again. */
+  const cancelOne = async (p: Payment) => {
+    const reason = window.prompt(`Annuler le règlement de ${fmtMoney(p.amount)} du ${frDateTime(p.receivedAt)} ?\nMotif (facultatif) :`, "");
+    if (reason === null) return;
+    setCancelling(p.id);
+    setError(null);
+    try {
+      const res = await cancelPayment(supabase, p.id, reason);
+      setNotice(`Règlement de ${fmtMoney(res.amount)} annulé — ${res.reversed.map((r) => `${r.ref} doit à nouveau ${fmtMoney(r.amount)}`).join(", ")}.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCancelling(null);
+    }
+  };
 
   const submitSettle = async () => {
     const a = money(amount);
@@ -234,13 +281,15 @@ export default function GarageDetailPage() {
         mode,
         reference,
         note,
-        orderIds: scopeId ? [scopeId] : undefined,
+        orderIds: scopeId ? [scopeId] : (settleIds ?? undefined),
       });
       if (payLine) {
         await setLineReglement(supabase, payLine.lineId, "PAYE").catch(() => {});
         setPayLine(null);
       }
       setSettleOrderId(null);
+      setSettleIds(null);
+      setSelected(new Set());
       setSettleOpen(false);
       setNotice(
         `${fmtMoney(res.amount)} reçus (${PAYMENT_MODE_LABEL[mode].toLowerCase()}) — ${res.allocations.length} commande(s) réglée(s) : ${res.allocations
@@ -532,31 +581,75 @@ export default function GarageDetailPage() {
 
         <section className="od-card">
           <div className="od-card-title"><Banknote className="h-4 w-4" /> Commandes à régler</div>
+          {selected.size > 0 && (
+            <div className="ac-bulk">
+              <span>
+                {selected.size} commande{selected.size > 1 ? "s" : ""} sélectionnée{selected.size > 1 ? "s" : ""} ·{" "}
+                <strong>{fmtMoney(openOrders.filter((o) => selected.has(o.id)).reduce((s, o) => s + o.balance, 0))}</strong>
+              </span>
+              <button type="button" className="od-btn od-btn--primary" onClick={openSettleSelection}>
+                <HandCoins className="h-4 w-4" /> Régler la sélection
+              </button>
+              <button type="button" className="od-btn od-btn--ghost" onClick={() => setSelected(new Set())}>
+                Tout décocher
+              </button>
+            </div>
+          )}
           <div className="rl-table-wrap">
             <table className="stk-table">
               <thead>
-                <tr><th>Commande</th><th>Date</th><th>Échéance</th><th className="stk-th-center">Total</th><th className="stk-th-center">Reste</th><th /></tr>
+                <tr>
+                  <th className="ac-check">
+                    <input
+                      type="checkbox"
+                      aria-label="Sélectionner toutes les commandes à régler"
+                      checked={openOrders.length > 0 && openOrders.every((o) => selected.has(o.id))}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(openOrders.map((o) => o.id)) : new Set())}
+                    />
+                  </th>
+                  <th>Commande</th><th>Date</th><th>Échéance</th><th className="stk-th-center">Total</th><th className="stk-th-center">Reste</th><th />
+                </tr>
               </thead>
               <tbody>
                 {openOrders.map((o) => {
                   const late = !!o.echeance && o.echeance < today;
                   return (
-                    <tr key={o.id}>
+                    <tr key={o.id} className={selected.has(o.id) ? "ac-row--selected" : ""}>
+                      <td className="ac-check">
+                        <input
+                          type="checkbox"
+                          aria-label={`Sélectionner ${o.ref}`}
+                          checked={selected.has(o.id)}
+                          onChange={(e) =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(o.id);
+                              else next.delete(o.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
                       <td className="stk-ref"><Link href={`/dashboard/commandes/${o.id}`}>{o.ref}</Link></td>
                       <td className="rl-muted-strong">{frDate(o.date)}</td>
                       <td className={late ? "gp-overdue" : "rl-muted-strong"}>{frDate(o.echeance)}{late ? " · échue" : ""}</td>
                       <td className="stk-td-center">{fmtMoney(o.total)}</td>
                       <td className="stk-td-center" style={{ color: "#DC2626", fontWeight: 700 }}>{fmtMoney(o.balance)}</td>
                       <td className="stk-td-center">
-                        <button type="button" className="rc-act rc-act--recu" onClick={() => openSettleOrder(o)} title={`Enregistrer le règlement de ${o.ref}`}>
-                          <HandCoins className="h-3.5 w-3.5" /> Régler
-                        </button>
+                        <span className="ac-row-acts">
+                          <button type="button" className="rc-act rc-act--recu" onClick={() => openSettleOrder(o)} title={`Enregistrer le règlement de ${o.ref}`}>
+                            <HandCoins className="h-3.5 w-3.5" /> Régler
+                          </button>
+                          <Link href={`/dashboard/retours?order=${encodeURIComponent(o.ref)}`} className="rc-act" title={`Déclarer un retour ou un remboursement sur ${o.ref}`}>
+                            <RotateCcw className="h-3.5 w-3.5" /> Retour
+                          </Link>
+                        </span>
                       </td>
                     </tr>
                   );
                 })}
                 {!loading && openOrders.length === 0 && (
-                  <tr><td colSpan={6} className="stk-empty">Aucune commande en attente de règlement.</td></tr>
+                  <tr><td colSpan={7} className="stk-empty">Aucune commande en attente de règlement.</td></tr>
                 )}
               </tbody>
             </table>
@@ -569,13 +662,20 @@ export default function GarageDetailPage() {
         <div className="rl-table-wrap">
           <table className="stk-table">
             <thead>
-              <tr><th>Date</th><th>Type</th><th>Mode</th><th>Référence</th><th>Commandes réglées</th><th>Reçu par</th><th className="stk-th-center">Montant</th></tr>
+              <tr><th>Date</th><th>Type</th><th>Mode</th><th>Référence</th><th>Commandes réglées</th><th>Reçu par</th><th className="stk-th-center">Montant</th><th /></tr>
             </thead>
             <tbody>
               {payments.map((p) => (
-                <tr key={p.id}>
+                <tr key={p.id} className={p.cancelledAt ? "ac-cancelled" : ""}>
                   <td className="rl-muted-strong">{frDateTime(p.receivedAt)}</td>
-                  <td>{PAYMENT_KIND_LABEL[p.kind]}</td>
+                  <td>
+                    {PAYMENT_KIND_LABEL[p.kind]}
+                    {p.cancelledAt && (
+                      <span className="rt-badge rt-badge--gray ac-cancelled-tag" title={`Annulé le ${frDateTime(p.cancelledAt)}${p.cancelReason ? ` — ${p.cancelReason}` : ""}`}>
+                        Annulé
+                      </span>
+                    )}
+                  </td>
                   <td><span className="rt-badge rt-badge--blue">{PAYMENT_MODE_LABEL[p.mode]}</span></td>
                   <td className="rl-muted-strong">{p.reference ?? p.note ?? "—"}</td>
                   <td className="rl-muted-strong">
@@ -584,13 +684,26 @@ export default function GarageDetailPage() {
                       : p.orderRef ?? "—"}
                   </td>
                   <td className="rl-muted-strong">{p.receivedByName ?? "—"}</td>
-                  <td className="stk-td-center" style={{ fontWeight: 700, color: p.kind === "REMBOURSEMENT" ? "#DC2626" : "#16A34A" }}>
+                  <td className="stk-td-center ac-amount" style={{ fontWeight: 700, color: p.cancelledAt ? undefined : p.kind === "REMBOURSEMENT" ? "#DC2626" : "#16A34A" }}>
                     {p.kind === "REMBOURSEMENT" ? "− " : ""}{fmtMoney(p.amount)}
+                  </td>
+                  <td className="stk-td-center">
+                    {!p.cancelledAt && p.kind !== "REMBOURSEMENT" && (
+                      <button
+                        type="button"
+                        className="rc-act ac-cancel"
+                        disabled={cancelling === p.id}
+                        onClick={() => void cancelOne(p)}
+                        title="Annuler ce règlement (saisi par erreur) : les commandes réglées redeviennent dues"
+                      >
+                        <XCircle className="h-3.5 w-3.5" /> Annuler
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
               {!loading && payments.length === 0 && (
-                <tr><td colSpan={7} className="stk-empty">Aucun règlement enregistré pour ce {isPro ? "client" : "garage"}.</td></tr>
+                <tr><td colSpan={8} className="stk-empty">Aucun règlement enregistré pour ce {isPro ? "client" : "garage"}.</td></tr>
               )}
             </tbody>
           </table>

@@ -1649,3 +1649,33 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .lp-card--take { border-color: var(--clr-primary-border, #C7C4FF); }
 .lp-stop--take { background: var(--clr-primary-soft); color: var(--clr-primary); }
 .lp-take { width: 100%; justify-content: center; }
+
+/* ==================================================================
+   2026-10-19 — « Livraison » sur la nouvelle commande (garage / PRO),
+   compte garage : sélection de commandes à régler, Retour, annulation
+   d'un règlement. Préfixes nc-deliver / ac-.
+   ================================================================== */
+.nc-deliver { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px 0 10px; border: 1.5px solid var(--border-strong); border-radius: var(--radius-control); background: #fff; }
+.nc-deliver--on { border-color: var(--clr-primary); background: var(--clr-primary-soft); }
+.nc-deliver-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--text-secondary); cursor: pointer; }
+.nc-deliver--on .nc-deliver-switch { color: var(--clr-primary); }
+.nc-deliver-switch input { width: 18px; height: 18px; accent-color: var(--clr-primary); cursor: pointer; }
+.nc-deliver-switch svg { width: 18px; height: 18px; }
+.nc-deliver-select { height: 34px; min-width: 150px; padding: 0 28px 0 10px; font-size: 13.5px; font-weight: 600; }
+.nc-deliver-who { font-size: 13.5px; font-weight: 600; color: var(--clr-primary); }
+.nc-success-tour--deliver { color: var(--clr-primary); font-weight: 600; }
+@media (max-width: 640px) { .nc-deliver { width: 100%; justify-content: space-between; } }
+
+.ac-check { width: 36px; text-align: center; }
+.ac-check input { width: 17px; height: 17px; accent-color: var(--clr-primary); cursor: pointer; vertical-align: middle; }
+.ac-row--selected td { background: var(--clr-primary-soft); }
+.ac-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 12px; padding: 10px 14px; border-radius: 8px; background: var(--clr-primary-soft); border: 1px solid var(--clr-primary-border, #C7C4FF); font-size: 13.5px; color: var(--text-secondary); }
+.ac-bulk strong { color: var(--text-primary); }
+.ac-bulk .od-btn { height: 34px; }
+.ac-row-acts { display: inline-flex; align-items: center; gap: 6px; }
+.ac-row-acts .rc-act { white-space: nowrap; }
+.ac-cancelled td { color: var(--text-muted); }
+.ac-cancelled .ac-amount { text-decoration: line-through; }
+.ac-cancelled-tag { margin-left: 6px; }
+.ac-cancel { color: var(--clr-danger-text); border-color: var(--clr-danger-border); }
+.ac-cancel:hover:enabled { background: var(--clr-danger-bg); }

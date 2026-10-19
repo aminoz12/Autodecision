@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import { createOrderWithLines } from "@/lib/data/orders";
+import { dispatchOrderToLivreur, loadLivreurs, type Livreur } from "@/lib/data/livreurs";
 import {
   createClientRecord,
   createGarage,
@@ -151,6 +152,12 @@ export default function NouvelleCommandePage() {
   const [createdRef, setCreatedRef] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
+  /* « Livraison » (2026-10-19, user): a garage / PRO order can leave straight away
+     with a livreur — no « Envoyer au livreur » click later in « Commande à livrer ». */
+  const [livreurs, setLivreurs] = useState<Livreur[]>([]);
+  const [deliverNow, setDeliverNow] = useState(false);
+  const [deliverLivreurId, setDeliverLivreurId] = useState("");
+  const [deliveredTo, setDeliveredTo] = useState<string | null>(null);
   /* Date de réception announced to the client, chosen right after saving (2026-10-18):
      J+1 / J+2 / J+3 or a free date, stored as the order's date promise. */
   const [receptionNeeded, setReceptionNeeded] = useState(false);
@@ -180,6 +187,31 @@ export default function NouvelleCommandePage() {
   const [pdfInfo, setPdfInfo] = useState<string | null>(null);
 
   /* ---- Load reference data ---- */
+  // Livreurs for the « Livraison » switch; the last one used is remembered on this PC.
+  useEffect(() => {
+    const orgId = profile?.organization_id;
+    if (!orgId) return;
+    let cancelled = false;
+    loadLivreurs(supabase, orgId, { activeOnly: true })
+      .then((list) => {
+        if (cancelled) return;
+        setLivreurs(list);
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem("nc.livreur");
+        } catch {
+          /* private mode */
+        }
+        setDeliverLivreurId(saved && list.some((l) => l.id === saved) ? saved : (list[0]?.id ?? ""));
+      })
+      .catch(() => {
+        /* the switch simply stays unavailable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, profile?.organization_id]);
+
   useEffect(() => {
     if (!profile?.organization_id) return;
     let cancelled = false;
@@ -712,6 +744,18 @@ export default function NouvelleCommandePage() {
       setReceptionError(null);
       setCreatedRef(order.ref_demande);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
+      // « Livraison » ticked: the order leaves with the chosen livreur right now (🚚).
+      if (deliverNow && destineA !== "COMPTOIR" && deliverLivreurId) {
+        try {
+          await dispatchOrderToLivreur(supabase, order.id, deliverLivreurId);
+          setDeliveredTo(livreurs.find((l) => l.id === deliverLivreurId)?.name ?? "le livreur");
+        } catch (dErr) {
+          setDeliveredTo(null);
+          setSavWarning(`Commande créée, mais pas envoyée en livraison : ${dErr instanceof Error ? dErr.message : String(dErr)}. Envoyez-la depuis « Commande à livrer ».`);
+        }
+      } else {
+        setDeliveredTo(null);
+      }
       setAvoirWarning(order.avoirWarning ?? null);
       setTicket({
         ref: order.ref_demande,
@@ -803,6 +847,8 @@ export default function NouvelleCommandePage() {
     setCreatedRef(null);
     setCreatedId(null);
     setCreatedTour(null);
+    setDeliverNow(false);
+    setDeliveredTo(null);
     setReceptionNeeded(false);
     setReceptionDate(null);
     setReceptionDefault(null);
@@ -827,6 +873,12 @@ export default function NouvelleCommandePage() {
           <p className="nc-success-sub">
             La commande <strong>{createdRef}</strong> a bien été envoyée en livraison.
           </p>
+          {deliveredTo && (
+            <p className="nc-success-tour nc-success-tour--deliver">
+              <Truck className="h-4 w-4" />
+              En cours de livraison par {deliveredTo} : plus rien à faire dans « Commande à livrer ».
+            </p>
+          )}
           {createdTour?.deliveryAt && (
             <p className="nc-success-tour">
               <Truck className="h-4 w-4" />
@@ -1573,6 +1625,39 @@ export default function NouvelleCommandePage() {
         <button type="button" className="od-btn od-btn--ghost" onClick={resetForm}>
           Réinitialiser
         </button>
+        {destineA !== "COMPTOIR" && (
+          <div
+            className={`nc-deliver${deliverNow ? " nc-deliver--on" : ""}`}
+            title={livreurs.length === 0 ? "Aucun livreur actif : créez-en un dans Livreurs" : "La commande part tout de suite en livraison 🚚 : plus besoin de l'envoyer au livreur depuis « Commande à livrer »"}
+          >
+            <label className="nc-deliver-switch">
+              <input type="checkbox" checked={deliverNow} onChange={(e) => setDeliverNow(e.target.checked)} disabled={saving || livreurs.length === 0} />
+              <Truck className="h-4 w-4" />
+              Livraison
+            </label>
+            {deliverNow && livreurs.length > 1 && (
+              <select
+                className="od-select-native nc-deliver-select"
+                value={deliverLivreurId}
+                onChange={(e) => {
+                  setDeliverLivreurId(e.target.value);
+                  try {
+                    localStorage.setItem("nc.livreur", e.target.value);
+                  } catch {
+                    /* private mode */
+                  }
+                }}
+                disabled={saving}
+                aria-label="Livreur"
+              >
+                {livreurs.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            )}
+            {deliverNow && livreurs.length === 1 && <span className="nc-deliver-who">· {livreurs[0].name}</span>}
+          </div>
+        )}
         <button
           type="submit"
           className="od-btn od-btn--primary nc-submit"

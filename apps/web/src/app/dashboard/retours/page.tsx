@@ -19,7 +19,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { PAYMENT_MODES, PAYMENT_MODE_LABEL, type PaymentMode } from "@/lib/data/payments";
 import { SearchParamEffect } from "@/components/ui/SearchParamEffect";
@@ -192,6 +192,13 @@ export default function RetoursPage() {
   const [refundOrders, setRefundOrders] = useState<RefundableOrder[]>([]);
   const [refundLoading, setRefundLoading] = useState(false);
   const [search, setSearch] = useState("");
+  /** ?order=<ref> (from a garage / client account): open the form on that order (2026-10-19). */
+  const wantedOrder = useRef<string | null>(null);
+  const [wantedTick, setWantedTick] = useState(0);
+  const onWantedOrder = useCallback((v: string) => {
+    wantedOrder.current = v;
+    setWantedTick((n) => n + 1);
+  }, []);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState("");
@@ -455,6 +462,13 @@ export default function RetoursPage() {
     }
   }, [profile?.organization_id]);
 
+  useEffect(() => {
+    if (!wantedTick || !wantedOrder.current || !profile?.organization_id) return;
+    const ref = wantedOrder.current;
+    wantedOrder.current = null;
+    void openModal().then(() => setSearch(ref));
+  }, [wantedTick, profile?.organization_id, openModal]);
+
   const selectedOrder = useMemo(
     () => refundOrders.find((o) => o.id === selectedOrderId) ?? null,
     [refundOrders, selectedOrderId],
@@ -638,6 +652,7 @@ export default function RetoursPage() {
     {/* The bell links here with ?filter=A_VALIDER, also while the page is already open. */}
     <Suspense fallback={null}>
       <SearchParamEffect name="filter" onValue={setTreatFilter} />
+      <SearchParamEffect name="order" onValue={onWantedOrder} />
     </Suspense>
     <div className="rt-layout">
       <div className="rt-main">
