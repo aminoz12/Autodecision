@@ -4,6 +4,7 @@ import {
   backorderLines,
   boardTicketData,
   deliveryOrdersOf,
+  lineKind,
   lineMatches,
   orderCompletion,
   partialTicketData,
@@ -16,7 +17,7 @@ import {
 function line(p: Partial<BoardLine> & { id: string }): BoardLine {
   return {
     orderId: "o1", orderRef: "REQ-2026-00001", orderDate: "2026-10-05", clientId: "c1", clientName: "Paul Martin", clientPhone: "0611223344",
-    isGarage: false, vehicle: null, plate: null, reference: "GDB1322", referenceCommande: null, designation: "Plaquettes", supplierName: "Autodistribution",
+    isGarage: false, isPro: false, vehicle: null, plate: null, reference: "GDB1322", referenceCommande: null, designation: "Plaquettes", supplierName: "Autodistribution",
     supplierId: "s1", supplierOwnDelivery: false, supplierLeadDays: 0, fromStock: false, quantity: 1, received: 0, handedOver: 0, status: "PENDING",
     receivedAt: null, expectedAt: null, tourId: null, tourName: "Tournée 1", tourLivreurId: null, putAway: false, unitPrice: 10, retourImpossible: false,
     alreadyReturned: false, isRestock: false, workflow: "PENDING", envoyerAuLivreur: false, livreurId: null, livreurName: null, dateEnvoi: null,
@@ -152,5 +153,14 @@ describe("Réception partielle (2026-10-18)", () => {
   it("ticket: a réappro prints no casier box", () => {
     const board = [line({ id: "a", isRestock: true, fromStock: true, quantity: 4, received: 0 })];
     expect(partialTicketData(board, new Map([["a", 3]]), {})?.casierBox).toBe(false);
+  });
+});
+
+describe("lineKind", () => {
+  it("tells a client PRO from a walk-in client, a garage and the stock", () => {
+    expect(lineKind(line({ id: "a" }))).toBe("CLIENT");
+    expect(lineKind(line({ id: "b", isPro: true }))).toBe("PRO");
+    expect(lineKind(line({ id: "c", isGarage: true, isPro: true }))).toBe("GARAGE");
+    expect(lineKind(line({ id: "d", isPro: true, fromStock: true }))).toBe("STOCK");
   });
 });

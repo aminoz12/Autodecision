@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   Box,
+  Briefcase,
   Building2,
   Check,
   ChevronLeft,
@@ -42,6 +43,7 @@ import {
   orderCompletion,
   receiveOrdersOf,
   type ReceiveOrder,
+  LINE_KIND_LABEL,
   lineKind,
   lineMatches,
   pendingLines,
@@ -88,10 +90,10 @@ const STATUS: Record<ReceptionStatus, { label: string; cls: string }> = {
   NOT_RECEIVED: { label: "Non reçu", cls: "no" },
   RECEIVED: { label: "Reçu", cls: "ok" },
 };
-const KIND_LABEL = { CLIENT: "Client", GARAGE: "Garage", STOCK: "Stock" } as const;
 /** The counter's filters (Suivi des commandes → Pièces à recevoir), same order and words. */
 const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
   { id: "CLIENT", label: "Client", icon: User },
+  { id: "PRO", label: "Clients PRO", icon: Briefcase },
   { id: "GARAGE", label: "Garages", icon: Building2 },
   { id: "STOCK", label: "Retour en stock", icon: Box },
 ];
@@ -284,7 +286,7 @@ export default function TablettePage() {
     [pending, tourFilter],
   );
   const kindCounts = useMemo(() => {
-    const c: Record<LineKind, number> = { CLIENT: 0, GARAGE: 0, STOCK: 0 };
+    const c: Record<LineKind, number> = { CLIENT: 0, PRO: 0, GARAGE: 0, STOCK: 0 };
     for (const l of tourRows) c[lineKind(l)] += 1;
     return c;
   }, [tourRows]);
@@ -592,7 +594,7 @@ export default function TablettePage() {
         </div>
         {l.designation && l.designation.trim().toLowerCase() !== l.reference.trim().toLowerCase() && <p className="tb-des">{l.designation}</p>}
         <p className="tb-meta">
-          <span className={`tb-kind tb-kind--${kind.toLowerCase()}`}>{KIND_LABEL[kind]}</span>
+          <span className={`tb-kind tb-kind--${kind.toLowerCase()}`}>{LINE_KIND_LABEL[kind]}</span>
           <strong>{l.clientName}</strong> · {l.orderRef}
         </p>
         <p className="tb-meta">

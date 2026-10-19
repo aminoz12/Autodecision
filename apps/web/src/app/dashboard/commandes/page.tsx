@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Banknote,
   Box,
+  Briefcase,
   Building2,
   Check,
   Clock,
@@ -94,6 +95,7 @@ type ReturnCompensation = "REMBOURSEMENT" | "AVOIR" | "DEDUCTION";
 
 const KINDS: { id: LineKind; label: string; icon: LucideIcon }[] = [
   { id: "CLIENT", label: "Client", icon: User },
+  { id: "PRO", label: "Clients PRO", icon: Briefcase },
   { id: "GARAGE", label: "Garages", icon: Building2 },
   { id: "STOCK", label: "Retour en stock", icon: Box },
 ];
@@ -355,7 +357,7 @@ export default function ReceptionCommandesPage() {
     [pending, tourFilter],
   );
   const kindCounts = useMemo(() => {
-    const c: Record<LineKind, number> = { CLIENT: 0, GARAGE: 0, STOCK: 0 };
+    const c: Record<LineKind, number> = { CLIENT: 0, PRO: 0, GARAGE: 0, STOCK: 0 };
     for (const l of tourRows) c[lineKind(l)] += 1;
     return c;
   }, [tourRows]);

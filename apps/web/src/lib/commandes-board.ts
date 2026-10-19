@@ -6,12 +6,18 @@ import type { TicketData, TicketLine } from "@/components/print/OrderTicket";
  * (dashboard/commandes) and on the stock tablet (/tablette): one set of rules.
  */
 
-/** Who a line is for: walk-in client, garage, or the magasin stock. */
-export type LineKind = "CLIENT" | "GARAGE" | "STOCK";
+/** Who a line is for: walk-in client, client PRO (a professional served at the counter), garage, or the magasin stock. */
+export type LineKind = "CLIENT" | "PRO" | "GARAGE" | "STOCK";
+
+/** Badge words, shared by the counter page and the tablet (chips carry their own longer labels). */
+export const LINE_KIND_LABEL: Record<LineKind, string> = { CLIENT: "Client", PRO: "Client PRO", GARAGE: "Garage", STOCK: "Stock" };
 
 export function lineKind(l: BoardLine): LineKind {
   if (l.fromStock) return "STOCK";
-  return l.isGarage ? "GARAGE" : "CLIENT";
+  if (l.isGarage) return "GARAGE";
+  // A client PRO collects at the counter like a walk-in client but is shown
+  // apart, in its own colour (user, 2026-10-19).
+  return l.isPro ? "PRO" : "CLIENT";
 }
 
 /**

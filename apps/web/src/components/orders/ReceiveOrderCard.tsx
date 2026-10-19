@@ -2,7 +2,7 @@
 
 import { Check, Hourglass, ListChecks, Loader2, Truck, X } from "lucide-react";
 import { useState } from "react";
-import type { ReceiveOrder } from "@/lib/commandes-board";
+import { LINE_KIND_LABEL, type ReceiveOrder } from "@/lib/commandes-board";
 import type { BoardLine } from "@/lib/data/commandes";
 
 /*
@@ -18,7 +18,6 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   PARTIAL: { label: "Reçu partiel", cls: "partial" },
   BACKORDER: { label: "Reliquat", cls: "partial" },
 };
-const KIND_LABEL = { CLIENT: "Client", GARAGE: "Garage", STOCK: "Stock" } as const;
 
 function when(iso: string | null): string {
   if (!iso) return "";
@@ -57,7 +56,7 @@ export function ReceiveOrderCard({
         <div className="ro-head-main">
           <p className="ro-ref">
             {order.ref}
-            <span className={`ro-kind ro-kind--${order.kind.toLowerCase()}`}>{KIND_LABEL[order.kind]}</span>
+            <span className={`ro-kind ro-kind--${order.kind.toLowerCase()}`}>{LINE_KIND_LABEL[order.kind]}</span>
             {order.partial && (
               <span className="ro-kind ro-kind--partial" title={`${order.receivedUnits} pièce(s) déjà reçue(s), ${order.missing} manquante(s)`}>
                 Partielle

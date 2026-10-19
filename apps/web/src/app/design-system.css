@@ -323,7 +323,16 @@ a.sav-kpi:hover, button.sav-kpi:hover { border-color: var(--border-strong); box-
 :is(.rc-kind--active, .rc-sms-all--active, .rc-tournee--active, .cl-tier-filter--active, .nc-chip--on):hover {
   background: var(--clr-primary-soft); border-color: var(--clr-primary); color: var(--clr-primary); box-shadow: none;
 }
-.rc-kind--client.rc-kind--active, .rc-kind--garage.rc-kind--active, .rc-kind--stock.rc-kind--active { background: var(--clr-primary-soft); border-color: var(--clr-primary); color: var(--clr-primary); }
+/* Suivi des commandes — one colour per kind, the same on the chip, the badge and the card,
+   on the counter and on the tablet: client amber, client PRO teal, garage blue, stock slate. */
+.rc-kind--client svg { background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.rc-kind--pro svg { background: #CCFBF1; color: #0F766E; }
+.rc-kind--garage svg { background: #DBEAFE; color: #1D4ED8; }
+.rc-kind--stock svg { background: #E2E8F0; color: #334155; }
+.rc-kind--client.rc-kind--active { background: var(--clr-warning-bg); border-color: var(--clr-warning-border); color: var(--clr-warning-text); }
+.rc-kind--pro.rc-kind--active { background: #CCFBF1; border-color: #5EEAD4; color: #0F766E; }
+.rc-kind--garage.rc-kind--active { background: #DBEAFE; border-color: #93C5FD; color: #1D4ED8; }
+.rc-kind--stock.rc-kind--active { background: #E2E8F0; border-color: #CBD5E1; color: #334155; }
 .rc-kind-count, .rc-sms-all-count, .rc-tournee-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #EBEEF1; color: var(--text-secondary); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
 .rc-kind--active .rc-kind-count, .rc-sms-all--active .rc-sms-all-count, .rc-tournee--active .rc-tournee-count { background: var(--clr-primary); color: #fff; }
 .sav-strip { gap: 8px; margin-bottom: 20px; }
@@ -781,7 +790,10 @@ table .od-btn--primary:disabled:hover { background: #fff; color: var(--clr-prima
 .auth-btn, .auth-submit { height: 44px; font-size: 14.5px; }
 
 /* Kind chips: when active the counter follows the purple chip, whatever the kind tone */
-.rc-kind--client.rc-kind--active .rc-kind-count, .rc-kind--garage.rc-kind--active .rc-kind-count, .rc-kind--stock.rc-kind--active .rc-kind-count { background: var(--clr-primary); color: #fff; }
+.rc-kind--client.rc-kind--active .rc-kind-count { background: var(--clr-warning); color: #fff; }
+.rc-kind--pro.rc-kind--active .rc-kind-count { background: #0D9488; color: #fff; }
+.rc-kind--garage.rc-kind--active .rc-kind-count { background: #1D4ED8; color: #fff; }
+.rc-kind--stock.rc-kind--active .rc-kind-count { background: #334155; color: #fff; }
 
 /* ==================================================================== */
 /*  COUNTER NOTES 2026-09-30                                              */
@@ -1211,6 +1223,7 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .tb-badge--ok { background: var(--clr-success-bg); color: var(--clr-success-text); }
 .tb-badge--transit { background: #DBEAFE; color: #1D4ED8; }
 .tb-kind { display: inline-block; margin-right: 6px; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.tb-kind--pro { background: #CCFBF1; color: #0F766E; }
 .tb-kind--garage { background: #DBEAFE; color: #1D4ED8; }
 .tb-kind--stock { background: #E2E8F0; color: #334155; }
 .tb-qty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; font-size: 16px; }
@@ -1257,10 +1270,19 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .tb-kindchip span { overflow-wrap: break-word; line-height: 1.15; }
 .tb-kindchip strong { min-width: 34px; padding: 2px 8px; border-radius: 999px; background: #F3F5F9; font-size: 17px; font-variant-numeric: tabular-nums; }
 .tb-kindchip--client svg { color: var(--clr-warning-text); }
+.tb-kindchip--pro svg { color: #0F766E; }
 .tb-kindchip--garage svg { color: #1D4ED8; }
 .tb-kindchip--stock svg { color: #334155; }
 .tb-kindchip--on { border-color: var(--clr-primary); background: #EEF0FF; color: var(--clr-primary); }
 .tb-kindchip--on strong { background: var(--clr-primary); color: #fff; }
+.tb-kindchip--client.tb-kindchip--on { border-color: var(--clr-warning); background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.tb-kindchip--client.tb-kindchip--on strong { background: var(--clr-warning); }
+.tb-kindchip--pro.tb-kindchip--on { border-color: #0D9488; background: #CCFBF1; color: #0F766E; }
+.tb-kindchip--pro.tb-kindchip--on strong { background: #0D9488; }
+.tb-kindchip--garage.tb-kindchip--on { border-color: #1D4ED8; background: #DBEAFE; color: #1D4ED8; }
+.tb-kindchip--garage.tb-kindchip--on strong { background: #1D4ED8; }
+.tb-kindchip--stock.tb-kindchip--on { border-color: #334155; background: #E2E8F0; color: #334155; }
+.tb-kindchip--stock.tb-kindchip--on strong { background: #334155; }
 .tb-clear-filters { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px dashed var(--border-card); background: transparent; font-size: 15px; font-weight: 600; color: var(--text-muted); }
 
 /* « Qui pointe ? » then the code: a centered card that fits the tablet, whatever its size. */
@@ -1347,12 +1369,14 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
    ================================================================== */
 .ro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 14px; margin-bottom: 16px; }
 .ro-card { background: var(--bg-card); border: 1px solid var(--border-card); border-left: 6px solid var(--clr-warning); border-radius: 14px; padding: 14px 16px; }
+.ro-card--pro { border-left-color: #0D9488; }
 .ro-card--garage { border-left-color: #1D4ED8; }
 .ro-card--stock { border-left-color: #334155; }
 .ro-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
 .ro-head-main { min-width: 0; }
 .ro-ref { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; }
 .ro-kind { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; background: var(--clr-warning-bg); color: var(--clr-warning-text); }
+.ro-kind--pro { background: #CCFBF1; color: #0F766E; }
 .ro-kind--garage { background: #DBEAFE; color: #1D4ED8; }
 .ro-kind--stock { background: #E2E8F0; color: #334155; }
 .ro-client { margin: 2px 0 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }

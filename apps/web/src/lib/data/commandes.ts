@@ -32,6 +32,8 @@ export type BoardLine = {
   clientPhone: string | null;
   /** The client is a garage (professional account). */
   isGarage: boolean;
+  /** Client PRO: a professional served at the counter (clients.account_type = PRO), never a garage. */
+  isPro: boolean;
   vehicle: string | null;
   plate: string | null;
   reference: string;
@@ -94,7 +96,7 @@ export async function loadReceptionBoard(
   const select = (who: boolean) =>
     "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
     `prix_vente_unitaire,retour_impossible,supplier_id,${who ? "pointed_by,pointed_at," : ""}` +
-    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,address,city),livreurs(name)),` +
+    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,account_type,address,city),livreurs(name)),` +
     "suppliers(name,own_delivery,lead_days),delivery_tours(name,livreur_id)";
   // Two reads, so a busy magasin never loses today's parts: everything still to
   // point (bounded by the work in progress), and the most recent receptions for
@@ -194,6 +196,7 @@ export async function loadReceptionBoard(
         (isRestock ? null : (order?.client_phone as string | null)) ??
         null,
       isGarage: client?.is_garage === true,
+      isPro: client?.is_garage !== true && client?.account_type === "PRO",
       vehicle: (order?.vehicle_model as string | null) ?? null,
       plate: (order?.immatriculation as string | null) ?? null,
       reference: String(row.reference ?? ""),
