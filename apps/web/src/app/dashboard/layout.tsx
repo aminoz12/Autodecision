@@ -1,5 +1,6 @@
 import { DashboardGate } from "@/components/auth/DashboardGate";
 import { BillingGate } from "@/components/billing/BillingGate";
+import { BackBar } from "@/components/layout/BackBar";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { NotificationsProvider } from "@/components/providers/NotificationsProvider";
@@ -17,6 +18,7 @@ export default function DashboardLayout({
         <Sidebar />
         <main className="dashboard-main">
           <Topbar />
+          <BackBar />
           <BillingGate>{children}</BillingGate>
         </main>
         <NewVersionNotice />

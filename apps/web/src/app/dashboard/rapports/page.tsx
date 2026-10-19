@@ -15,6 +15,7 @@ import {
   Wallet,
   Warehouse,
   Wrench,
+  CalendarDays,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -32,6 +33,8 @@ import {
   toCsv,
   type ReportData,
   type ReportRange,
+  dailyRevenue,
+  type DailyRevenue,
 } from "@/lib/data/rapports";
 import { PAYMENT_MODE_LABEL } from "@/lib/data/payments";
 
@@ -56,13 +59,20 @@ export default function RapportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"sales" | "lines" | null>(null);
+  /** CA par jour (ou par semaine au-delà de deux mois), from the same sales rows as the CSV export. */
+  const [daily, setDaily] = useState<DailyRevenue | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     setError(null);
     try {
-      setData(await loadReportData(supabase, orgId, range));
+      const [overview, rows] = await Promise.all([
+        loadReportData(supabase, orgId, range),
+        loadSalesRows(supabase, orgId, range).catch(() => null),
+      ]);
+      setData(overview);
+      setDaily(rows ? dailyRevenue(rows, range) : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -104,6 +114,7 @@ export default function RapportsPage() {
   };
 
   const maxMonth = useMemo(() => Math.max(1, ...(data?.months.map((m) => m.ca) ?? [1])), [data]);
+  const maxDaily = useMemo(() => Math.max(1, ...(daily?.points.map((p) => p.ca) ?? [1])), [daily]);
   const maxClient = useMemo(() => Math.max(1, ...(data?.topClients.map((c) => c.amount) ?? [1])), [data]);
   const maxSupplier = useMemo(() => Math.max(1, ...(data?.topFournisseurs.map((s) => s.count) ?? [1])), [data]);
 
@@ -205,6 +216,37 @@ export default function RapportsPage() {
               <div><p className="ga-stat-value">{fmtMoney(data.remises)}</p><p className="ga-stat-label">Remises accordées</p></div>
             </div>
           </div>
+
+          {/* ---- CA by day (2026-10-19) ---- */}
+          {daily && daily.mode !== "none" && (
+            <section className="od-card rp-card">
+              <div className="me-card-head">
+                <p className="admin-card-title">
+                  <CalendarDays className="h-4 w-4 rp-title-icon" /> Chiffre d&apos;affaires par {daily.mode === "day" ? "jour" : "semaine"}
+                </p>
+                {daily.best && (
+                  <span className="me-hint">
+                    Meilleur jour : {daily.best.title} ({fmtMoney(daily.best.ca)}) · {daily.activeDays} jour{daily.activeDays > 1 ? "s" : ""} avec ventes · moyenne{" "}
+                    {fmtMoney(daily.avgPerActiveDay)} par jour
+                  </span>
+                )}
+              </div>
+              {daily.points.every((p) => p.ca === 0) ? (
+                <p className="rl-muted">Aucune commande sur la période.</p>
+              ) : (
+                <div className="me-chart rp-daily" role="img" aria-label={`Chiffre d'affaires par ${daily.mode === "day" ? "jour" : "semaine"}`}>
+                  {daily.points.map((p) => (
+                    <div key={p.key} className="me-chart-col" title={`${p.title} : ${fmtMoney(p.ca)} · ${p.orders} commande${p.orders > 1 ? "s" : ""}`}>
+                      <div className="me-chart-track">
+                        <div className="me-chart-bar" style={{ height: `${p.ca > 0 ? Math.max(4, Math.round((p.ca / maxDaily) * 100)) : 0}%` }} />
+                      </div>
+                      <span className="me-chart-label">{p.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           {/* ---- CA by month ---- */}
           <section className="od-card rp-card">

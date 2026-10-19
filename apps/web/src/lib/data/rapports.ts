@@ -446,3 +446,126 @@ export async function loadLineRows(supabase: SupabaseClient, orgId: string, rang
     };
   });
 }
+
+/* ------------------------------------------------------------------ */
+/*  Chiffre d'affaires par jour (2026-10-19)                           */
+/* ------------------------------------------------------------------ */
+
+export type DayPoint = { key: string; label: string; title: string; ca: number; orders: number };
+export type DailyRevenue = {
+  /** One bar per day up to two months, per ISO week up to 400 days, nothing beyond. */
+  mode: "day" | "week" | "none";
+  points: DayPoint[];
+  /** Best single day of the period, whatever the mode. */
+  best: DayPoint | null;
+  /** Days with at least one sale. */
+  activeDays: number;
+  avgPerActiveDay: number;
+};
+
+const DAY_MS = 86_400_000;
+
+function utcOf(iso: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? ""));
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(t) ? null : t;
+}
+
+function utcYmd(t: number): string {
+  const d = new Date(t);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** ISO week of a UTC day: its Monday, its year-week key and its number. */
+function isoWeek(t: number): { monday: number; key: string; week: number } {
+  const dow = (new Date(t).getUTCDay() + 6) % 7; // Monday = 0
+  const monday = t - dow * DAY_MS;
+  const thursday = monday + 3 * DAY_MS;
+  const year = new Date(thursday).getUTCFullYear();
+  const jan4 = Date.UTC(year, 0, 4);
+  const week1Monday = jan4 - ((new Date(jan4).getUTCDay() + 6) % 7) * DAY_MS;
+  const week = 1 + Math.round((monday - week1Monday) / (7 * DAY_MS));
+  return { monday, key: `${year}-W${pad(week)}`, week };
+}
+
+const FR_DAY: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" };
+
+/**
+ * The sales rows of the period (report_sales_rows) bucketed per day, or per
+ * ISO week when the period is longer than two months. Cancelled orders are
+ * left out; empty days keep a zero bar so the chart has no holes.
+ */
+export function dailyRevenue(rows: CsvRow[], range: ReportRange): DailyRevenue {
+  const none: DailyRevenue = { mode: "none", points: [], best: null, activeDays: 0, avgPerActiveDay: 0 };
+  const start = utcOf(range.from);
+  const end = utcOf(range.to);
+  if (start === null || end === null || end < start) return none;
+  const span = Math.round((end - start) / DAY_MS) + 1;
+  if (span > 400) return none;
+  const mode: "day" | "week" = span > 62 ? "week" : "day";
+
+  const byDay = new Map<string, { ca: number; orders: number }>();
+  for (const r of rows) {
+    if (r.cancelled_at || r.cancelled === true) continue;
+    const t = utcOf(String(r.date_commande ?? ""));
+    if (t === null || t < start || t > end) continue;
+    const key = utcYmd(t);
+    const cur = byDay.get(key) ?? { ca: 0, orders: 0 };
+    cur.ca += toNumber(r.montant_total);
+    cur.orders += 1;
+    byDay.set(key, cur);
+  }
+
+  const points: DayPoint[] = [];
+  const index = new Map<string, DayPoint>();
+  for (let t = start; t <= end; t += DAY_MS) {
+    const dayKey = utcYmd(t);
+    const sales = byDay.get(dayKey);
+    if (mode === "day") {
+      const d = new Date(t);
+      const p = {
+        key: dayKey,
+        label: String(d.getUTCDate()),
+        title: d.toLocaleDateString("fr-FR", { ...FR_DAY, year: "numeric" }),
+        ca: sales?.ca ?? 0,
+        orders: sales?.orders ?? 0,
+      };
+      points.push(p);
+      index.set(dayKey, p);
+    } else {
+      const w = isoWeek(t);
+      let p = index.get(w.key);
+      if (!p) {
+        const monday = new Date(w.monday);
+        const sunday = new Date(w.monday + 6 * DAY_MS);
+        p = {
+          key: w.key,
+          label: `S${w.week}`,
+          title: `Semaine ${w.week} · du ${monday.toLocaleDateString("fr-FR", FR_DAY)} au ${sunday.toLocaleDateString("fr-FR", { ...FR_DAY, year: "numeric" })}`,
+          ca: 0,
+          orders: 0,
+        };
+        points.push(p);
+        index.set(w.key, p);
+      }
+      p.ca += sales?.ca ?? 0;
+      p.orders += sales?.orders ?? 0;
+    }
+  }
+  for (const p of points) p.ca = Math.round(p.ca * 100) / 100;
+
+  let best: DayPoint | null = null;
+  let activeDays = 0;
+  let total = 0;
+  for (const [key, s] of byDay) {
+    if (s.orders === 0) continue;
+    activeDays += 1;
+    total += s.ca;
+    if (!best || s.ca > best.ca) {
+      const t = utcOf(key) as number;
+      best = { key, label: String(new Date(t).getUTCDate()), title: new Date(t).toLocaleDateString("fr-FR", { ...FR_DAY, year: "numeric" }), ca: Math.round(s.ca * 100) / 100, orders: s.orders };
+    }
+  }
+  return { mode, points, best, activeDays, avgPerActiveDay: activeDays > 0 ? Math.round((total / activeDays) * 100) / 100 : 0 };
+}
