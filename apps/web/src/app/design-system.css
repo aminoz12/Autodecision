@@ -1640,3 +1640,12 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 .rp-daily .me-chart-col { min-width: 14px; }
 .rp-card .me-card-head { margin-bottom: 8px; }
 .rp-card .me-card-head .admin-card-title { margin: 0; }
+
+/* ==================================================================
+   ESPACE LIVREUR — garages prêts au comptoir, « Je prends cette
+   livraison » (2026-10-19).
+   ================================================================== */
+.lp-section--take { color: var(--clr-primary); }
+.lp-card--take { border-color: var(--clr-primary-border, #C7C4FF); }
+.lp-stop--take { background: var(--clr-primary-soft); color: var(--clr-primary); }
+.lp-take { width: 100%; justify-content: center; }

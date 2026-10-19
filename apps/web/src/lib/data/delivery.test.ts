@@ -26,6 +26,8 @@ function stop(p: Partial<TourStop> & { id: string }): TourStop {
     failedReason: null,
     attempts: 0,
     note: null,
+    ready: false,
+    livreurId: null,
     pieces: [],
     ...p,
   };

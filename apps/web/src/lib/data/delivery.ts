@@ -37,6 +37,9 @@ export type TourStop = {
   failedReason: string | null;
   attempts: number;
   note: string | null;
+  /** Garage order complete at the counter, not yet out: any livreur can take it (2026-10-19). */
+  ready: boolean;
+  livreurId: string | null;
   pieces: TourPiece[];
 };
 
@@ -139,6 +142,8 @@ export function parseTourStops(json: unknown): TourStop[] {
         failedReason: text(r.failed_reason),
         attempts: count(r.attempts),
         note: text(r.note),
+        ready: r.ready === true,
+        livreurId: text(r.livreur_id),
         pieces: pieces.map((p) => {
           const x = (p ?? {}) as Record<string, unknown>;
           return {
@@ -167,6 +172,8 @@ function sameDay(v: string | null, now: Date): boolean {
 export type TourSections = {
   /** In delivery, departure slot first (no slot last). */
   toDeliver: TourStop[];
+  /** Garage orders ready at the counter, free for a livreur to take. */
+  toTake: TourStop[];
   /** Reported « non livrée » today, latest first. */
   failedToday: TourStop[];
   /** Delivered today, latest first. */
@@ -185,6 +192,9 @@ export function splitTour(stops: TourStop[], now: Date = new Date()): TourSectio
         if (ta !== tb) return ta === null ? 1 : tb === null ? -1 : ta - tb;
         return a.ref.localeCompare(b.ref);
       }),
+    toTake: stops
+      .filter((s) => s.ready && s.workflow !== "IN_TRANSIT" && s.workflow !== "DELIVERED")
+      .sort((a, b) => a.ref.localeCompare(b.ref)),
     failedToday: stops
       .filter((s) => s.workflow !== "IN_TRANSIT" && s.workflow !== "DELIVERED" && sameDay(s.failedAt, now))
       .sort(latestFirst((s) => s.failedAt)),
@@ -209,6 +219,8 @@ function directRowToStop(raw: unknown): TourStop {
     city: text(client?.city),
     isGarage: client?.is_garage === true,
     workflow: String(row.workflow_status ?? ""),
+    ready: false,
+    livreurId: text(row.livreur_id),
     dateEnvoi: text(row.date_envoi),
     deliveredAt: text(row.delivered_at),
     failedAt: text(row.delivery_failed_at),
@@ -367,4 +379,10 @@ export async function compressImage(file: File): Promise<File> {
   } catch {
     return file;
   }
+}
+
+/** A livreur takes a garage order that is ready at the counter: it joins their deliveries (livreur_take_order). */
+export async function takeOrder(supabase: SupabaseClient, orderId: string): Promise<void> {
+  const { error } = await supabase.rpc("livreur_take_order", { p_order_id: orderId });
+  if (error) throw new Error(error.message);
 }

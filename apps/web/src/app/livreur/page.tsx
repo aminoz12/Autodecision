@@ -57,6 +57,7 @@ import {
   mapsLink,
   reportDeliveryFailure,
   splitTour,
+  takeOrder,
   uploadProofOfDelivery,
   type TourStop,
 } from "@/lib/data/delivery";
@@ -309,7 +310,7 @@ export default function LivreurPage() {
     };
   }, [supabase, userId, isLivreur, refresh, refreshPickups]);
 
-  const { toDeliver, failedToday, deliveredToday } = useMemo(() => splitTour(stops, today), [stops, today]);
+  const { toDeliver, toTake, failedToday, deliveredToday } = useMemo(() => splitTour(stops, today), [stops, today]);
   const queued = useMemo(
     () => new Map(outbox.filter((i) => i.kind === "deliver" || i.kind === "fail").map((i) => [i.orderId, i.kind] as const)),
     [outbox],
@@ -578,6 +579,26 @@ export default function LivreurPage() {
     }
   };
 
+  /* ---- Garage prête au comptoir : « Je prends cette livraison » (2026-10-19) ---- */
+  const [taking, setTaking] = useState<string | null>(null);
+  const takeStop = async (s: TourStop) => {
+    if (!navigator.onLine) {
+      setError("Pas de réseau : réessayez dès que le téléphone capte.");
+      return;
+    }
+    setTaking(s.id);
+    setError(null);
+    try {
+      await takeOrder(supabase, s.id);
+      setNotice(`${s.ref} : livraison prise, elle est dans votre liste « À livrer ».`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTaking(null);
+    }
+  };
+
   /* ---- Non livrée ---- */
   const [fail, setFail] = useState<TourStop | null>(null);
   const [failReason, setFailReason] = useState<string>(DELIVERY_FAILURE_REASONS[0]);
@@ -712,7 +733,7 @@ export default function LivreurPage() {
         >
           <Truck className="h-5 w-5" />
           Livraisons
-          {toDeliver.length > 0 && <span className="lp-count">{toDeliver.length}</span>}
+          {toDeliver.length + toTake.length > 0 && <span className="lp-count">{toDeliver.length + toTake.length}</span>}
         </button>
         <button
           type="button"
@@ -795,11 +816,69 @@ export default function LivreurPage() {
           </div>
         )}
 
-        {syncedAt !== null && toDeliver.length === 0 && (
+        {syncedAt !== null && toDeliver.length === 0 && toTake.length === 0 && (
           <div className="lp-empty">
             <CheckCircle2 className="h-8 w-8" />
             <p>Aucune livraison en attente. 👍</p>
           </div>
+        )}
+
+        {toTake.length > 0 && (
+          <>
+            <p className="lp-section lp-section--take">
+              Garages prêts au comptoir <span className="lp-count">{toTake.length}</span>
+            </p>
+            {toTake.map((s) => {
+              const link = mapsLink(s.address, s.city);
+              return (
+                <article key={`take-${s.id}`} className="lp-card lp-card--take">
+                  <div className="lp-card-head">
+                    <span className="lp-stop lp-stop--take"><Package className="h-4 w-4" /></span>
+                    <div>
+                      <p className="lp-client">
+                        {s.client} <span className="lp-tag">Garage</span>
+                      </p>
+                      <p className="lp-meta">
+                        {s.ref} · {pieceCount(s)} pièce(s) prête(s)
+                        {s.attempts > 0 ? ` · ${s.attempts} passage(s) sans remise` : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="lp-address">
+                    <MapPin className="h-4 w-4" />
+                    <span>
+                      {s.address ? <strong>{s.address}</strong> : <em>Adresse non renseignée : voyez avec le comptoir</em>}
+                      {s.city ? <> · {s.city}</> : null}
+                    </span>
+                  </div>
+                  <div className="lp-contact">
+                    {s.phone && (
+                      <a href={`tel:${s.phone.replace(/\s/g, "")}`} className="lp-call">
+                        <Phone className="h-4 w-4" />
+                        Appeler
+                      </a>
+                    )}
+                    {link && (
+                      <a href={link} target="_blank" rel="noreferrer" className="lp-call lp-call--nav">
+                        <Navigation className="h-4 w-4" />
+                        Itinéraire
+                      </a>
+                    )}
+                  </div>
+                  <div className="lp-actions">
+                    <button type="button" className="lp-deliver lp-take" disabled={busy || taking !== null || !online} onClick={() => void takeStop(s)}>
+                      {taking === s.id ? <Loader2 className="h-5 w-5 nc-spin" /> : <Truck className="h-5 w-5" />} Je prends cette livraison
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+            {toDeliver.length > 0 && (
+              <p className="lp-section">
+                Mes livraisons <span className="lp-count">{toDeliver.length}</span>
+              </p>
+            )}
+          </>
         )}
 
         {toDeliver.map((s, idx) => {
