@@ -20,6 +20,7 @@ import { Toast } from "@/components/ui/Toast";
 import { fmtMoney } from "@/lib/data/saas";
 import { presetRange, type ReportRange } from "@/lib/data/rapports";
 import { loadCounterStats, ordinalFr, pctChange, periodLabel, type CounterStats, type PeriodPreset } from "@/lib/data/espace";
+import { FEATURES } from "@/lib/features";
 import { createClient } from "@/lib/supabase/client";
 
 const PRESETS: PeriodPreset[] = ["month", "last_month", "30d", "year"];
@@ -85,9 +86,13 @@ export default function MonEspacePage() {
   const supabase = useMemo(() => createClient(), []);
   // An administrator has no sales or congés of their own: their board is in the admin space.
   const isAdmin = !!profile && profile.role === "ADMIN" && !profile.client_id;
+  // Hidden for caissiers until the launch (FEATURES.monEspace).
+  const hidden = !isAdmin && !FEATURES.monEspace;
   useEffect(() => {
-    if (ready && isAdmin) router.replace("/admin?tab=stats");
-  }, [ready, isAdmin, router]);
+    if (!ready) return;
+    if (isAdmin) router.replace("/admin?tab=stats");
+    else if (hidden) router.replace("/dashboard");
+  }, [ready, isAdmin, hidden, router]);
   const [preset, setPreset] = useState<PeriodPreset>("month");
   const range = useMemo<ReportRange>(() => presetRange(preset === "7d" ? "30d" : preset), [preset]);
   const [stats, setStats] = useState<CounterStats | null>(null);
@@ -108,9 +113,9 @@ export default function MonEspacePage() {
   }, [supabase, range]);
 
   useEffect(() => {
-    if (!ready || !profile || isAdmin) return;
+    if (!ready || !profile || isAdmin || hidden) return;
     void load();
-  }, [ready, profile, isAdmin, load]);
+  }, [ready, profile, isAdmin, hidden, load]);
 
   const bars = useMemo(() => (stats ? buildBars(range, stats.days) : []), [stats, range]);
   const maxBar = useMemo(() => Math.max(1, ...bars.map((b) => b.ca)), [bars]);
@@ -119,10 +124,16 @@ export default function MonEspacePage() {
   const vs = periodLabel(preset).vs;
   const firstName = profile?.display_name?.trim().split(/\s+/)[0] ?? "";
 
-  if (isAdmin) {
+  if (isAdmin || hidden) {
     return (
       <div className="rl-page">
-        <div className="od-card rc-empty"><p>Votre espace d&apos;administrateur (stats équipe, congés) se trouve dans Équipe &amp; accès. Redirection…</p></div>
+        <div className="od-card rc-empty">
+          <p>
+            {isAdmin
+              ? "Votre espace d'administrateur (stats équipe, congés) se trouve dans Équipe & accès. Redirection…"
+              : "Cette page arrive bientôt. Redirection…"}
+          </p>
+        </div>
       </div>
     );
   }

@@ -76,6 +76,7 @@ import {
   type FlushReport,
   type OutboxItem,
 } from "@/lib/data/delivery-outbox";
+import { FEATURES } from "@/lib/features";
 import { homeSpace } from "@/lib/spaces";
 
 /** Background refresh while the app is in front (new assignments also arrive by Realtime). */
@@ -158,7 +159,7 @@ export default function LivreurPage() {
   const [tab, setTab] = useState<"tournee" | "livraisons" | "retours" | "espace">("tournee");
   // A notification link (« Congé validé ») opens the page on « Mon espace » directly.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "espace") setTab("espace");
+    if (FEATURES.monEspace && new URLSearchParams(window.location.search).get("tab") === "espace") setTab("espace");
   }, []);
   const [pickupDay, setPickupDay] = useState(() => parisDate());
   const [pickups, setPickups] = useState<SupplierTourBoard | null>(null);
@@ -712,7 +713,7 @@ export default function LivreurPage() {
       <Toast message={notice} onClose={() => setNotice(null)} />
       <ChangePasswordDialog open={pwdOpen} onClose={() => setPwdOpen(false)} onDone={setNotice} />
 
-      <div className="lpt-tabs lpt-tabs--4" role="tablist">
+      <div className={`lpt-tabs lpt-tabs--${FEATURES.monEspace ? 4 : 3}`} role="tablist">
         <button
           type="button"
           role="tab"
@@ -746,19 +747,21 @@ export default function LivreurPage() {
           Retours
           {returnsLeft > 0 && <span className="lp-count">{returnsLeft}</span>}
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "espace"}
-          className={`lpt-tab${tab === "espace" ? " lpt-tab--on" : ""}`}
-          onClick={() => setTab("espace")}
-        >
-          <UserRound className="h-5 w-5" />
-          Mon espace
-        </button>
+        {FEATURES.monEspace && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "espace"}
+            className={`lpt-tab${tab === "espace" ? " lpt-tab--on" : ""}`}
+            onClick={() => setTab("espace")}
+          >
+            <UserRound className="h-5 w-5" />
+            Mon espace
+          </button>
+        )}
       </div>
 
-      {tab === "espace" && (
+      {FEATURES.monEspace && tab === "espace" && (
         <main className="lp-main">
           <EspaceTab online={online} onNotice={setNotice} />
         </main>

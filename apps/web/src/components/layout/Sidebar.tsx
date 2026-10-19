@@ -35,6 +35,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { countByDestination, useNotifications } from "@/components/providers/NotificationsProvider";
 import { countRestockAlerts, RESTOCK_COUNT_EVENT } from "@/lib/data/saas";
+import { FEATURES } from "@/lib/features";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -128,9 +129,13 @@ export function Sidebar() {
   const collapsed = useSyncExternalStore(subscribeSidebarState, readSidebarState, () => false);
   const feed = useNotifications();
   const groups = useMemo<NavGroup[]>(
-    // The administrator has no sales or congés of their own: « Mon espace » is the caissier's;
-    // the admin's team board and the congés live in « Équipe & accès ».
-    () => (profile?.role === "ADMIN" && !profile.client_id ? [...navGroups.filter((g) => g.label !== "Mon espace"), adminGroup] : navGroups),
+    // « Mon espace » (stats & congés) is hidden until its launch (FEATURES.monEspace); the
+    // administrator never sees it anyway — their team board and the congés live in « Équipe & accès ».
+    () => {
+      const isAdmin = profile?.role === "ADMIN" && !profile.client_id;
+      const groups = FEATURES.monEspace && !isAdmin ? navGroups : navGroups.filter((g) => g.label !== "Mon espace");
+      return isAdmin ? [...groups, adminGroup] : groups;
+    },
     [profile?.role, profile?.client_id],
   );
   /** Unread notifications per destination, shown as a counter next to the label. */
