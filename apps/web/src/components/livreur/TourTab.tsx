@@ -12,6 +12,7 @@ import {
   Play,
   RotateCcw,
   Store,
+  Truck,
   UserRound,
   Warehouse,
   Wrench,
@@ -22,6 +23,7 @@ import {
   departureText,
   fmtHour,
   focusSlot,
+  deliveryTag,
   KIND_LABEL,
   nextDayWord,
   nextStandardTour,
@@ -349,6 +351,7 @@ export function TourTab({
                       <PartRow
                         key={l.id}
                         line={l}
+                        livreurId={livreurId}
                         queued={queuedLines.has(l.id)}
                         deferring={deferring.has(l.id)}
                         canDefer={online && isToday}
@@ -371,6 +374,7 @@ export function TourTab({
 
 function PartRow({
   line,
+  livreurId,
   queued,
   deferring,
   canDefer,
@@ -379,6 +383,7 @@ function PartRow({
   onDefer,
 }: {
   line: TourLine;
+  livreurId: string | null;
   queued: boolean;
   deferring: boolean;
   canDefer: boolean;
@@ -389,8 +394,11 @@ function PartRow({
   const state = pickupState(line);
   const unavailable = line.pickupStatus === "UNAVAILABLE";
   const Icon = line.kind ? KIND_ICON[line.kind] : null;
+  // The order already left with a livreur (« Livraison » ticked at the counter):
+  // the part goes straight to the garage, not back to the shop.
+  const delivery = deliveryTag(line, livreurId);
   return (
-    <article className={`lv-part lv-part--${state}`}>
+    <article className={`lv-part lv-part--${state}${delivery ? " lv-part--deliver" : ""}`}>
       <button
         type="button"
         role="checkbox"
@@ -418,6 +426,12 @@ function PartRow({
             <span className={`lv-badge lv-badge--${line.kind}`}>
               <Icon />
               {KIND_LABEL[line.kind]}
+            </span>
+          )}
+          {delivery && (
+            <span className="lv-badge lv-badge--deliver" title="Commande déjà partie en livraison : la pièce va directement au garage">
+              <Truck />
+              {delivery}
             </span>
           )}
           {queued && <CloudOff className="lv-queued" aria-label="En attente de réseau" />}

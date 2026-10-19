@@ -33,6 +33,7 @@ import { createClient } from "@/lib/supabase/client";
 import { loadLivreurs, type Livreur } from "@/lib/data/livreurs";
 import { loadSupplierOptions, type SupplierOption } from "@/lib/data/saas";
 import {
+  deliveryTag,
   addDays,
   buildTourGrid,
   changeLineSupplier,
@@ -149,6 +150,8 @@ function PartChip({
   const picked = state === "picked";
   // The supplier's own reference, when it is not simply the part reference again.
   const supplierRef = line.referenceCommande && line.referenceCommande !== line.reference ? line.referenceCommande : null;
+  // Already out with a livreur (« Livraison » ticked): the livreur brings it to the garage.
+  const delivery = deliveryTag(line, null);
   return (
     <span className={`tf-chip tf-chip--${state}`} style={{ "--vc": color } as CSSProperties}>
       <button
@@ -167,7 +170,7 @@ function PartChip({
         type="button"
         className="tf-ref"
         onClick={() => onOpen(line)}
-        title={`${line.designation} — ${PICKUP_STATE_LABEL[state]}${supplierRef ? ` — réf. fournisseur ${supplierRef}` : ""}`}
+        title={`${line.designation} — ${PICKUP_STATE_LABEL[state]}${supplierRef ? ` — réf. fournisseur ${supplierRef}` : ""}${line.deliveryLivreur ? ` — en livraison par ${line.deliveryLivreur}` : ""}`}
       >
         {/* The strike-through of a picked / unavailable part stays on its reference: the supplier ref must stay readable. */}
         <span className="tf-ref-main">
@@ -175,6 +178,7 @@ function PartChip({
           {line.quantity > 1 && <em>×{line.quantity}</em>}
         </span>
         {supplierRef && <small className="tf-ref-sup">réf. {supplierRef}</small>}
+        {delivery && <small className="tf-deliver">{delivery}</small>}
       </button>
     </span>
   );
@@ -1207,6 +1211,16 @@ export default function TourneesPage() {
                         <dt>Client</dt>
                         <dd>{openLine.client ?? "—"}</dd>
                       </div>
+                      {openLine.deliveryLivreurId && (
+                        <div>
+                          <dt>Livraison</dt>
+                          <dd>
+                            <span className="tf-deliver tf-deliver--lg">
+                              <Truck className="h-3.5 w-3.5" /> Déjà partie en livraison{openLine.deliveryLivreur ? ` — ${openLine.deliveryLivreur}` : ""}
+                            </span>
+                          </dd>
+                        </div>
+                      )}
                       <div>
                         <dt>État</dt>
                         <dd>

@@ -120,7 +120,30 @@ export type TourLine = {
   kind: PartKind | null;
   /** Counter staff only — never sent to a livreur. */
   client: string | null;
+  /**
+   * The order already left for delivery with this livreur (« Livraison »
+   * ticked when the order was created, or sent from « Commande à livrer »):
+   * once picked up, the part goes to the garage, not back to the shop.
+   * Null when the order is not out for delivery, or on a database RPC that
+   * predates the field.
+   */
+  deliveryLivreurId: string | null;
+  deliveryLivreur: string | null;
 };
+
+/**
+ * Red « Livraison » tag on a part whose order is already out with a livreur:
+ * « Livraison » when it is this livreur's own delivery (or nobody is logged in
+ * as a livreur: the counter), « Livraison · Rachid » when a colleague has it.
+ */
+export function deliveryTag(
+  line: Pick<TourLine, "deliveryLivreurId" | "deliveryLivreur">,
+  livreurId: string | null,
+): string | null {
+  if (!line.deliveryLivreurId) return null;
+  if (!livreurId || line.deliveryLivreurId === livreurId || !line.deliveryLivreur) return "Livraison";
+  return `Livraison · ${line.deliveryLivreur}`;
+}
 
 /** The crate a picked part goes to: a garage order, a counter client, or the stock. */
 export type PartKind = "GARAGE" | "COMPTOIR" | "STOCK";
@@ -292,6 +315,8 @@ export function parseSupplierTourBoard(json: unknown): SupplierTourBoard {
           isRestock: l.is_restock === true,
           kind: parseKind(l.kind),
           client: text(l.client),
+          deliveryLivreurId: text(l.delivery_livreur_id),
+          deliveryLivreur: text(l.delivery_livreur),
         };
       })
       .filter((l) => l.id && l.tourId && l.supplierId),

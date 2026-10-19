@@ -25,6 +25,7 @@ import {
   parisDate,
   parisDateTime,
   overviewCellKind,
+  deliveryTag,
   parseSupplierTourBoard,
   pickupState,
   returnStats,
@@ -73,6 +74,8 @@ function line(p: Partial<TourLine> & { id: string }): TourLine {
     isRestock: false,
     kind: null,
     client: null,
+    deliveryLivreurId: null,
+    deliveryLivreur: null,
     ...p,
   };
 }
@@ -113,6 +116,7 @@ describe("parseSupplierTourBoard", () => {
     expect(board.lines.map((l) => l.id)).toEqual(["l1", "l2"]);
     expect(board.lines[0]).toMatchObject({ reference: "K1125", quantity: 2, pickupStatus: "PICKED_UP", supplier: "AZ" });
     expect(board.lines[1].pickupStatus).toBeNull();
+    expect(board.lines[0]).toMatchObject({ deliveryLivreurId: null, deliveryLivreur: null });
     expect(board.defaults).toEqual({ "Tournée 1": { livreurId: "lv1", livreurName: "Rachid" } });
     expect(parseSupplierTourBoard(null)).toEqual({ date: "", tours: [], lines: [], defaults: {}, upcoming: [], returns: [], schedule: DEFAULT_TOUR_SCHEDULE });
   });
@@ -526,5 +530,33 @@ describe("reporter la tournée (comptoir)", () => {
     expect(r).toMatchObject({ tourId: "t2", tourName: "Tournée 2", tourDate: "2026-10-20", tourSlot: "13:00", previousTourName: "Tournée 4" });
     expect(tourMoveLabel("GDB1322", r, "2026-10-19")).toBe("GDB1322 reportée sur Tournée 2 · 13h00 demain (était Tournée 4 aujourd'hui)");
     expect(tourMoveLabel("GDB1322", { ...r, previousTourDate: "2026-10-20" }, "2026-10-19")).toBe("GDB1322 reportée sur Tournée 2 · 13h00 demain (était Tournée 4)");
+  });
+});
+
+describe("étiquette « Livraison » (commande déjà partie avec un livreur)", () => {
+  it("reads the dispatched livreur from the RPC JSON", () => {
+    const board = parseSupplierTourBoard({
+      date: "2026-10-19",
+      tours: [{ id: "t1", name: "Tournée 1", slot: "10:00" }],
+      lines: [
+        { id: "l1", tour_id: "t1", order_id: "o1", supplier_id: "s1", supplier: "AZ", reference: "A", kind: "GARAGE", delivery_livreur_id: "lv1", delivery_livreur: "Rachid" },
+        { id: "l2", tour_id: "t1", order_id: "o2", supplier_id: "s1", supplier: "AZ", reference: "B", kind: "GARAGE", delivery_livreur_id: null, delivery_livreur: null },
+      ],
+    });
+    expect(board.lines.map((l) => [l.deliveryLivreurId, l.deliveryLivreur])).toEqual([
+      ["lv1", "Rachid"],
+      [null, null],
+    ]);
+  });
+
+  it("labels the part for the livreur who has the delivery, and names a colleague otherwise", () => {
+    const mine = line({ id: "A", kind: "GARAGE", deliveryLivreurId: "lv1", deliveryLivreur: "Rachid" });
+    expect(deliveryTag(mine, "lv1")).toBe("Livraison");
+    expect(deliveryTag(mine, "lv2")).toBe("Livraison · Rachid");
+    // The counter (no livreur logged in) just sees that the part is already in delivery.
+    expect(deliveryTag(mine, null)).toBe("Livraison");
+    expect(deliveryTag(line({ id: "B", kind: "GARAGE" }), "lv1")).toBeNull();
+    // Dispatched to a livreur whose name is unknown: the plain tag, nothing broken.
+    expect(deliveryTag(line({ id: "C", deliveryLivreurId: "lv9", deliveryLivreur: null }), "lv1")).toBe("Livraison");
   });
 });
