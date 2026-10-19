@@ -39,6 +39,8 @@ import {
   type DevisLineResponse,
   type DevisRequest,
 } from "@/lib/data/garage";
+import { PhoneHint } from "@/components/ui/PhoneHint";
+import { phoneEntryError } from "@/lib/sms";
 
 function frDate(v: string | null) {
   if (!v) return "—";
@@ -179,6 +181,11 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
     // A garage is delivered: its address is needed. A client PRO collects at the counter.
     if (kind === "GARAGE" && (!form.address.trim() || !form.city.trim())) {
       setFormError("L'adresse de livraison et la ville sont obligatoires : le livreur en a besoin pour son itinéraire.");
+      return;
+    }
+    const phoneProblem = phoneEntryError(form.phone, { mobile: false });
+    if (phoneProblem) {
+      setFormError(phoneProblem);
       return;
     }
     setSaving(true);
@@ -338,6 +345,7 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
                 <div className="od-field">
                   <span className="od-label">Téléphone</span>
                   <input className="od-input" placeholder="01 23 45 67 89" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+                  <PhoneHint value={form.phone} mobile={false} />
                 </div>
                 <div className="od-field">
                   <span className="od-label">Ville{kind === "GARAGE" ? " *" : ""}</span>

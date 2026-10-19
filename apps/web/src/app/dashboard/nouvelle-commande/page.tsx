@@ -48,6 +48,7 @@ import { clampMoney, eur, netUnit, receptionChoices, REGLEMENT_LABEL, todayISO, 
 import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { phoneEntryError } from "@/lib/sms";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -647,6 +648,12 @@ export default function NouvelleCommandePage() {
       );
       return;
     }
+    // A number that cannot receive the « commande prête » SMS never enters an order.
+    const phoneProblem = phoneEntryError(clientPhone, { mobile: destineA === "COMPTOIR" });
+    if (phoneProblem) {
+      setError(phoneProblem);
+      return;
+    }
     if (validLines.length === 0) {
       setError(
         "Ajoutez au moins une pièce avec une désignation et une référence.",
@@ -1125,7 +1132,7 @@ export default function NouvelleCommandePage() {
               value={clientPhone}
               onChange={(e) => setClientPhone(e.target.value)}
             />
-            <PhoneHint value={clientPhone} />
+            <PhoneHint value={clientPhone} mobile={destineA === "COMPTOIR"} />
           </div>
           <div className="od-field">
             <span className="od-label">Email</span>

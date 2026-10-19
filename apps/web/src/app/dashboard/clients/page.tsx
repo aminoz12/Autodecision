@@ -28,6 +28,7 @@ import {
   type ClientSummary,
 } from "@/lib/data/clients";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { phoneEntryError } from "@/lib/sms";
 
 function frDate(v: string | null): string {
   if (!v) return "—";
@@ -127,6 +128,11 @@ export default function ClientsParticuliersPage() {
   async function submitNew(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId) return;
+    const phoneProblem = phoneEntryError(form.phone, { mobile: true });
+    if (phoneProblem) {
+      setFormError(phoneProblem);
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {

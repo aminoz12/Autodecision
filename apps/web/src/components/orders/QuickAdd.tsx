@@ -38,6 +38,7 @@ import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { phoneEntryError } from "@/lib/sms";
 
 /*
  * « Rajout rapide » of the Nouvelle commande page: several parts typed in a
@@ -120,7 +121,11 @@ export function useQuickAdd({
       .map((r, i) => {
         if (!isQuickRowFilled(r)) return null;
         const missing = quickRowProblem(r);
-        return missing ? `Pièce ${i + 1} : indiquez ${missing}.` : null;
+        if (missing) return `Pièce ${i + 1} : indiquez ${missing}.`;
+        // A walk-in client's number must be a mobile (SMS « commande prête »).
+        const walkIn = r.pourQui === "COMPTOIR";
+        const phone = walkIn ? phoneEntryError(r.clientPhone, { mobile: true }) : null;
+        return phone ? `Pièce ${i + 1} : ${phone}` : null;
       })
       .filter(Boolean);
     if (problems.length > 0) {

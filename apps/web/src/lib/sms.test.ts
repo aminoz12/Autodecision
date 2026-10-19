@@ -3,6 +3,7 @@ import {
   SMS_DEFAULT_HORAIRES,
   buildClientSms,
   formatE164,
+  phoneEntryError,
   renderSmsTemplate,
   smsPhoneCheck,
   smsSize,
@@ -69,6 +70,23 @@ describe("smsPhoneCheck", () => {
   it("checks foreign numbers on shape only", () => {
     expect(smsPhoneCheck("+212612345678")).toEqual({ ok: true, e164: "+212612345678" });
     expect(smsPhoneCheck("0612345678", "212")).toEqual({ ok: true, e164: "+212612345678" });
+  });
+});
+
+describe("phoneEntryError", () => {
+  it("lets a mobile, an empty field or the « - » placeholder through", () => {
+    expect(phoneEntryError("06 12 34 56 78", { mobile: true })).toBeNull();
+    expect(phoneEntryError("", { mobile: true })).toBeNull();
+    expect(phoneEntryError("-", { mobile: true })).toBeNull();
+    expect(phoneEntryError(null, { mobile: false })).toBeNull();
+  });
+  it("blocks a malformed number for everyone", () => {
+    expect(phoneEntryError("06 05 12 34", { mobile: true })).toMatch(/10 chiffres/);
+    expect(phoneEntryError("06 05 12 34", { mobile: false })).toMatch(/10 chiffres/);
+  });
+  it("blocks a landline for a walk-in client only", () => {
+    expect(phoneEntryError("01 47 85 12 34", { mobile: true })).toMatch(/Numéro fixe/);
+    expect(phoneEntryError("01 47 85 12 34", { mobile: false })).toBeNull();
   });
 });
 

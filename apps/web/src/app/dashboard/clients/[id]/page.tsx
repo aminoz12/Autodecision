@@ -43,6 +43,7 @@ import {
   type ClientProfile,
 } from "@/lib/data/clients";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { phoneEntryError } from "@/lib/sms";
 
 function frDate(v: string | null): string {
   if (!v) return "—";
@@ -151,6 +152,11 @@ export default function ClientProfilePage() {
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
     if (!orgId || !client) return;
+    const phoneProblem = phoneEntryError(form.phone, { mobile: true });
+    if (phoneProblem) {
+      setError(phoneProblem);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {

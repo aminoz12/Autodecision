@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pageAll } from "./paging";
+import { phoneEntryError } from "@/lib/sms";
 
 type Embedded<T> = T | T[] | null | undefined;
 
@@ -225,6 +226,9 @@ export async function createClientRecord(
     vehicleModel?: string;
   },
 ): Promise<ClientOption> {
+  // A walk-in client is reached by SMS: a mobile or nothing (rule of 2026-10-19).
+  const phoneProblem = phoneEntryError(input.phone, { mobile: true });
+  if (phoneProblem) throw new Error(phoneProblem);
   const { data, error } = await supabase
     .from("clients")
     .insert({
@@ -782,6 +786,9 @@ export async function createGarage(
     kind?: AccountKind;
   },
 ): Promise<string> {
+  // A professional account may have a landline; the number must still be a real one.
+  const phoneProblem = phoneEntryError(input.phone, { mobile: false });
+  if (phoneProblem) throw new Error(phoneProblem);
   const { data, error } = await supabase.from("clients").insert({
     organization_id: orgId,
     name: input.name.trim(),

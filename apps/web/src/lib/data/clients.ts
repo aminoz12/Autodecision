@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pageAll } from "./paging";
 import { toNumber } from "@/lib/data/saas";
+import { phoneEntryError } from "@/lib/sms";
 
 /* ------------------------------------------------------------------ */
 /*  Clients particuliers — walk-in customers (is_garage = false) with  */
@@ -194,6 +195,9 @@ export async function createParticulierClient(
   input: ClientInput,
 ): Promise<string> {
   if (!input.name.trim()) throw new Error("Le nom du client est obligatoire.");
+  // A particulier is reached by SMS: a mobile or nothing (rule of 2026-10-19).
+  const phoneProblem = phoneEntryError(input.phone, { mobile: true });
+  if (phoneProblem) throw new Error(phoneProblem);
   const { data, error } = await supabase
     .from("clients")
     .insert({ organization_id: orgId, is_garage: false, is_professional: false, ...toRow(input) })
@@ -209,6 +213,8 @@ export async function updateParticulierClient(
   id: string,
   patch: Partial<ClientInput>,
 ): Promise<void> {
+  const phoneProblem = patch.phone === undefined ? null : phoneEntryError(patch.phone, { mobile: true });
+  if (phoneProblem) throw new Error(phoneProblem);
   const { error } = await supabase
     .from("clients")
     .update({ ...toRow(patch), updated_at: new Date().toISOString() })

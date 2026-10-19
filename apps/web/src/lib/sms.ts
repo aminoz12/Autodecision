@@ -210,6 +210,28 @@ export function smsPhoneCheck(raw: string | null | undefined, defaultCountryCode
   return { ok: true, e164 };
 }
 
+/**
+ * The rule every entry form and data-layer writer applies BEFORE a phone
+ * number is saved (user, 2026-10-19, after two unreachable numbers reached
+ * Twilio: « add a condition so we won't face bad phone numbers »):
+ *   - a number that is given must be well-formed (10 digits for France);
+ *   - a walk-in client's number must be a mobile — it is how the magasin
+ *     reaches them for « commande prête »; a garage / client PRO may keep a
+ *     landline (`mobile: false`).
+ * Empty is the caller's business (required or not). Returns the message to
+ * show, or null when the number may be saved.
+ */
+export function phoneEntryError(raw: string | null | undefined, opts: { mobile: boolean }): string | null {
+  const check = smsPhoneCheck(raw);
+  if (check.ok || check.reason === "EMPTY") return null;
+  if (check.reason === "INVALID") {
+    return "Numéro de téléphone incomplet ou invalide : 10 chiffres attendus (ex. 06 12 34 56 78).";
+  }
+  return opts.mobile
+    ? "Numéro fixe : saisissez le mobile du client (06 ou 07), c'est lui qui recevra le SMS « commande prête »."
+    : null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  The message itself                                                */
 /* ------------------------------------------------------------------ */
