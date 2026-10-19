@@ -3,6 +3,7 @@
 import {
   ArrowRightLeft,
   Ban,
+  CalendarClock,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -44,6 +45,7 @@ import {
   focusSlot,
   loadSupplierTourBoard,
   loadTeamOrder,
+  moveLineToTour,
   normalizeReferenceCommande,
   parisDate,
   pct,
@@ -58,6 +60,8 @@ import {
   slotLabel,
   supplierChangeLabel,
   supplierStops,
+  tourMoveChoices,
+  tourMoveLabel,
   TOUR_STATUS_LABEL,
   tourColor,
   tourStats,
@@ -67,6 +71,7 @@ import {
   type PickupState,
   type PickupStatus,
   type SupplierTourBoard,
+  type TourChoice,
   type TourLine,
   type TourStatus,
 } from "@/lib/data/tournees";
@@ -262,6 +267,70 @@ function SupplierChange({
           Changer de fournisseur
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * « Reporter la tournée » in the line modal (2026-10-19): the part moves to
+ * another tournée of the counter's choice — the next one by default, or any
+ * departure over the coming days. Folded behind a button, like the supplier
+ * change; keyed by the line from the modal.
+ */
+function TourMove({
+  choices,
+  saving,
+  onMove,
+}: {
+  choices: TourChoice[];
+  saving: boolean;
+  onMove: (choice: TourChoice) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState(choices[0]?.key ?? "");
+  const chosen = choices.find((c) => c.key === key) ?? choices[0] ?? null;
+  if (!open) {
+    return (
+      <div className="tf-change">
+        <button type="button" className="od-btn od-btn--ghost" disabled={saving} onClick={() => setOpen(true)}>
+          <CalendarClock className="h-4 w-4" />
+          Reporter la tournée
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="tf-change">
+      <p className="tf-change-title">
+        <CalendarClock className="h-4 w-4" />
+        Reporter la tournée
+      </p>
+      <div className="tf-change-fields tf-change-fields--one">
+        <label className="od-field">
+          <span className="od-label">Nouvelle tournée</span>
+          <div className="od-select">
+            <select value={chosen?.key ?? ""} onChange={(e) => setKey(e.target.value)} disabled={saving || choices.length === 0}>
+              {choices.length === 0 && <option value="">Aucune tournée à venir</option>}
+              {choices.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="h-4 w-4" />
+          </div>
+        </label>
+      </div>
+      <p className="od-hint">La pièce repasse « à récupérer » sur cette tournée ; le livreur la voit dans sa liste.</p>
+      <div className="tf-change-actions">
+        <button type="button" className="od-btn od-btn--ghost" disabled={saving} onClick={() => setOpen(false)}>
+          Annuler
+        </button>
+        <button type="button" className="od-btn od-btn--primary" disabled={!chosen || saving} onClick={() => chosen && onMove(chosen)}>
+          {saving ? <Loader2 className="h-4 w-4 nc-spin" /> : <CalendarClock className="h-4 w-4" />}
+          {chosen ? `Reporter sur ${chosen.name} (${chosen.slot.replace(":", "h")})` : "Reporter"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -512,6 +581,23 @@ export default function TourneesPage() {
       await refresh(true);
     } catch (e) {
       // The modal stays open with the refusal (« Même fournisseur. », …) shown inside it.
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      doneSaving(line.id);
+    }
+  }
+
+  /** The part moves to another tournée: the modal closes and the toast says where it now leaves from. */
+  async function moveTour(line: TourLine, choice: TourChoice) {
+    if (savingLines.has(line.id)) return;
+    setSavingLines((s) => new Set(s).add(line.id));
+    setError(null);
+    try {
+      const result = await moveLineToTour(supabase, line.id, { date: choice.date, name: choice.name });
+      setOpenLineId(null);
+      setNotice(tourMoveLabel(line.reference, result, today));
+      await refresh(true);
+    } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       doneSaving(line.id);
@@ -1141,6 +1227,14 @@ export default function TourneesPage() {
                         suppliers={allSuppliers}
                         saving={saving}
                         onChange={(supplierId, reference) => void changeSupplier(openLine, supplierId, reference)}
+                      />
+                    )}
+                    {state !== "received" && (
+                      <TourMove
+                        key={`move-${openLine.id}`}
+                        choices={tourMoveChoices(now, board?.schedule ?? DEFAULT_TOUR_SCHEDULE, openSlot ? { date, name: openSlot.name } : null)}
+                        saving={saving}
+                        onMove={(choice) => void moveTour(openLine, choice)}
                       />
                     )}
                     {state === "received" ? (

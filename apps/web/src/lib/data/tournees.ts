@@ -929,6 +929,90 @@ export function supplierChangeLabel(reference: string, r: ChangedLineSupplier, t
 }
 
 /* ------------------------------------------------------------------ */
+/*  Reporter la tournée (comptoir, 2026-10-19)                        */
+/* ------------------------------------------------------------------ */
+
+/** An upcoming tournée the counter can move a part to. */
+export type TourChoice = {
+  /** "yyyy-mm-dd|name" */
+  key: string;
+  date: string;
+  name: string;
+  /** Departure "HH:MM". */
+  slot: string;
+  /** « Aujourd'hui · Tournée 2 (13h00) », « Demain · Tournée 1 (10h00) », « Lundi 20/10 · … ». */
+  label: string;
+};
+
+/**
+ * The tournées a part can be reported to: today's departures still to come,
+ * then the next open days (Paramètres → Tournées, Sundays skipped) — the
+ * tournée the part is on now left out. Up to `days` days ahead.
+ */
+export function tourMoveChoices(
+  now: Date,
+  schedule: TourSchedule,
+  current?: { date: string; name: string } | null,
+  days = 7,
+): TourChoice[] {
+  const today = parisDate(now);
+  const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  const out: TourChoice[] = [];
+  for (let i = 0; i <= days; i++) {
+    const date = addDays(today, i);
+    const dayWord = i === 0 ? "aujourd'hui" : tourDayWord(date, today);
+    const head = dayWord.charAt(0).toUpperCase() + dayWord.slice(1);
+    for (const t of daySlots(schedule, date)) {
+      if (i === 0 && t.slot <= hhmm) continue;
+      if (current && current.date === date && current.name === t.name) continue;
+      out.push({ key: `${date}|${t.name}`, date, name: t.name, slot: t.slot, label: `${head} · ${t.name} (${t.slot.replace(":", "h")})` });
+    }
+  }
+  return out;
+}
+
+export type MovedLine = {
+  lineId: string;
+  tourId: string | null;
+  tourName: string | null;
+  /** yyyy-mm-dd */
+  tourDate: string | null;
+  /** Departure "HH:MM" (Paris). */
+  tourSlot: string | null;
+  /** When the part is now expected at the magasin (ISO). */
+  prevueLe: string | null;
+  previousTourName: string | null;
+  previousTourDate: string | null;
+};
+
+/** move_line_to_tour() JSON → result; anything missing reads as null. */
+export function parseMovedLine(json: unknown): MovedLine {
+  const r = (json && typeof json === "object" ? json : {}) as Record<string, unknown>;
+  const tourSlot = text(r.tour_slot)?.slice(0, 5) ?? null;
+  return {
+    lineId: String(r.line_id ?? ""),
+    tourId: text(r.tour_id),
+    tourName: text(r.tour_name),
+    tourDate: text(r.tour_date)?.slice(0, 10) ?? null,
+    tourSlot: tourSlot && HHMM.test(tourSlot) ? tourSlot : null,
+    prevueLe: text(r.prevue_le),
+    previousTourName: text(r.previous_tour_name),
+    previousTourDate: text(r.previous_tour_date)?.slice(0, 10) ?? null,
+  };
+}
+
+/** Toast after a part was moved: « GDB1322 reportée sur Tournée 2 · 13h00 demain (était Tournée 4 aujourd'hui) ». */
+export function tourMoveLabel(reference: string, r: MovedLine, today: string): string {
+  const when = [r.tourSlot ? slotLabel(r.tourSlot).toLowerCase() : "", r.tourDate ? tourDayWord(r.tourDate, today) : ""]
+    .filter(Boolean)
+    .join(" ");
+  const head = `${reference} reportée sur ${r.tourName ?? "la tournée"}${when ? ` · ${when}` : ""}`;
+  if (!r.previousTourName) return head;
+  const was = r.previousTourDate && r.previousTourDate !== r.tourDate ? `${r.previousTourName} ${tourDayWord(r.previousTourDate, today)}` : r.previousTourName;
+  return `${head} (était ${was})`;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Server calls                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1042,6 +1126,32 @@ export async function changeLineSupplier(
     throw toTourError(error.message, error.code);
   }
   return parseChangedLineSupplier(data);
+}
+
+/** move_line_to_tour() is not in the database yet. */
+export class TourMoveUnavailableError extends Error {
+  constructor() {
+    super("Le report de tournée demande la migration 20261019040000 : mettez la base à jour.");
+    this.name = "TourMoveUnavailableError";
+  }
+}
+
+/**
+ * Counter only: the part is moved to the chosen tournée (created if needed),
+ * back to « à récupérer ». The database refuses in French (« Cette tournée
+ * est déjà partie. », « Pièce déjà reçue au magasin. »…) — shown as is.
+ */
+export async function moveLineToTour(
+  supabase: SupabaseClient,
+  lineId: string,
+  target: { date: string; name: string },
+): Promise<MovedLine> {
+  const { data, error } = await supabase.rpc("move_line_to_tour", { p_line_id: lineId, p_date: target.date, p_name: target.name });
+  if (error) {
+    if (error.code === "PGRST202" || /could not find the function/i.test(error.message)) throw new TourMoveUnavailableError();
+    throw toTourError(error.message, error.code);
+  }
+  return parseMovedLine(data);
 }
 
 /**

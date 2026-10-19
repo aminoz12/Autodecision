@@ -15,6 +15,9 @@ import {
   normalizeReferenceCommande,
   daySlots,
   parseChangedLineSupplier,
+  parseMovedLine,
+  tourMoveChoices,
+  tourMoveLabel,
   parseTourSchedule,
   supplierChangeLabel,
   DEFAULT_TOUR_SCHEDULE,
@@ -495,5 +498,33 @@ describe("changement de fournisseur", () => {
     expect(supplierChangeLabel("GDB1322", { ...delivered, prevueLe: null }, today)).toBe("GDB1322 recommandée chez Bosch — livrée par le fournisseur");
     expect(normalizeReferenceCommande("  gdb1322 ")).toBe("GDB1322");
     expect(normalizeReferenceCommande("   ")).toBeNull();
+  });
+});
+
+describe("reporter la tournée (comptoir)", () => {
+  // Monday 2026-10-19 11:30 Paris (09:30 UTC, CEST)
+  const monday = new Date("2026-10-19T09:30:00Z");
+
+  it("offers today's later tournées, then the next days, without the current one", () => {
+    const choices = tourMoveChoices(monday, DEFAULT_TOUR_SCHEDULE, { date: "2026-10-19", name: "Tournée 2" }, 1);
+    expect(choices.map((c) => c.key)).toEqual(["2026-10-19|Tournée 3", "2026-10-19|Tournée 4", "2026-10-20|Tournée 1", "2026-10-20|Tournée 2", "2026-10-20|Tournée 3", "2026-10-20|Tournée 4"]);
+    expect(choices[0].label).toBe("Aujourd'hui · Tournée 3 (15h00)");
+    expect(choices[2].label).toBe("Demain · Tournée 1 (10h00)");
+  });
+
+  it("skips Sunday and names the day beyond tomorrow", () => {
+    // Saturday 2026-10-24 18:00 Paris: nothing left today, Sunday closed → Monday
+    const saturday = new Date("2026-10-24T16:00:00Z");
+    const choices = tourMoveChoices(saturday, DEFAULT_TOUR_SCHEDULE, null, 2);
+    expect(choices[0]).toMatchObject({ date: "2026-10-26", name: "Tournée 1" });
+    expect(choices[0].label).toBe("Lundi 26/10 · Tournée 1 (10h00)");
+    expect(choices.every((c) => c.date !== "2026-10-25")).toBe(true);
+  });
+
+  it("reads where the part now goes and says it to the counter", () => {
+    const r = parseMovedLine({ line_id: "l1", tour_id: "t2", tour_name: "Tournée 2", tour_date: "2026-10-20", tour_slot: "13:00:00", prevue_le: "2026-10-20T11:00:00+00:00", previous_tour_name: "Tournée 4", previous_tour_date: "2026-10-19" });
+    expect(r).toMatchObject({ tourId: "t2", tourName: "Tournée 2", tourDate: "2026-10-20", tourSlot: "13:00", previousTourName: "Tournée 4" });
+    expect(tourMoveLabel("GDB1322", r, "2026-10-19")).toBe("GDB1322 reportée sur Tournée 2 · 13h00 demain (était Tournée 4 aujourd'hui)");
+    expect(tourMoveLabel("GDB1322", { ...r, previousTourDate: "2026-10-20" }, "2026-10-19")).toBe("GDB1322 reportée sur Tournée 2 · 13h00 demain (était Tournée 4)");
   });
 });
