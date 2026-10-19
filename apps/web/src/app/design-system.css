@@ -1601,3 +1601,22 @@ table.nc-lines td.od-td-right.od-num-strong { white-space: nowrap; font-variant-
 
 /* ticket 80 mm */
 .tk-partial { margin: 1.5mm 0; padding: 1.2mm 2mm; border: 2px solid #000; text-align: center; font-weight: 800; font-size: 10pt; letter-spacing: 0.08em; }
+
+/* ==================================================================
+   ADMIN — STATS ÉQUIPE (2026-10-19) : classement des vendeurs, livreurs.
+   Préfixe ts-, s'appuie sur les tuiles et la table me-.
+   ================================================================== */
+.ts-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.ts-table th.ts-left, .ts-table td.ts-left { text-align: left; }
+.ts-table td { white-space: nowrap; }
+.ts-table tfoot td { font-weight: 700; color: var(--text-primary); border-top: 1px solid var(--border-card); border-bottom: 0; background: var(--bg-subtle); }
+.ts-row--idle td { color: var(--text-muted); }
+.ts-rank { display: inline-flex; width: 26px; height: 26px; border-radius: 50%; align-items: center; justify-content: center; background: var(--bg-subtle); font-weight: 700; font-size: 12.5px; color: var(--text-secondary); }
+.ts-rank--1 { background: #FCEDB9; color: #983705; }
+.ts-rank--2 { background: #E3E8EE; color: #3C4257; }
+.ts-rank--3 { background: #F5E1CF; color: #8A4B1F; }
+.ts-who { display: inline-flex; align-items: center; gap: 8px; text-align: left; white-space: normal; }
+.ts-bar { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.ts-bar-track { display: inline-block; width: 56px; height: 6px; border-radius: 3px; background: var(--bg-subtle); overflow: hidden; }
+.ts-bar-fill { display: block; height: 100%; background: var(--clr-primary); border-radius: 3px; }
+.ts-muted { color: var(--text-muted); font-weight: 500; }

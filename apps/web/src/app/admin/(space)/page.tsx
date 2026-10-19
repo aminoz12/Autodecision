@@ -3,6 +3,7 @@
 import {
   Building2,
   CalendarDays,
+  ChartColumn,
   Check,
   ChevronDown,
   Copy,
@@ -28,6 +29,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CongesTab } from "@/components/admin/CongesTab";
+import { TeamStatsTab } from "@/components/admin/TeamStatsTab";
 import { AdminGate } from "@/components/auth/AdminGate";
 import { loadAdminLeaveBoard } from "@/lib/data/espace";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -74,7 +76,7 @@ function frDate(v: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fr-FR");
 }
 
-type Tab = "equipe" | "garagistes" | "livreurs" | "magasins" | "conges";
+type Tab = "equipe" | "garagistes" | "livreurs" | "magasins" | "conges" | "stats";
 
 const BLOCKED_STATUSES = new Set(["past_due", "unpaid", "canceled", "cancelled", "incomplete_expired", "expired"]);
 
@@ -106,7 +108,8 @@ function AdminContent() {
   const [congesPending, setCongesPending] = useState(0);
   // A notification link (« Demande de congé ») opens the page on « Congés » directly.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "conges") setTab("conges");
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    if (wanted === "conges" || wanted === "stats") setTab(wanted);
     // The tab shows how many requests wait even before it is opened (best-effort).
     loadAdminLeaveBoard(supabase).then(
       (b) => setCongesPending(b.pending.length),
@@ -437,6 +440,7 @@ function AdminContent() {
     { id: "garagistes", label: "Accès garagistes", sub: "Comptes du portail garage", icon: Building2, count: garageAccounts.length },
     { id: "livreurs", label: "Livreurs", sub: "Équipe de livraison", icon: Truck, count: livreurs.length },
     { id: "magasins", label: "Mes magasins", sub: "Autres points de vente", icon: Store, count: magasins.length },
+    { id: "stats", label: "Stats équipe", sub: "Vendeurs, livreurs, classement", icon: ChartColumn, count: staff.length },
     { id: "conges", label: "Congés", sub: "Demandes & soldes de l'équipe", icon: CalendarDays, count: congesPending },
   ];
 
@@ -513,6 +517,9 @@ function AdminContent() {
         <TableSkeleton rows={5} cols={6} />
       ) : (
         <>
+          {/* ================= Stats équipe ================= */}
+          {tab === "stats" && <TeamStatsTab onOpenConges={() => setTab("conges")} />}
+
           {/* ================= Congés ================= */}
           {tab === "conges" && <CongesTab onPendingCount={setCongesPending} />}
 

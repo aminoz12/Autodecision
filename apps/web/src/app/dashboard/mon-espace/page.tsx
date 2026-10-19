@@ -12,6 +12,7 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { LeaveSection } from "@/components/espace/LeaveSection";
@@ -80,7 +81,13 @@ function pct(part: number, total: number): string {
  */
 export default function MonEspacePage() {
   const { profile, ready } = useAuth();
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  // An administrator has no sales or congés of their own: their board is in the admin space.
+  const isAdmin = !!profile && profile.role === "ADMIN" && !profile.client_id;
+  useEffect(() => {
+    if (ready && isAdmin) router.replace("/admin?tab=stats");
+  }, [ready, isAdmin, router]);
   const [preset, setPreset] = useState<PeriodPreset>("month");
   const range = useMemo<ReportRange>(() => presetRange(preset === "7d" ? "30d" : preset), [preset]);
   const [stats, setStats] = useState<CounterStats | null>(null);
@@ -101,9 +108,9 @@ export default function MonEspacePage() {
   }, [supabase, range]);
 
   useEffect(() => {
-    if (!ready || !profile) return;
+    if (!ready || !profile || isAdmin) return;
     void load();
-  }, [ready, profile, load]);
+  }, [ready, profile, isAdmin, load]);
 
   const bars = useMemo(() => (stats ? buildBars(range, stats.days) : []), [stats, range]);
   const maxBar = useMemo(() => Math.max(1, ...bars.map((b) => b.ca)), [bars]);
@@ -111,6 +118,14 @@ export default function MonEspacePage() {
   const rank = ordinalFr(stats?.rank ?? 0);
   const vs = periodLabel(preset).vs;
   const firstName = profile?.display_name?.trim().split(/\s+/)[0] ?? "";
+
+  if (isAdmin) {
+    return (
+      <div className="rl-page">
+        <div className="od-card rc-empty"><p>Votre espace d&apos;administrateur (stats équipe, congés) se trouve dans Équipe &amp; accès. Redirection…</p></div>
+      </div>
+    );
+  }
 
   return (
     <div className="rl-page me-page">

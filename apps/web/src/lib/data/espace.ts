@@ -273,6 +273,89 @@ export async function setLeaveAllowance(supabase: SupabaseClient, userId: string
   await rpc(supabase, "set_leave_allowance", { p_user: userId, p_year: year, p_days: days });
 }
 
+/* ---------------- Administrateur : stats équipe ---------------- */
+
+export type TeamSeller = {
+  userId: string;
+  name: string;
+  role: string;
+  orders: number;
+  ca: number;
+  panierMoyen: number;
+  devisTotal: number;
+  devisAccepted: number;
+  /** Estimated margin on parts whose buy price is known. */
+  marge: number;
+  retours: number;
+  linesPointed: number;
+  linesHanded: number;
+};
+
+export type TeamLivreur = {
+  livreurId: string;
+  name: string;
+  active: boolean;
+  userId: string | null;
+  delivered: number;
+  failed: number;
+  pickups: number;
+  tours: number;
+};
+
+export type TeamStats = {
+  from: string;
+  to: string;
+  team: { orders: number; ca: number; panierMoyen: number; remises: number; devisTotal: number; devisAccepted: number; marge: number; retours: number };
+  prev: { orders: number; ca: number };
+  sellers: TeamSeller[];
+  livreurs: TeamLivreur[];
+};
+
+export async function loadTeamStats(supabase: SupabaseClient, range: { from: string; to: string }): Promise<TeamStats> {
+  const j = await rpc<J>(supabase, "admin_team_stats", { p_from: range.from, p_to: range.to });
+  const team = (j.team ?? {}) as J;
+  const prev = (j.prev ?? {}) as J;
+  return {
+    from: str(j.from),
+    to: str(j.to),
+    team: {
+      orders: toNumber(team.orders),
+      ca: toNumber(team.ca),
+      panierMoyen: toNumber(team.panier_moyen),
+      remises: toNumber(team.remises),
+      devisTotal: toNumber(team.devis_total),
+      devisAccepted: toNumber(team.devis_accepted),
+      marge: toNumber(team.marge),
+      retours: toNumber(team.retours),
+    },
+    prev: { orders: toNumber(prev.orders), ca: toNumber(prev.ca) },
+    sellers: asList(j.sellers).map((s) => ({
+      userId: str(s.user_id),
+      name: str(s.name),
+      role: str(s.role),
+      orders: toNumber(s.orders),
+      ca: toNumber(s.ca),
+      panierMoyen: toNumber(s.panier_moyen),
+      devisTotal: toNumber(s.devis_total),
+      devisAccepted: toNumber(s.devis_accepted),
+      marge: toNumber(s.marge),
+      retours: toNumber(s.retours),
+      linesPointed: toNumber(s.lines_pointed),
+      linesHanded: toNumber(s.lines_handed),
+    })),
+    livreurs: asList(j.livreurs).map((l) => ({
+      livreurId: str(l.livreur_id),
+      name: str(l.name),
+      active: l.active !== false,
+      userId: nstr(l.user_id),
+      delivered: toNumber(l.delivered),
+      failed: toNumber(l.failed),
+      pickups: toNumber(l.pickups),
+      tours: toNumber(l.tours),
+    })),
+  };
+}
+
 /* ---------------- Périodes ---------------- */
 
 export type PeriodPreset = "month" | "last_month" | "7d" | "30d" | "year";

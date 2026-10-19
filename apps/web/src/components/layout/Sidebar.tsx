@@ -128,7 +128,9 @@ export function Sidebar() {
   const collapsed = useSyncExternalStore(subscribeSidebarState, readSidebarState, () => false);
   const feed = useNotifications();
   const groups = useMemo<NavGroup[]>(
-    () => (profile?.role === "ADMIN" && !profile.client_id ? [...navGroups, adminGroup] : navGroups),
+    // The administrator has no sales or congés of their own: « Mon espace » is the caissier's;
+    // the admin's team board and the congés live in « Équipe & accès ».
+    () => (profile?.role === "ADMIN" && !profile.client_id ? [...navGroups.filter((g) => g.label !== "Mon espace"), adminGroup] : navGroups),
     [profile?.role, profile?.client_id],
   );
   /** Unread notifications per destination, shown as a counter next to the label. */
