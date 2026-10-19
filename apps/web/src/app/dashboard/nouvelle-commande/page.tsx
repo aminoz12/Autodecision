@@ -39,7 +39,7 @@ import {
   type SupplierOption,
 } from "@/lib/data/saas";
 import { OrderTicketCopies, type TicketData } from "@/components/print/OrderTicket";
-import { matchClientByPhone } from "@/lib/data/clients";
+import { matchClientByPhone, normPhone, updateParticulierClient } from "@/lib/data/clients";
 import { finalizeOrderSav, loadOrderShelves, loadSavSettingsSafe, setOrderSavFields, type SavSettings } from "@/lib/data/sav";
 import { RETURN_CONDITIONS_TEXT } from "@/lib/return-conditions";
 import type { CreateOrderPayload } from "@/lib/types/api";
@@ -108,6 +108,8 @@ export default function NouvelleCommandePage() {
   /* ---- Client ---- */
   const [destineA, setDestineA] = useState<PourQui>("COMPTOIR");
   const [clientId, setClientId] = useState<string>(NEW_CLIENT);
+  /** Client chosen in the list (or by deep link) — as opposed to one recognised by his number. */
+  const pickedId = useRef<string | null>(null);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [clientEmail, setClientEmail] = useState("");
@@ -236,6 +238,7 @@ export default function NouvelleCommandePage() {
           const c = cls.find((x) => x.id === wantedClient);
           if (c) {
             setDestineA(isGarage ? gars.find((g) => g.id === wantedClient)?.kind ?? "GARAGE" : "COMPTOIR");
+            pickedId.current = c.id;
             setClientId(c.id);
             setClientName(c.name);
             setClientPhone(c.phone ?? "");
@@ -306,6 +309,7 @@ export default function NouvelleCommandePage() {
   /* ---- Switch destination → clear the selected record ---- */
   const pickDestination = useCallback((value: PourQui) => {
     setDestineA(value);
+    pickedId.current = null;
     setClientId(NEW_CLIENT);
   }, []);
 
@@ -315,6 +319,7 @@ export default function NouvelleCommandePage() {
   /* ---- Pick an existing client → prefill snapshot fields ---- */
   const pickClient = useCallback(
     (value: string) => {
+      pickedId.current = value === NEW_CLIENT ? null : value;
       setClientId(value);
       if (value === NEW_CLIENT) return;
       const c = clients.find((x) => x.id === value);
@@ -346,6 +351,17 @@ export default function NouvelleCommandePage() {
       clientPhone,
     );
   }, [destineA, clients, garageIds, clientPhone]);
+  /** The linked particulier's file will get this number on save (null when it already has it). */
+  const phoneUpdateFor = useCallback(
+    (id: string): { id: string; phone: string } | null => {
+      const file = clients.find((c) => c.id === id);
+      const typed = clientPhone.trim();
+      if (!file || garageIds.has(id) || !typed || normPhone(file.phone) === normPhone(typed)) return null;
+      return { id, phone: typed };
+    },
+    [clients, garageIds, clientPhone],
+  );
+
   /** The particulier this order will be linked to (phone match or picked). */
   const linkedParticulier = useMemo(() => {
     if (destineA !== "COMPTOIR") return null;
@@ -379,7 +395,11 @@ export default function NouvelleCommandePage() {
   useEffect(() => {
     if (destineA !== "COMPTOIR") return;
     if (!knownClient) {
-      if (phoneMatchedId.current && clientId === phoneMatchedId.current) {
+      // The number no longer matches anyone. A client linked only by his
+      // number is let go (another person is being typed); a client the
+      // cashier PICKED keeps the order — he is correcting the number, and the
+      // file is updated on save (user, 2026-10-19).
+      if (phoneMatchedId.current && clientId === phoneMatchedId.current && pickedId.current !== clientId) {
         setClientId(NEW_CLIENT);
       }
       phoneMatchedId.current = null;
@@ -669,6 +689,15 @@ export default function NouvelleCommandePage() {
       // Resolve the client id — create a new client record if needed.
       let resolvedClientId: string | undefined =
         clientId === NEW_CLIENT ? undefined : clientId;
+      // An existing particulier whose number was corrected on this form: the
+      // file takes the new number (already checked: a mobile), so the next
+      // order recognises him and the SMS reaches him. Before the order, so a
+      // refusal is shown here rather than leaving a file half updated.
+      const phoneToSync = destineA === "COMPTOIR" && resolvedClientId ? phoneUpdateFor(resolvedClientId) : null;
+      if (phoneToSync) {
+        await updateParticulierClient(supabase, orgId, phoneToSync.id, { phone: phoneToSync.phone });
+        setClients((prev) => prev.map((c) => (c.id === phoneToSync.id ? { ...c, phone: phoneToSync.phone } : c)));
+      }
       if (!resolvedClientId) {
         if (destineA === "COMPTOIR") {
           const created = await createClientRecord(supabase, orgId, {
@@ -834,6 +863,7 @@ export default function NouvelleCommandePage() {
 
   function resetForm() {
     setDestineA("COMPTOIR");
+    pickedId.current = null;
     setClientId(NEW_CLIENT);
     setClientName("");
     setClientPhone("");
@@ -1114,7 +1144,10 @@ export default function NouvelleCommandePage() {
               onChange={(e) => {
                 setClientName(e.target.value);
                 // A particulier is recognised by phone; typing a new name
-                // while a garage was picked starts a new record.
+                // while a garage was picked starts a new record. A picked
+                // particulier stays only through his number from here on, so
+                // « pick, new name, new number » never rewrites his file.
+                pickedId.current = null;
                 if (clientId !== NEW_CLIENT && clientId !== phoneMatchedId.current) {
                   setClientId(NEW_CLIENT);
                 }
@@ -1196,6 +1229,13 @@ export default function NouvelleCommandePage() {
             {linkedParticulier.vehicleModel ? ` · ${linkedParticulier.vehicleModel}` : ""}
             {linkedParticulier.immatriculation ? ` · ${linkedParticulier.immatriculation}` : ""}
             {" "}— la commande rejoint son historique et ses points fidélité.
+            {phoneUpdateFor(linkedParticulier.id) ? (
+              <>
+                {" "}
+                <strong>Sa fiche prendra ce nouveau numéro</strong>
+                {linkedParticulier.phone ? ` (ancien : ${linkedParticulier.phone})` : ""}.
+              </>
+            ) : null}
             <Link href={`/dashboard/clients/${linkedParticulier.id}`} className="rc-cmd" target="_blank">
               Voir le profil
             </Link>
