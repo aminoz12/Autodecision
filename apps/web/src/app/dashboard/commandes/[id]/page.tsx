@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowRightLeft,
   Calendar,
   Car,
   CheckCircle2,
@@ -39,6 +40,7 @@ import {
   type OrderDetailLine,
   type ReceptionStatus,
 } from "@/lib/data/commandes";
+import { ReassignOrderDialog, describeReassign } from "@/components/orders/ReassignOrderDialog";
 import { loadOrganizationSettings, type OrganizationSettings } from "@/lib/data/saas";
 import {
   loadOrderPayments,
@@ -213,6 +215,11 @@ export default function OrderDetailPage() {
   /* ---- Facture (document immuable) ---- */
   const router = useRouter();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
+  /* ---- Changer le destinataire (stock ↔ garage / client, 2026-11-03) ---- */
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignNotice, setReassignNotice] = useState<string | null>(null);
+  const canReassign =
+    !!order && !order.devis && !order.cancelledAt && order.workflow !== "DELIVERED" && !invoice && order.paye + order.avance <= 0;
   const [invoiceBusy, setInvoiceBusy] = useState(false);
 
   /* ---- Annulation ---- */
@@ -514,6 +521,16 @@ export default function OrderDetailPage() {
         </div>
       )}
 
+      {reassignNotice && (
+        <div className="od-note od-note--success" role="status">
+          <ArrowRightLeft className="h-4 w-4" />
+          <p>{reassignNotice}</p>
+          <button type="button" className="od-link-btn" onClick={() => setReassignNotice(null)} aria-label="Fermer">
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       <div className="od-grid">
         {/* ---- Main column ---- */}
         <div className="od-main">
@@ -524,6 +541,16 @@ export default function OrderDetailPage() {
                 <div className="od-info-head">
                   <User className="h-4 w-4" />
                   {order.isRestock ? "Réapprovisionnement" : order.accountKind === "PRO" ? "Client PRO" : order.isGarage ? "Garage" : "Client"}
+                  {canReassign && (
+                    <button
+                      type="button"
+                      className="od-link-btn"
+                      onClick={() => setReassignOpen(true)}
+                      title="Cette commande est pour quelqu'un d'autre : le stock, un garage, un client"
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5" /> Changer le destinataire
+                    </button>
+                  )}
                 </div>
                 <p className="od-info-name">{order.clientName}</p>
                 {order.isRestock && (
@@ -875,6 +902,23 @@ export default function OrderDetailPage() {
             )}
           </section>
 
+          <ReassignOrderDialog
+            open={reassignOpen}
+            supabase={supabase}
+            orgId={profile?.organization_id}
+            orderId={order.id}
+            orderRef={order.ref}
+            current={{
+              target: order.isRestock ? "STOCK" : order.isGarage ? "GARAGE" : order.accountKind === "PRO" ? "PRO" : "PARTICULIER",
+              clientName: order.isRestock ? null : order.clientName,
+            }}
+            onClose={() => setReassignOpen(false)}
+            onDone={(r) => {
+              setReassignOpen(false);
+              setReassignNotice(describeReassign(r));
+              setReloadKey((k) => k + 1);
+            }}
+          />
           {cancelOpen && (
             <div className="ga-modal-overlay" onClick={() => !cancelBusy && setCancelOpen(false)}>
               <div className="ga-modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title" onClick={(e) => e.stopPropagation()}>

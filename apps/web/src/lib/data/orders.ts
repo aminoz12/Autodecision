@@ -160,3 +160,47 @@ export async function assignOrderTournee(
   }
   return tourId;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Changer le destinataire (2026-11-03)                               */
+/* ------------------------------------------------------------------ */
+
+export type ReassignTarget = {
+  kind: "STOCK" | "GARAGE" | "PRO" | "PARTICULIER";
+  total: number;
+  clientName: string | null;
+};
+
+/**
+ * Moves an order to the stock (`clientId` null) or to another client file
+ * (garage, client PRO or particulier): the amount is summed again from the
+ * lines' selling prices, a garage goes « en compte » and into the delivery
+ * flow — at once with `livreurId`. Refused once paid, invoiced, delivered,
+ * or when a stock order already has a received line.
+ */
+export async function reassignOrder(
+  supabase: SupabaseClient,
+  orderId: string,
+  clientId: string | null,
+  opts: { livreurId?: string | null } = {},
+): Promise<ReassignTarget> {
+  const { data, error } = await supabase.rpc("reassign_order", {
+    p_order_id: orderId,
+    p_client_id: clientId,
+    p_livreur_id: opts.livreurId ?? null,
+  });
+  if (error) {
+    throw new Error(
+      /reassign_order|schema cache/i.test(error.message)
+        ? "Changer le destinataire demande la migration 20261103030000 (npx supabase db push)."
+        : error.message,
+    );
+  }
+  const row = (data ?? {}) as Record<string, unknown>;
+  const kind = String(row.kind ?? "STOCK") as ReassignTarget["kind"];
+  return {
+    kind,
+    total: Number(row.total ?? 0),
+    clientName: row.client_name == null ? null : String(row.client_name),
+  };
+}
