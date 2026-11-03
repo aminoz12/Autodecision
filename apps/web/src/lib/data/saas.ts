@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pageAll } from "./paging";
+import { duplicateInsertError } from "@/lib/data/client-duplicates";
 import { phoneEntryError } from "@/lib/sms";
 
 type Embedded<T> = T | T[] | null | undefined;
@@ -242,7 +243,7 @@ export async function createClientRecord(
     .select("id,name,phone,email,immatriculation,vehicle_model")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(duplicateInsertError(error.message) ?? error.message);
   const row = data as Record<string, unknown>;
   return {
     id: String(row.id),
@@ -722,34 +723,56 @@ export async function loadGarages(
 ): Promise<GarageSummary[]> {
   const BASE = "id,name,phone,email,city,rating,is_active,payment_terms_days";
   const base = (columns: string) => supabase.from("clients").select(columns).eq("organization_id", orgId);
-  const [withKind, ordersRes] = await Promise.all([
+  const [withKind, totalsRes] = await Promise.all([
     // Garages, plus the counter clients marked PRO.
     base(`${BASE},is_garage,account_type`).or("is_garage.eq.true,account_type.eq.PRO").order("name"),
-    supabase
-      .from("orders")
-      .select("client_id,montant_total,solde_restant")
-      .eq("organization_id", orgId)
-      .eq("devis", false)
-      .is("cancelled_at", null),
+    // Commandes / CA / encours per client, summed in the database (migration 20261103010000).
+    supabase.rpc("client_account_totals"),
   ]);
 
   // Database without the account type yet: every professional account is a garage.
   const clientsRes =
     withKind.error && /account_type/i.test(withKind.error.message) ? await base(BASE).eq("is_garage", true).order("name") : withKind;
   if (clientsRes.error) throw new Error(clientsRes.error.message);
-  if (ordersRes.error) throw new Error(ordersRes.error.message);
 
   const totals = new Map<string, { orders: number; revenue: number; outstanding: number }>();
-  for (const raw of ordersRes.data ?? []) {
-    const row = raw as Record<string, unknown>;
-    const clientId = String(row.client_id ?? "");
-    if (!clientId) continue;
-    const current = totals.get(clientId) ?? { orders: 0, revenue: 0, outstanding: 0 };
-    totals.set(clientId, {
-      orders: current.orders + 1,
-      revenue: current.revenue + toNumber(row.montant_total),
-      outstanding: current.outstanding + Math.max(toNumber(row.solde_restant), 0),
-    });
+  if (!totalsRes.error) {
+    for (const raw of totalsRes.data ?? []) {
+      const row = raw as Record<string, unknown>;
+      totals.set(String(row.client_id), {
+        orders: toNumber(row.orders),
+        revenue: toNumber(row.revenue),
+        outstanding: toNumber(row.outstanding),
+      });
+    }
+  } else if (/client_account_totals|schema cache/i.test(totalsRes.error.message)) {
+    // Database before that migration: read the orders page by page. One
+    // unpaged read stopped at the API's 1 000 rows and the encours of the
+    // newest orders vanished from the list (Espace Auto 92, 2 300 orders).
+    const ordersRes = await pageAll((from, to) =>
+      supabase
+        .from("orders")
+        .select("id,client_id,montant_total,solde_restant")
+        .eq("organization_id", orgId)
+        .eq("devis", false)
+        .is("cancelled_at", null)
+        .order("id")
+        .range(from, to),
+    );
+    if (ordersRes.error) throw new Error(ordersRes.error.message);
+    for (const raw of ordersRes.data ?? []) {
+      const row = raw as Record<string, unknown>;
+      const clientId = String(row.client_id ?? "");
+      if (!clientId) continue;
+      const current = totals.get(clientId) ?? { orders: 0, revenue: 0, outstanding: 0 };
+      totals.set(clientId, {
+        orders: current.orders + 1,
+        revenue: current.revenue + toNumber(row.montant_total),
+        outstanding: current.outstanding + Math.max(toNumber(row.solde_restant), 0),
+      });
+    }
+  } else {
+    throw new Error(totalsRes.error.message);
   }
 
   return (clientsRes.data ?? []).map((raw) => {
@@ -805,9 +828,10 @@ export async function createGarage(
   }).select("id").single();
   if (error) {
     throw new Error(
-      /account_type/i.test(error.message)
-        ? "Les clients PRO demandent la migration 20261002031524 (npx supabase db push)."
-        : error.message,
+      duplicateInsertError(error.message) ??
+        (/account_type/i.test(error.message)
+          ? "Les clients PRO demandent la migration 20261002031524 (npx supabase db push)."
+          : error.message),
     );
   }
   return String((data as { id: string }).id);

@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ClipboardPlus,
   FileText,
+  GitMerge,
   HandCoins,
   Loader2,
   Mail,
@@ -28,6 +29,7 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { MergeClientDialog, mergeTargetHref } from "@/components/clients/MergeClientDialog";
 import { ReceiveReturnDialog } from "@/components/returns/ReceiveReturnDialog";
 import { GarageSavCard } from "@/components/sav/GarageSavCard";
 import { createClient } from "@/lib/supabase/client";
@@ -342,6 +344,9 @@ export default function GarageDetailPage() {
     }
   }
 
+  /* ---- Fusionner avec une autre fiche (administrateur, 2026-11-03) ---- */
+  const [mergeOpen, setMergeOpen] = useState(false);
+
   /* ---- Réception d'un retour demandé par le garage ---- */
   const [receiving, setReceiving] = useState<GarageReturn | null>(null);
 
@@ -508,6 +513,11 @@ export default function GarageDetailPage() {
           <button type="button" className="od-btn od-btn--primary" onClick={openSettle} disabled={owed <= 0}>
             <HandCoins className="h-4 w-4" /> Enregistrer un règlement
           </button>
+          {isAdmin && (
+            <button type="button" className="od-btn od-btn--ghost" onClick={() => setMergeOpen(true)} disabled={!garage} title="Doublon : regrouper cette fiche avec une autre">
+              <GitMerge className="h-4 w-4" /> Fusionner
+            </button>
+          )}
           {isAdmin && (
             <button
               type="button"
@@ -864,6 +874,16 @@ export default function GarageDetailPage() {
           </div>
         </div>
       )}
+
+      <MergeClientDialog
+        open={mergeOpen}
+        supabase={supabase}
+        orgId={profile?.organization_id}
+        sourceId={garageId}
+        sourceName={garage?.name ?? ""}
+        onClose={() => setMergeOpen(false)}
+        onMerged={(kept) => router.push(mergeTargetHref(kept))}
+      />
 
       {deleteOpen && garage && (
         <div className="ga-modal-overlay" onClick={() => !deleteBusy && setDeleteOpen(false)}>

@@ -7454,3 +7454,20 @@ a.sav-strip-item:hover { border-color: var(--clr-primary); color: var(--clr-prim
 .lv-part--deliver { border-left: 4px solid var(--clr-danger); }
 .tf-deliver { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 1px 6px; border-radius: 4px; background: var(--clr-danger); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; text-decoration: none; white-space: nowrap; }
 .tf-deliver--lg { font-size: 12px; text-transform: none; letter-spacing: 0; padding: 3px 9px; border-radius: 6px; }
+
+/* Doublons de fiches clients (2026-11-03) : alerte sous le formulaire de
+   commande, et liste des fiches dans « Fusionner ». */
+.nc-dup { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--clr-warning-bg); color: var(--clr-warning-text); font-size: 13px; font-weight: 600; }
+.nc-dup svg { flex-shrink: 0; }
+.nc-dup span { flex: 1; min-width: 200px; }
+.nc-dup .od-btn { height: 34px; }
+.mg-search { position: relative; }
+.mg-search > svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-muted); pointer-events: none; }
+.mg-search .od-input { padding-left: 34px; }
+.mg-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; margin-top: 8px; padding: 4px; border: 1px solid var(--border-card); border-radius: 10px; }
+.mg-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.mg-item:hover { background: var(--bg-hover, #F9FAFB); }
+.mg-item--on { background: var(--clr-primary-soft); box-shadow: 0 0 0 1px var(--clr-primary-border); }
+.mg-item-text { display: flex; flex-direction: column; min-width: 0; }
+.mg-item-text strong { font-size: 13.5px; color: var(--text-primary); }
+.mg-item-text small { font-size: 12px; color: var(--text-muted); }

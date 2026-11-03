@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pageAll } from "./paging";
+import { duplicateInsertError } from "@/lib/data/client-duplicates";
+import { phoneKey } from "@/lib/data/phone-key";
 import { toNumber } from "@/lib/data/saas";
 import { phoneEntryError } from "@/lib/sms";
 
@@ -18,9 +20,9 @@ function arr<T>(v: Embedded<T>): T[] {
   return Array.isArray(v) ? v : [v];
 }
 
-/** Normalise a phone to digits only, so "06 12 34 56 78" === "0612345678". */
+/** Normalise a phone to its digits, +33 brought back to 0: "06 12 34 56 78" === "+33 6 12 34 56 78" (2026-11-03). */
 export function normPhone(v: string | null | undefined): string {
-  return String(v ?? "").replace(/\D/g, "");
+  return phoneKey(v);
 }
 
 /* ---- Fidelity rules (single source of truth for the UI) ---- */
@@ -203,7 +205,7 @@ export async function createParticulierClient(
     .insert({ organization_id: orgId, is_garage: false, is_professional: false, ...toRow(input) })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(duplicateInsertError(error.message) ?? error.message);
   return String((data as { id: string }).id);
 }
 
@@ -261,6 +263,32 @@ export async function deleteClient(supabase: SupabaseClient, id: string): Promis
         : error.message,
     );
   }
+}
+
+/**
+ * Fusionne la fiche `dropId` dans `keepId` (administrateur, 2026-11-03) :
+ * commandes, règlements, avoirs, factures, retours, SAV, consignes, fidélité
+ * et accès portail passent sur la fiche conservée, le double est supprimé.
+ */
+export async function mergeClients(
+  supabase: SupabaseClient,
+  keepId: string,
+  dropId: string,
+): Promise<{ keptName: string; droppedName: string; moved: Record<string, number> }> {
+  const { data, error } = await supabase.rpc("merge_clients", { p_keep: keepId, p_drop: dropId });
+  if (error) {
+    throw new Error(
+      /merge_clients|schema cache/i.test(error.message)
+        ? "La fusion demande la migration 20261103010000 (npx supabase db push)."
+        : error.message,
+    );
+  }
+  const row = (data ?? {}) as Record<string, unknown>;
+  return {
+    keptName: String(row.kept_name ?? ""),
+    droppedName: String(row.dropped_name ?? ""),
+    moved: (row.moved as Record<string, number> | undefined) ?? {},
+  };
 }
 
 /* ---- Profile ---- */

@@ -28,6 +28,7 @@ import {
   type ClientSummary,
 } from "@/lib/data/clients";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { duplicateMessage, findDuplicate } from "@/lib/data/client-duplicates";
 import { phoneEntryError } from "@/lib/sms";
 
 function frDate(v: string | null): string {
@@ -131,6 +132,14 @@ export default function ClientsParticuliersPage() {
     const phoneProblem = phoneEntryError(form.phone, { mobile: true });
     if (phoneProblem) {
       setFormError(phoneProblem);
+      return;
+    }
+    const twin = findDuplicate(
+      rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, kind: "PARTICULIER" as const })),
+      { name: form.name, phone: form.phone, kind: "PARTICULIER" },
+    );
+    if (twin) {
+      setFormError(`${duplicateMessage(twin)} Ouvrez cette fiche au lieu d'en créer une nouvelle.`);
       return;
     }
     setSaving(true);

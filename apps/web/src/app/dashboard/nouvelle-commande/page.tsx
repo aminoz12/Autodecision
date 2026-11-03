@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   Calendar,
   Check,
   ChevronDown,
@@ -48,6 +49,7 @@ import { clampMoney, eur, netUnit, receptionChoices, REGLEMENT_LABEL, todayISO, 
 import { printTicket as printTicketPage } from "@/lib/print-ticket";
 import { paymentTermsLabel } from "@/lib/constants/enums";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { duplicateMessage, findDuplicate, type DuplicateCandidate } from "@/lib/data/client-duplicates";
 import { phoneEntryError } from "@/lib/sms";
 
 /* ------------------------------------------------------------------ */
@@ -351,6 +353,39 @@ export default function NouvelleCommandePage() {
       clientPhone,
     );
   }, [destineA, clients, garageIds, clientPhone]);
+  /* ---- A new file that would duplicate an existing one (2026-11-03) ----
+     Espace Auto 92 got 17 groups of duplicates in a month: the same person
+     retyped instead of picked, the same company once as garage and once as
+     client PRO. The existing file is offered; saving a twin is refused. */
+  const duplicateFiles = useMemo<DuplicateCandidate[]>(() => {
+    const kinds = new Map(garages.map((g) => [g.id, g.kind] as const));
+    const seen = new Set<string>();
+    const all: DuplicateCandidate[] = [];
+    for (const c of clients) {
+      seen.add(c.id);
+      all.push({ id: c.id, name: c.name, phone: c.phone, kind: kinds.get(c.id) ?? "PARTICULIER" });
+    }
+    for (const g of garages) {
+      if (!seen.has(g.id)) all.push({ id: g.id, name: g.name, phone: g.phone, kind: g.kind });
+    }
+    return all;
+  }, [clients, garages]);
+  const duplicate = useMemo(() => {
+    if (clientId !== NEW_CLIENT) return null;
+    return findDuplicate(duplicateFiles, {
+      name: clientName,
+      phone: clientPhone,
+      kind: destineA === "COMPTOIR" ? "PARTICULIER" : destineA,
+    });
+  }, [clientId, duplicateFiles, clientName, clientPhone, destineA]);
+  /** « Utiliser cette fiche » : the order goes to the existing file, in its own category. */
+  const useDuplicate = useCallback(() => {
+    if (!duplicate) return;
+    const kind: PourQui = duplicate.record.kind === "PARTICULIER" ? "COMPTOIR" : duplicate.record.kind;
+    if (kind !== destineA) setDestineA(kind);
+    pickClient(duplicate.record.id);
+  }, [duplicate, destineA, pickClient]);
+
   /** The linked particulier's file will get this number on save (null when it already has it). */
   const phoneUpdateFor = useCallback(
     (id: string): { id: string; phone: string } | null => {
@@ -698,6 +733,9 @@ export default function NouvelleCommandePage() {
         await updateParticulierClient(supabase, orgId, phoneToSync.id, { phone: phoneToSync.phone });
         setClients((prev) => prev.map((c) => (c.id === phoneToSync.id ? { ...c, phone: phoneToSync.phone } : c)));
       }
+      if (!resolvedClientId && duplicate) {
+        throw new Error(`${duplicateMessage(duplicate)} Cliquez sur « Utiliser cette fiche », ou corrigez le nom et le numéro.`);
+      }
       if (!resolvedClientId) {
         if (destineA === "COMPTOIR") {
           const created = await createClientRecord(supabase, orgId, {
@@ -712,6 +750,10 @@ export default function NouvelleCommandePage() {
           // A new garage or client PRO is a professional account (en compte, 30 days by default).
           resolvedClientId = await createGarage(supabase, orgId, { name: clientName, phone: clientPhone, email: clientEmail, kind: destineA });
         }
+        // The file now exists: if the order is refused below, the next try
+        // reuses it instead of creating another one (RUSSELL BELLGARDE ×4).
+        pickedId.current = resolvedClientId;
+        setClientId(resolvedClientId);
       }
 
       const payload: CreateOrderPayload = {
@@ -1239,6 +1281,14 @@ export default function NouvelleCommandePage() {
             <Link href={`/dashboard/clients/${linkedParticulier.id}`} className="rc-cmd" target="_blank">
               Voir le profil
             </Link>
+          </div>
+        ) : duplicate ? (
+          <div className="nc-dup" role="status">
+            <AlertTriangle className="h-4 w-4" />
+            <span>{duplicateMessage(duplicate)} Utilisez-la plutôt que d&apos;en créer une nouvelle.</span>
+            <button type="button" className="od-btn od-btn--outline" onClick={useDuplicate}>
+              Utiliser cette fiche
+            </button>
           </div>
         ) : (
           clientId === NEW_CLIENT &&

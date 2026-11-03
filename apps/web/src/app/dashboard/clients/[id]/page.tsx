@@ -8,6 +8,7 @@ import {
   ChevronRight,
   FileText,
   Gift,
+  GitMerge,
   History,
   Loader2,
   Mail,
@@ -27,6 +28,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { MergeClientDialog, mergeTargetHref } from "@/components/clients/MergeClientDialog";
 import { ClientSavStrip } from "@/components/sav/ClientSavStrip";
 import { Toast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
@@ -118,6 +120,8 @@ export default function ClientProfilePage() {
   const [fileAction, setFileAction] = useState<"PRO" | "DELETE" | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  /* ---- Fusionner avec une autre fiche (administrateur, 2026-11-03) ---- */
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!orgId || !clientId) return;
@@ -337,6 +341,11 @@ export default function ClientProfilePage() {
                 <button type="button" className="od-btn od-btn--ghost" onClick={() => openFileAction("PRO")}>
                   <Briefcase className="h-4 w-4" /> Passer en client PRO
                 </button>
+                {profile?.role === "ADMIN" && (
+                  <button type="button" className="od-btn od-btn--ghost" onClick={() => setMergeOpen(true)} title="Doublon : regrouper cette fiche avec une autre">
+                    <GitMerge className="h-4 w-4" /> Fusionner
+                  </button>
+                )}
                 <button type="button" className="od-btn od-btn--ghost od-btn--danger" onClick={() => openFileAction("DELETE")}>
                   <Trash2 className="h-4 w-4" /> Supprimer
                 </button>
@@ -587,6 +596,16 @@ export default function ClientProfilePage() {
           </div>
         </section>
       )}
+
+      <MergeClientDialog
+        open={mergeOpen}
+        supabase={supabase}
+        orgId={orgId}
+        sourceId={client.id}
+        sourceName={client.name}
+        onClose={() => setMergeOpen(false)}
+        onMerged={(kept) => router.push(mergeTargetHref(kept))}
+      />
 
       {fileAction && (
         <div className="ga-modal-overlay" onClick={() => !fileBusy && setFileAction(null)}>

@@ -17,12 +17,13 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
 import {
   createGarage,
   fmtMoney,
+  loadClients,
   loadGarages,
   type AccountKind,
   type GarageSummary,
@@ -40,6 +41,7 @@ import {
   type DevisRequest,
 } from "@/lib/data/garage";
 import { PhoneHint } from "@/components/ui/PhoneHint";
+import { duplicateMessage, findDuplicate, type DuplicateCandidate } from "@/lib/data/client-duplicates";
 import { phoneEntryError } from "@/lib/sms";
 
 function frDate(v: string | null) {
@@ -108,6 +110,8 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
   const [form, setForm] = useState<{ name: string; phone: string; email: string; address: string; city: string; terms: PaymentTermsDays }>({ name: "", phone: "", email: "", address: "", city: "", terms: 30 });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Every file of the magasin (garages, clients PRO, particuliers): a new account must not twin one. */
+  const allFiles = useRef<DuplicateCandidate[]>([]);
 
   // Devis requests + respond modal
   const [requests, setRequests] = useState<DevisRequest[]>([]);
@@ -122,11 +126,17 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
     setError(null);
     try {
       const sb = createClient();
-      const [g, r] = await Promise.all([
+      const [g, r, particuliers] = await Promise.all([
         loadGarages(sb, profile.organization_id),
         loadGarageRequests(sb, profile.organization_id),
+        loadClients(sb, profile.organization_id).catch(() => []),
       ]);
       setRows(g.filter((x) => x.kind === kind));
+      const pro = new Set(g.map((x) => x.id));
+      allFiles.current = [
+        ...g.map((x) => ({ id: x.id, name: x.name, phone: x.phone, kind: x.kind })),
+        ...particuliers.filter((c) => !pro.has(c.id)).map((c) => ({ id: c.id, name: c.name, phone: c.phone, kind: "PARTICULIER" as const })),
+      ];
       // Quote requests come from the garage portal: a client PRO has none.
       setRequests(kind === "GARAGE" ? r : []);
     } catch (e) {
@@ -186,6 +196,11 @@ export function AccountsScreen({ kind }: { kind: AccountKind }) {
     const phoneProblem = phoneEntryError(form.phone, { mobile: false });
     if (phoneProblem) {
       setFormError(phoneProblem);
+      return;
+    }
+    const twin = findDuplicate(allFiles.current, { name: form.name, phone: form.phone, kind });
+    if (twin) {
+      setFormError(`${duplicateMessage(twin)} Ouvrez cette fiche au lieu d'en créer une nouvelle.`);
       return;
     }
     setSaving(true);
