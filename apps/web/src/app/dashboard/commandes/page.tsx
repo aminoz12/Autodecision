@@ -523,7 +523,7 @@ export default function ReceptionCommandesPage() {
         parts.push(`SMS non envoyé : ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    const ticket = boardTicketData(lines, { vendeur: profile?.display_name ?? null });
+    const ticket = boardTicketData(lines);
     if (ticket) {
       setAutoTicket({ ticket, title: `${first.orderRef}-commande-prete` });
       parts.push("ticket imprimé");
@@ -1060,7 +1060,7 @@ export default function ReceptionCommandesPage() {
                                 ) : (
                                   <>
                                     <PrintTicketButton
-                                      ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: profile?.display_name ?? null })}
+                                      ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId))}
                                       kind="livraison"
                                       org={orgSettings}
                                       title={`${o.ref}-bon-livraison`}
@@ -1177,7 +1177,6 @@ export default function ReceptionCommandesPage() {
           order={openOrder}
           allLines={board.filter((l) => l.orderId === openOrder.orderId)}
           org={orgSettings}
-          vendeur={profile?.display_name ?? null}
           casier={shelves.get(openOrder.orderId)?.casier ?? null}
           busy={busy.has(`partial-${openOrder.orderId}`)}
           onClose={() => setOpenOrder(null)}
@@ -1193,7 +1192,6 @@ export default function ReceptionCommandesPage() {
         <OrderDoneSheet
           order={doneOrder}
           org={orgSettings}
-          vendeur={profile?.display_name ?? null}
           canDispatch={livreurs.length > 0}
           busy={busy.has(`deliver-${doneOrder.orderId}`)}
           onClose={() => setDoneId(null)}

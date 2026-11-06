@@ -86,6 +86,8 @@ export type BoardLine = {
   pointedAt: string | null;
   /** Who handed the order to the livreur. */
   dispatchedBy: string | null;
+  /** The vendeur who took the order (profiles.display_name of orders.vendeur_id) — the name printed on tickets. */
+  vendeurName: string | null;
 };
 
 export async function loadReceptionBoard(
@@ -96,7 +98,7 @@ export async function loadReceptionBoard(
   const select = (who: boolean) =>
     "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
     `prix_vente_unitaire,retour_impossible,supplier_id,${who ? "pointed_by,pointed_at," : ""}` +
-    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,account_type,address,city),livreurs(name)),` +
+    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,vendeur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,account_type,address,city),livreurs(name)),` +
     "suppliers(name,own_delivery,lead_days),delivery_tours(name,livreur_id)";
   // Two reads, so a busy magasin never loses today's parts: everything still to
   // point (bounded by the work in progress), and the most recent receptions for
@@ -144,6 +146,24 @@ export async function loadReceptionBoard(
       String((r as Record<string, unknown>).order_line_id),
     ),
   );
+
+  // The vendeur of each order, by name: the ticket printed at « Tout reçu »
+  // names who took the order, never who pointed it (user, 2026-11-06).
+  const vendeurIds = [
+    ...new Set(
+      (data ?? [])
+        .map((raw) => first((raw as Record<string, unknown>).orders as Embedded<Record<string, unknown>>)?.vendeur_id)
+        .filter((v): v is string => typeof v === "string" && v.length > 0),
+    ),
+  ];
+  const vendeurNames = new Map<string, string>();
+  if (vendeurIds.length > 0) {
+    const { data: profiles } = await supabase.from("profiles").select("user_id,display_name").in("user_id", vendeurIds);
+    for (const p of (profiles ?? []) as { user_id: string; display_name: string | null }[]) {
+      const name = (p.display_name ?? "").trim();
+      if (name) vendeurNames.set(String(p.user_id), name);
+    }
+  }
 
   const rows = (data ?? [])
     .filter((raw) => {
@@ -234,6 +254,7 @@ export async function loadReceptionBoard(
       pointedBy: (row.pointed_by as string | null) ?? null,
       pointedAt: (row.pointed_at as string | null) ?? null,
       dispatchedBy: (order?.dispatched_by as string | null) ?? null,
+      vendeurName: vendeurNames.get(String(order?.vendeur_id ?? "")) ?? null,
     };
   });
 

@@ -238,10 +238,14 @@ export function orderCompletion(board: BoardLine[], orderId: string): { complete
   return { complete: !awaited && received, lines };
 }
 
-/** A ticket (rangement / bon de livraison) built from the board's lines of one order. */
+/**
+ * A ticket (rangement / bon de livraison) built from the board's lines of one
+ * order. « Vendeur » is the one who took the order (carried by the lines),
+ * never the person pointing or printing (user, 2026-11-06).
+ */
 export function boardTicketData(
   lines: BoardLine[],
-  extra: { vendeur?: string | null; casier?: string | null; livreur?: string | null },
+  extra: { casier?: string | null; livreur?: string | null } = {},
 ): TicketData | null {
   const first = lines[0];
   if (!first) return null;
@@ -250,7 +254,7 @@ export function boardTicketData(
   return {
     ref: first.orderRef,
     createdAt: new Date().toISOString(),
-    vendeur: extra.vendeur ?? null,
+    vendeur: first.vendeurName ?? null,
     tourName: first.tourName,
     deliveryAt: first.dateEnvoi,
     clientName: first.clientName,
@@ -284,7 +288,7 @@ export function boardTicketData(
 export function partialTicketData(
   lines: BoardLine[],
   picks: ReadonlyMap<string, number>,
-  extra: { vendeur?: string | null; casier?: string | null },
+  extra: { casier?: string | null } = {},
 ): TicketData | null {
   const base = boardTicketData(lines, extra);
   if (!base) return null;

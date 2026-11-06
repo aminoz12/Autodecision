@@ -29,7 +29,6 @@ export type DoneOrder = {
 export function OrderDoneSheet({
   order,
   org,
-  vendeur,
   tablet,
   canDispatch,
   busy,
@@ -39,7 +38,6 @@ export function OrderDoneSheet({
 }: {
   order: DoneOrder;
   org: OrganizationSettings | null;
-  vendeur: string | null;
   tablet?: boolean;
   /** A livreur exists: « Envoyer au livreur » is offered too. */
   canDispatch: boolean;
@@ -70,7 +68,7 @@ export function OrderDoneSheet({
           <p className={hint}>Imprimez le bon de livraison, puis marquez la commande livrée (ou confiez-la à un livreur).</p>
           <div className={tablet ? "tb-actions" : "ga-modal-actions od-done-actions"}>
             <PrintTicketButton
-              ticket={boardTicketData(order.lines, { vendeur })}
+              ticket={boardTicketData(order.lines)}
               kind="livraison"
               org={org}
               title={`${order.ref}-bon-livraison`}

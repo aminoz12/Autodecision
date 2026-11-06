@@ -19,7 +19,7 @@ function line(p: Partial<BoardLine> & { id: string }): BoardLine {
     isGarage: false, isPro: false, vehicle: null, plate: null, reference: "GDB1322", referenceCommande: null, designation: "Plaquettes", supplierName: "Autodistribution",
     supplierId: "s1", supplierOwnDelivery: false, supplierLeadDays: 0, fromStock: false, quantity: 1, received: 0, handedOver: 0, status: "PENDING",
     receivedAt: null, expectedAt: null, tourId: null, tourName: "Tournée 1", tourLivreurId: null, putAway: false, unitPrice: 10, retourImpossible: false,
-    alreadyReturned: false, isRestock: false, workflow: "PENDING", envoyerAuLivreur: false, livreurId: null, livreurName: null, dateEnvoi: null,
+    alreadyReturned: false, isRestock: false, workflow: "PENDING", envoyerAuLivreur: false, livreurId: null, livreurName: null, dateEnvoi: null, vendeurName: "Karim",
     clientAddress: null, clientCity: null, deliveryFailedReason: null, deliveryFailedAt: null, deliveryAttempts: 0,
     pointedBy: null, pointedAt: null, dispatchedBy: null,
     ...p,
@@ -95,11 +95,13 @@ describe("Pointage par commande (2026-10-18)", () => {
   });
 
   it("ticket: built from the order's lines without the « non reçu » ones, casier kept", () => {
-    const t = boardTicketData(board.filter((l) => l.orderId === "o1"), { vendeur: "Sofia", casier: "A3" });
+    const t = boardTicketData(board.filter((l) => l.orderId === "o1"), { casier: "A3" });
     expect(t?.ref).toBe("REQ-2026-00001");
     expect(t?.lines.map((l) => l.reference)).toEqual(["GDB1322", "GDB1322"]);
     expect(t?.casier).toBe("A3");
-    expect(t?.vendeur).toBe("Sofia");
+    // The vendeur who took the order, whoever points or prints (2026-11-06).
+    expect(t?.vendeur).toBe("Karim");
+    expect(boardTicketData([line({ id: "z", vendeurName: null })])?.vendeur).toBeNull();
     expect(boardTicketData([], {})).toBeNull();
   });
 });
@@ -131,11 +133,11 @@ describe("Réception partielle (2026-10-18)", () => {
       line({ id: "b", reference: "X2", quantity: 1 }),
       line({ id: "c", reference: "NA", status: "NOT_RECEIVED" }),
     ];
-    const t = partialTicketData(board, new Map([["a", 2]]), { vendeur: "Inès" });
+    const t = partialTicketData(board, new Map([["a", 2]]), {});
+    expect(t?.vendeur).toBe("Karim");
     expect(t?.lines).toEqual([expect.objectContaining({ reference: "GDB1322", quantity: 3 })]);
     expect(t?.missing).toEqual([expect.objectContaining({ reference: "GDB1322", quantity: 1 }), expect.objectContaining({ reference: "X2", quantity: 1 })]);
     expect(t?.casierBox).toBe(true);
-    expect(t?.vendeur).toBe("Inès");
   });
 
   it("ticket: a réappro prints no casier box", () => {

@@ -29,7 +29,6 @@ export function ReceiveOrderSheet({
   order,
   allLines,
   org,
-  vendeur,
   casier,
   tablet,
   busy,
@@ -40,7 +39,6 @@ export function ReceiveOrderSheet({
   /** Every line of the order (received ones included) for the ticket. */
   allLines: BoardLine[];
   org: OrganizationSettings | null;
-  vendeur: string | null;
   casier: string | null;
   tablet?: boolean;
   busy: boolean;
@@ -67,7 +65,7 @@ export function ReceiveOrderSheet({
     if (ok && !complete) setDone(true);
   }
 
-  const ticket = useMemo(() => partialTicketData(allLines, picks, { vendeur, casier }), [allLines, picks, vendeur, casier]);
+  const ticket = useMemo(() => partialTicketData(allLines, picks, { casier }), [allLines, picks, casier]);
   const hint = tablet ? "tb-sheet-line" : "od-hint";
   const btn = tablet ? "tb-btn" : "od-btn";
   const main = tablet ? "tb-btn tb-btn--ok tb-btn--main" : "od-btn od-btn--primary";

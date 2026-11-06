@@ -398,7 +398,7 @@ export default function TablettePage() {
         parts.push(`SMS non envoyé : ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    const ticket = boardTicketData(lines, { vendeur: me?.name ?? null });
+    const ticket = boardTicketData(lines);
     if (ticket) {
       setAutoTicket({ ticket, title: `${first.orderRef}-commande-prete` });
       parts.push("ticket imprimé");
@@ -828,7 +828,7 @@ export default function TablettePage() {
                       ) : (
                         <>
                           <PrintTicketButton
-                            ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId), { vendeur: me.name })}
+                            ticket={boardTicketData(board.filter((l) => l.orderId === o.orderId))}
                             kind="livraison"
                             org={orgSettings}
                             title={`${o.ref}-bon-livraison`}
@@ -868,7 +868,6 @@ export default function TablettePage() {
           order={openOrder}
           allLines={board.filter((l) => l.orderId === openOrder.orderId)}
           org={orgSettings}
-          vendeur={me.name}
           casier={null}
           tablet
           busy={busy === openOrder.orderId}
@@ -885,7 +884,6 @@ export default function TablettePage() {
         <OrderDoneSheet
           order={doneOrder}
           org={orgSettings}
-          vendeur={me.name}
           tablet
           canDispatch={livreurs.length > 0}
           busy={busy !== null}
