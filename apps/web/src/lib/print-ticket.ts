@@ -1,8 +1,12 @@
 /*
  * Printing tickets (bon de commande, bon de livraison, reçu) on an 80 mm
  * thermal roll: each ticket on ONE page, as long as the ticket, nothing else
- * printed. Several tickets (the « CLIENT » and « CAISSIER » copies) go out in
- * the same job, one page each, so the printer cuts between them.
+ * printed. Several tickets in one call go out in the same job, one page each,
+ * so the printer cuts between them (the bon de commande is a single ticket
+ * since 2026-11-11, the cashier's copy is gone).
+ *
+ * One click = printed: Chrome launched with --kiosk-printing sends the job to
+ * the default printer without the Windows dialog; « afterprint » still fires.
  *
  * The tickets on screen are copied alone into #tk-print-root (a child of
  * <body>, so everything else can be removed from the printout with

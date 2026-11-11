@@ -156,6 +156,8 @@ export default function NouvelleCommandePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdRef, setCreatedRef] = useState<string | null>(null);
+  /** Popup « panier validé » over the success screen, closed by the cashier (user, 2026-11-11). */
+  const [ackOpen, setAckOpen] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [createdTour, setCreatedTour] = useState<{ name: string; deliveryAt: string | null } | null>(null);
   /* « Livraison » (2026-10-19, user): a garage / PRO order can leave straight away
@@ -822,6 +824,7 @@ export default function NouvelleCommandePage() {
       setReceptionSaved(false);
       setReceptionError(null);
       setCreatedRef(order.ref_demande);
+      setAckOpen(true);
       setCreatedTour({ name: order.tourName, deliveryAt: order.deliveryAt });
       // « Livraison » ticked: the order leaves with the chosen livreur right now (🚚).
       if (deliverNow && destineA !== "COMPTOIR" && deliverLivreurId) {
@@ -925,6 +928,7 @@ export default function NouvelleCommandePage() {
     setAvoirAuto(false);
     setError(null);
     setCreatedRef(null);
+    setAckOpen(false);
     setCreatedId(null);
     setCreatedTour(null);
     setDeliverNow(false);
@@ -945,6 +949,24 @@ export default function NouvelleCommandePage() {
   if (createdRef) {
     return (
       <div className="od-page">
+        {ackOpen && (
+          <div className="ga-modal-overlay" onClick={() => setAckOpen(false)}>
+            <div className="ga-modal nc-ack" role="alertdialog" aria-modal="true" aria-labelledby="nc-ack-title" onClick={(e) => e.stopPropagation()}>
+              <div className="ga-modal-form nc-ack-body">
+                <span className="nc-success-icon">
+                  <Check className="h-8 w-8" />
+                </span>
+                <h2 className="nc-success-title" id="nc-ack-title">Panier validé</h2>
+                <p className="nc-success-sub">
+                  La commande <strong>{createdRef}</strong> a bien été validée et enregistrée.
+                </p>
+                <button type="button" className="od-btn od-btn--primary nc-ack-btn" autoFocus onClick={() => setAckOpen(false)}>
+                  <Check className="h-4 w-4" /> OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="od-card nc-success">
           <span className="nc-success-icon">
             <Check className="h-8 w-8" />

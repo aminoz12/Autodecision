@@ -143,14 +143,14 @@ type TicketOrg = Pick<OrganizationSettings, "name" | "phone" | "address" | "city
 /** Who keeps this copy: printed big under the title. */
 export type TicketCopy = "CLIENT" | "CAISSIER";
 
-/** The bon de commande is printed twice: the client's copy, then the cashier's (one page each). */
+/**
+ * The bon de commande as it goes out of the printer. It used to come out twice
+ * (the client's copy, then the cashier's); since 2026-11-11 only the client's
+ * copy is printed, without the « CLIENT » stamp (user: « supprimer le ticket
+ * caissier »). The component keeps its name so every print path still works.
+ */
 export function OrderTicketCopies({ org, data }: { org: TicketOrg; data: TicketData }) {
-  return (
-    <>
-      <OrderTicket org={org} data={data} copy="CLIENT" />
-      <OrderTicket org={org} data={data} copy="CAISSIER" />
-    </>
-  );
+  return <OrderTicket org={org} data={data} />;
 }
 
 export function OrderTicket({

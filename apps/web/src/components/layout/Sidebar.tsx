@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  PackagePlus,
   Boxes,
   CarFront,
   ChartColumn,
@@ -35,6 +36,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { countByDestination, useNotifications } from "@/components/providers/NotificationsProvider";
 import { countRestockAlerts, RESTOCK_COUNT_EVENT } from "@/lib/data/saas";
+import { countRestockToShelve, SHELVE_COUNT_EVENT } from "@/lib/data/stock-shelving";
 import { FEATURES } from "@/lib/features";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -43,6 +45,8 @@ type NavItem = { href: string; label: string; icon: LucideIcon };
 
 /** « Stock » counts the parts waiting in « Pièces à recommander », not notifications. */
 const STOCK_HREF = "/dashboard/stock";
+/** « À réintégrer pour le stock » counts the restock parts received and not yet on the shelf (2026-11-11). */
+const SHELVE_HREF = "/dashboard/stock/reintegrer";
 type NavGroup = { label: string; items: NavItem[] };
 
 const navGroups: NavGroup[] = [
@@ -59,6 +63,7 @@ const navGroups: NavGroup[] = [
     label: "Pièces",
     items: [
       { href: STOCK_HREF, label: "Stock", icon: Boxes },
+      { href: SHELVE_HREF, label: "À réintégrer pour le stock", icon: PackagePlus },
       { href: "/dashboard/recherche-piece", label: "Recherche pièce", icon: Search },
     ],
   },
@@ -144,6 +149,7 @@ export function Sidebar() {
     [feed?.unreadHrefs, groups],
   );
   const [restockCount, setRestockCount] = useState(0);
+  const [shelveCount, setShelveCount] = useState(0);
 
   function toggleCollapsed() {
     const next = !collapsed;
@@ -186,24 +192,45 @@ export function Sidebar() {
           /* best-effort counter */
         },
       );
+    const refreshShelve = () =>
+      countRestockToShelve(createClient()).then(
+        (n) => {
+          if (!cancelled) setShelveCount(n);
+        },
+        () => {
+          /* best-effort counter */
+        },
+      );
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 60_000);
+    void refreshShelve();
+    const timer = window.setInterval(() => {
+      void refresh();
+      void refreshShelve();
+    }, 60_000);
     const onCount = (e: Event) => {
       const n = (e as CustomEvent<unknown>).detail;
       if (typeof n === "number") setRestockCount(n);
     };
+    const onShelveCount = (e: Event) => {
+      const n = (e as CustomEvent<unknown>).detail;
+      if (typeof n === "number") setShelveCount(n);
+    };
     window.addEventListener(RESTOCK_COUNT_EVENT, onCount);
+    window.addEventListener(SHELVE_COUNT_EVENT, onShelveCount);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       window.removeEventListener(RESTOCK_COUNT_EVENT, onCount);
+      window.removeEventListener(SHELVE_COUNT_EVENT, onShelveCount);
     };
   }, [profile?.organization_id, pathname]);
 
   const brand = orgName ?? "Mon magasin";
 
   function isActive(href: string): boolean {
-    return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+    // « Stock » has a sub-page of its own in the menu: only the exact page lights it up.
+    if (href === "/dashboard" || href === STOCK_HREF) return pathname === href;
+    return pathname.startsWith(href);
   }
 
   return (
@@ -272,11 +299,13 @@ export function Sidebar() {
                 {group.items.map((item) => {
                   const Icon = item.icon;
                   const active = isActive(item.href);
-                  const badge = item.href === STOCK_HREF ? restockCount : counts[item.href];
+                  const badge = item.href === STOCK_HREF ? restockCount : item.href === SHELVE_HREF ? shelveCount : counts[item.href];
                   const badgeTitle =
                     item.href === STOCK_HREF
                       ? `${badge} pièce(s) à recommander`
-                      : `${badge} notification(s) non lue(s)`;
+                      : item.href === SHELVE_HREF
+                        ? `${badge} pièce(s) à ranger`
+                        : `${badge} notification(s) non lue(s)`;
                   return (
                     <Link
                       key={item.href}

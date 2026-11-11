@@ -7478,3 +7478,10 @@ a.sav-strip-item:hover { border-color: var(--clr-primary); color: var(--clr-prim
 .od-note--success { background: var(--clr-success-bg); color: var(--clr-success-text); border-color: var(--clr-success-border, #A7F3D0); }
 .od-note--success .od-link-btn { color: inherit; }
 .nc-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Popup « panier validé » après l'envoi d'une commande (2026-11-11) */
+.nc-ack { max-width: 420px; }
+.nc-ack-body { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 28px 24px; }
+.nc-ack .nc-success-title { margin: 4px 0 0; }
+.nc-ack .nc-success-sub { margin: 0; }
+.nc-ack-btn { min-width: 160px; margin-top: 10px; }
