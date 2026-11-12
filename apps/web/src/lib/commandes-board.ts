@@ -272,9 +272,12 @@ export function boardTicketData(
     })),
     total,
     avoirApplique: 0,
-    paye: 0,
-    reste: 0,
-    statutPaiement: "",
+    // What the client still owes, so whoever hands the parts over knows (2026-11-12).
+    paye: first.isRestock ? 0 : first.orderPaid,
+    reste: first.isRestock ? 0 : first.orderDue,
+    statutPaiement: first.isRestock ? "" : first.statutPaiement,
+    modePaiement: first.isRestock ? null : first.modePaiement,
+    echeance: first.isRestock ? null : first.echeance,
     casier: extra.casier ?? null,
     livreur: extra.livreur ?? null,
   };

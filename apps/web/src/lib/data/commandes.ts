@@ -88,6 +88,18 @@ export type BoardLine = {
   dispatchedBy: string | null;
   /** The vendeur who took the order (profiles.display_name of orders.vendeur_id) — the name printed on tickets. */
   vendeurName: string | null;
+  /* ---- Order payment, printed on the tickets of the pointing screens (2026-11-12) ---- */
+  /** PAYÉ / PARTIEL / NON_PAYÉ. */
+  statutPaiement: string;
+  /** ESPECES / CARTE / VIREMENT / CHEQUE / EN_COMPTE, null when not chosen yet. */
+  modePaiement: string | null;
+  /** Due date of an on-account order (yyyy-mm-dd). */
+  echeance: string | null;
+  orderTotal: number;
+  /** Cashed so far: payments and advance. */
+  orderPaid: number;
+  /** Still to pay. */
+  orderDue: number;
 };
 
 export async function loadReceptionBoard(
@@ -98,7 +110,7 @@ export async function loadReceptionBoard(
   const select = (who: boolean) =>
     "id,order_id,reference,reference_commande,nom_produit,quantity,qte_recue,qte_remise,reception_status,received_at,prevue_le,depuis_magasin,retour_stock_fait,tour_id," +
     `prix_vente_unitaire,retour_impossible,supplier_id,${who ? "pointed_by,pointed_at," : ""}` +
-    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,vendeur_id,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,account_type,address,city),livreurs(name)),` +
+    `orders(id,ref_demande,date_commande,date_envoi,createdAt,devis,is_restock,cancelled_at,workflow_status,envoyer_au_livreur,livreur_id,vendeur_id,statut_paiement,montant_total,montant_paye,avance_payee,solde_restant,mode_paiement,echeance,client_phone,immatriculation,vehicle_model,delivery_failed_reason,delivery_failed_at,delivery_attempts,${who ? "dispatched_by," : ""}clients(id,name,phone,is_garage,account_type,address,city),livreurs(name)),` +
     "suppliers(name,own_delivery,lead_days),delivery_tours(name,livreur_id)";
   // Two reads, so a busy magasin never loses today's parts: everything still to
   // point (bounded by the work in progress), and the most recent receptions for
@@ -255,6 +267,12 @@ export async function loadReceptionBoard(
       pointedAt: (row.pointed_at as string | null) ?? null,
       dispatchedBy: (order?.dispatched_by as string | null) ?? null,
       vendeurName: vendeurNames.get(String(order?.vendeur_id ?? "")) ?? null,
+      statutPaiement: String(order?.statut_paiement ?? ""),
+      modePaiement: (order?.mode_paiement as string | null) ?? null,
+      echeance: (order?.echeance as string | null) ?? null,
+      orderTotal: toNumber(order?.montant_total),
+      orderPaid: toNumber(order?.montant_paye) + toNumber(order?.avance_payee),
+      orderDue: Math.max(0, toNumber(order?.solde_restant)),
     };
   });
 

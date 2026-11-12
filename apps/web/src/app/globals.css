@@ -7485,3 +7485,6 @@ a.sav-strip-item:hover { border-color: var(--clr-primary); color: var(--clr-prim
 .nc-ack .nc-success-title { margin: 4px 0 0; }
 .nc-ack .nc-success-sub { margin: 0; }
 .nc-ack-btn { min-width: 160px; margin-top: 10px; }
+
+/* Ticket : état du règlement sur les tickets de pointage (2026-11-12) */
+.tk-doc .tk-pay { margin: 4px 0; padding: 3px 4px; border: 1px solid #000; text-align: center; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }

@@ -77,6 +77,26 @@ const MODE_LABEL: Record<string, string> = {
   EN_COMPTE: "EN COMPTE",
 };
 
+/**
+ * The payment line of the tickets printed at pointing (commande prête,
+ * rangement, réception partielle, bon de livraison): whoever hands the parts
+ * over sees at once whether money is still due (user, 2026-11-12).
+ * « PAYÉ COMPTANT · CARTE BANCAIRE », « ACOMPTE VERSÉ 20,00 € · RESTE À PAYER
+ * 15,00 € », « NON PAYÉ · RESTE À PAYER 35,00 € », « EN COMPTE · ÉCHÉANCE … ».
+ * Nothing on a réappro (no client).
+ */
+function paymentText(data: TicketData): string | null {
+  if (!data.statutPaiement && !data.modePaiement) return null;
+  if (data.modePaiement === "EN_COMPTE") return reglementText(data);
+  const mode = data.modePaiement ? MODE_LABEL[data.modePaiement] : null;
+  if (data.reste > 0) {
+    const head = data.paye > 0 ? `ACOMPTE VERSÉ ${eur(data.paye)}` : "NON PAYÉ";
+    return `${head} · RESTE À PAYER ${eur(data.reste)}`;
+  }
+  const statut = REGLEMENT_LABEL[data.statutPaiement] ?? data.statutPaiement;
+  return mode ? `${statut} · ${mode}` : statut;
+}
+
 function reglementText(data: TicketData): string {
   const statut = REGLEMENT_LABEL[data.statutPaiement] ?? data.statutPaiement;
   if (data.modePaiement === "EN_COMPTE") {
@@ -183,6 +203,7 @@ export function OrderTicket({
   const rangement = kind === "rangement";
   const reception = kind === "reception";
   const pret = kind === "pret";
+  const payment = delivery || rangement || reception || pret ? paymentText(data) : null;
   const sections = reception
     ? [
         { title: "Pièces reçues", rows: data.lines },
@@ -289,6 +310,7 @@ export function OrderTicket({
               <strong>{data.casier || "________"}</strong>
             </p>
           )}
+          {payment && data.casierBox && <p className="tk-pay">Règlement : {payment}</p>}
           <p className="tk-reglement">Reçu le {dateStr} à {timeStr}</p>
           {data.clientPhone && data.clientPhone !== "-" && <p className="tk-phone">{data.clientPhone}</p>}
           <div className="tk-dash" />
@@ -301,6 +323,7 @@ export function OrderTicket({
       ) : pret ? (
         <>
           <p className="tk-reglement">Total : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s)</p>
+          {payment && <p className="tk-pay">Règlement : {payment}</p>}
           <p className="tk-reglement">Reçu le {dateStr} à {timeStr}</p>
           {data.clientPhone && data.clientPhone !== "-" && <p className="tk-phone">{data.clientPhone}</p>}
           <div className="tk-dash" />
@@ -313,6 +336,7 @@ export function OrderTicket({
             <span>Casier</span>
             <strong>{data.casier || "________"}</strong>
           </p>
+          {payment && <p className="tk-pay">Règlement : {payment}</p>}
           <p className="tk-reglement">Reçu le {dateStr} à {timeStr}</p>
           {data.clientPhone && data.clientPhone !== "-" && <p className="tk-phone">{data.clientPhone}</p>}
           <div className="tk-dash" />
@@ -321,6 +345,7 @@ export function OrderTicket({
       ) : delivery ? (
         <>
           <p className="tk-reglement">Total : {data.lines.reduce((n, l) => n + l.quantity, 0)} pièce(s)</p>
+          {payment && <p className="tk-pay">Règlement : {payment}</p>}
           <div className="tk-sign">
             <p>Livré par : {data.livreur ?? "____________________"}</p>
             <p>Reçu par (nom) : ______________</p>

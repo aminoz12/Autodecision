@@ -22,6 +22,7 @@ function line(p: Partial<BoardLine> & { id: string }): BoardLine {
     alreadyReturned: false, isRestock: false, workflow: "PENDING", envoyerAuLivreur: false, livreurId: null, livreurName: null, dateEnvoi: null, vendeurName: "Karim",
     clientAddress: null, clientCity: null, deliveryFailedReason: null, deliveryFailedAt: null, deliveryAttempts: 0,
     pointedBy: null, pointedAt: null, dispatchedBy: null,
+    statutPaiement: "PARTIEL", modePaiement: "CARTE", echeance: null, orderTotal: 20, orderPaid: 5, orderDue: 15,
     ...p,
   };
 }
@@ -101,6 +102,9 @@ describe("Pointage par commande (2026-10-18)", () => {
     expect(t?.casier).toBe("A3");
     // The vendeur who took the order, whoever points or prints (2026-11-06).
     expect(t?.vendeur).toBe("Karim");
+    // The payment state travels with the ticket (2026-11-12): an advance, the rest to pay.
+    expect(t).toMatchObject({ statutPaiement: "PARTIEL", modePaiement: "CARTE", paye: 5, reste: 15 });
+    expect(boardTicketData([line({ id: "r", isRestock: true })])).toMatchObject({ statutPaiement: "", paye: 0, reste: 0 });
     expect(boardTicketData([line({ id: "z", vendeurName: null })])?.vendeur).toBeNull();
     expect(boardTicketData([], {})).toBeNull();
   });
